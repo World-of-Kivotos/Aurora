@@ -26,7 +26,8 @@ const CARD_GAP: f32 = 18.0;
 const CARD_RADIUS: f32 = 16.0;
 const CARD_PAD: f32 = 14.0;
 
-/// 一张演示卡片：一枚垂直位移弹簧 + 抬起状态。不同卡片用不同预设以对比手感。
+/// 一张演示卡片：一枚垂直位移弹簧 + 抬起状态。playground 模式下所有卡片共享同一套实时
+/// 调出的 k/c，点任意一张都用当前手感弹起，便于反复对比同一参数在不同卡片上的落定表现。
 pub struct Card {
     pub title: &'static str,
     pub subtitle: &'static str,
@@ -178,7 +179,7 @@ impl canvas::Program<Message> for DemoScene<'_> {
         }
 
         frame.fill_text(Text {
-            content: "Click a card to fling it up — compare Pop's overshoot vs Tap's crisp settle"
+            content: "Click any card to fling it up 96px — then drag the sliders below to tune the spring"
                 .to_string(),
             position: Point::new(24.0, size.height - 30.0),
             color: self.tokens.on_surface_muted,

@@ -7,6 +7,8 @@
 //! 五枚预设由 duration/bounce 两参换算而来（见 docs/frontend-design.md 动效一节）：
 //! ω=2π/duration，k=ω²，c=2(1−bounce)ω，ζ=1−bounce。
 
+use std::f32::consts::PI;
+
 /// 单帧最大 dt（秒）。掉帧或后台切回时相邻时间戳可能相差很大，钳制到 1/30s
 /// 避免一步积分把系统推飞。
 pub const MAX_DT: f32 = 1.0 / 30.0;
@@ -28,16 +30,42 @@ impl Params {
 }
 
 // 五枚预设常量。注释里的 ζ 为阻尼比，用于快速判断过冲程度。
+// 本 playground 切片走全局实时调参，暂不引用这些常量；保留导出供后续正式界面按语义取用，
+// 故逐个标注 allow(dead_code)，避免被当作废弃代码删除或触发 -D warnings。
 /// 按压/悬停：ζ=1.00 临界阻尼，零过冲，手感干脆。
+#[allow(dead_code)]
 pub const TAP: Params = Params::new(815.6, 57.12);
 /// 卡片落定/滑块跟随：ζ=0.90，最常用。
+#[allow(dead_code)]
 pub const SETTLE: Params = Params::new(584.0, 43.50);
 /// 原位往返归位：ζ=0.80，过冲最明显。
+#[allow(dead_code)]
 pub const POP: Params = Params::new(385.5, 31.42);
 /// 整页入场：ζ=0.88。
+#[allow(dead_code)]
 pub const SOFT: Params = Params::new(341.5, 32.53);
 /// 图标↔菜单形变：ζ=0.86。
+#[allow(dead_code)]
 pub const MORPH: Params = Params::new(322.3, 30.88);
+
+/// 两参手感模型：由弹跳强度 `bounce` 与到位时长 `duration`（秒，质量恒为 1）换算刚度/阻尼。
+/// ω=2π/duration，k=ω²，c=2(1−bounce)ω。bounce 即 1−ζ，故阻尼比 ζ=1−bounce：
+/// bounce=0 得临界阻尼零过冲，bounce 越大越欠阻尼、过冲越明显。
+pub fn params_from(bounce: f32, duration: f32) -> Params {
+    let omega = 2.0 * PI / duration;
+    Params::new(omega * omega, 2.0 * (1.0 - bounce) * omega)
+}
+
+/// 标准二阶欠阻尼系统的阶跃超调百分比 Mp。ζ=1−bounce：ζ≥1（bounce≤0）时无过冲返回 0，
+/// 否则 Mp = exp(−π·ζ/√(1−ζ²))·100。用于把「bounce 数值」翻译成用户能感知的过冲幅度。
+pub fn overshoot_percent(bounce: f32) -> f32 {
+    let zeta = 1.0 - bounce;
+    if zeta >= 1.0 {
+        0.0
+    } else {
+        (-PI * zeta / (1.0 - zeta * zeta).sqrt()).exp() * 100.0
+    }
+}
 
 /// 一维弹簧状态。多维动画（位置 x/y、缩放）用多枚 [`Spring`] 组合即可。
 #[derive(Debug, Clone, Copy)]
@@ -186,5 +214,44 @@ mod tests {
         // 动画途中改向：速度必须原样保留（惯性 + 可中断）。
         s.set_target(-50.0);
         assert_eq!(s.velocity, moving);
+    }
+
+    #[test]
+    fn params_from_matches_two_param_model() {
+        let p = params_from(0.0, 0.30);
+        let omega = 2.0 * PI / 0.30;
+        // k=ω²，bounce=0 时 c=2ω（临界阻尼）。
+        assert!((p.k - omega * omega).abs() < 1e-3, "k 换算不符 k={}", p.k);
+        assert!((p.c - 2.0 * omega).abs() < 1e-3, "c 换算不符 c={}", p.c);
+    }
+
+    #[test]
+    fn overshoot_is_zero_at_critical_damping() {
+        // bounce=0 → ζ=1 → 临界阻尼，无过冲。
+        assert_eq!(overshoot_percent(0.0), 0.0);
+    }
+
+    #[test]
+    fn overshoot_grows_with_bounce() {
+        let low = overshoot_percent(0.2);
+        let high = overshoot_percent(0.6);
+        assert!(low > 0.0, "欠阻尼应有正过冲 low={low}");
+        assert!(high > low, "bounce 越大过冲越大 low={low} high={high}");
+        // 已知值校核：bounce=0.2 → ζ=0.8 → Mp≈1.52%。
+        assert!((low - 1.516).abs() < 0.05, "bounce=0.2 过冲应≈1.5% 实得 {low}");
+    }
+
+    #[test]
+    fn params_from_bounce_drives_spring_overshoot() {
+        // 用换算参数驱动真实弹簧：bounce=0 临界阻尼不越过目标；bounce=0.5 欠阻尼必过冲。
+        let mut crit = Spring::new(0.0, params_from(0.0, 0.30));
+        crit.set_target(100.0);
+        let crit_peak = run_to_peak(&mut crit, 1.0 / 240.0, 2000);
+        assert!(crit_peak <= 100.5, "bounce=0 不应过冲 peak={crit_peak}");
+
+        let mut bouncy = Spring::new(0.0, params_from(0.5, 0.30));
+        bouncy.set_target(100.0);
+        let bouncy_peak = run_to_peak(&mut bouncy, 1.0 / 240.0, 2000);
+        assert!(bouncy_peak > 101.0, "bounce=0.5 应过冲 peak={bouncy_peak}");
     }
 }

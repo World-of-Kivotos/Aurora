@@ -13,7 +13,7 @@ mod theme;
 
 use iced::alignment;
 use iced::time::Instant;
-use iced::widget::{button, canvas, container, mouse_area, row, stack, text};
+use iced::widget::{button, canvas, column, container, mouse_area, row, slider, stack, text};
 use iced::window;
 use iced::{Background, Border, Element, Fill, Size, Subscription, Task, Theme};
 
@@ -48,9 +48,18 @@ impl AcrylicStatus {
     }
 }
 
+/// 弹跳强度可调区间：0=临界阻尼零过冲，上限 0.8 已相当弹。
+const BOUNCE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.8;
+/// 到位时长（秒）可调区间：0.15 干脆、0.6 舒缓。
+const DURATION_RANGE: std::ops::RangeInclusive<f32> = 0.15..=0.6;
+
 struct Aurora {
     mode: Mode,
     cards: Vec<Card>,
+    /// 弹跳强度（1−阻尼比）。见 [`BOUNCE_RANGE`]。滑条实时驱动全体卡片弹簧。
+    bounce: f32,
+    /// 到位时长（秒）。见 [`DURATION_RANGE`]。
+    duration: f32,
     /// 主窗口 Id。由 `open_events` 捕获后用于窗口命令与亚克力应用。
     window: Option<window::Id>,
     acrylic: AcrylicStatus,
@@ -64,6 +73,10 @@ enum Message {
     Tick(Instant),
     /// 第 n 张卡片被点击，切换其抬起/落回。
     CardClicked(usize),
+    /// 弹跳强度滑条变化：换算并即时写入全体卡片弹簧。
+    BounceChanged(f32),
+    /// 到位时长滑条变化：换算并即时写入全体卡片弹簧。
+    DurationChanged(f32),
     ToggleTheme,
     Minimize,
     Close,
@@ -76,20 +89,23 @@ enum Message {
 
 impl Aurora {
     fn boot() -> (Self, Task<Message>) {
-        // 五张卡片对应五枚预设，点击后同样抬起 96px：从 Tap 的零过冲到 Pop 的大过冲，
-        // 肉眼直接对比落定手感的完整梯度。
+        // playground 模式：三张卡片共享同一套由 bounce/duration 实时换算的弹簧，点任意一张
+        // 都用当前手感抬起 96px。默认给一个略带弹性的手感（bounce 0.35 / 0.30s）作起点。
+        let bounce = 0.35;
+        let duration = 0.30;
+        let params = anim::params_from(bounce, duration);
         let cards = vec![
-            Card::new("Tap", "no overshoot", anim::TAP),
-            Card::new("Settle", "bounce 0.10", anim::SETTLE),
-            Card::new("Soft", "bounce 0.12", anim::SOFT),
-            Card::new("Morph", "bounce 0.14", anim::MORPH),
-            Card::new("Pop", "bounce 0.20", anim::POP),
+            Card::new("One", "tap to fling", params),
+            Card::new("Two", "tap to fling", params),
+            Card::new("Three", "tap to fling", params),
         ];
 
         (
             Self {
                 mode: Mode::Dark,
                 cards,
+                bounce,
+                duration,
                 window: None,
                 acrylic: AcrylicStatus::Pending,
                 last_tick: None,
@@ -120,6 +136,16 @@ impl Aurora {
                 self.last_tick = None;
                 Task::none()
             }
+            Message::BounceChanged(value) => {
+                self.bounce = value;
+                self.apply_spring_params();
+                Task::none()
+            }
+            Message::DurationChanged(value) => {
+                self.duration = value;
+                self.apply_spring_params();
+                Task::none()
+            }
             Message::ToggleTheme => {
                 self.mode = self.mode.toggled();
                 Task::none()
@@ -145,6 +171,17 @@ impl Aurora {
                 };
                 Task::none()
             }
+        }
+    }
+
+    /// 把当前 bounce/duration 换算出的 k/c 写入全体卡片弹簧。只改 k、c 两枚参数，刻意
+    /// 保留 current/velocity/target：正在飞行中的卡片会当帧改变手感（可中断、不跳变），
+    /// 静止的卡片则在下次点击时以新手感弹起。
+    fn apply_spring_params(&mut self) {
+        let params = anim::params_from(self.bounce, self.duration);
+        for card in &mut self.cards {
+            card.lift.k = params.k;
+            card.lift.c = params.c;
         }
     }
 
@@ -177,8 +214,11 @@ impl Aurora {
         .width(Fill)
         .height(Fill);
 
-        // 画布铺满整窗（含标题栏区域，让极光背景连续），标题栏作为覆盖层浮在顶部。
-        stack![scene, self.title_bar(tokens)].into()
+        // 画布占据上方全部剩余空间、调参面板固定在底部，二者纵向排布互不遮挡；卡片由画布
+        // 在其收缩后的 bounds 内自动居中，不会压到面板。标题栏仍作为覆盖层浮在最顶部，
+        // 让极光背景在其下连续。
+        let body = column![scene, self.controls(tokens)];
+        stack![body, self.title_bar(tokens)].into()
     }
 
     fn style(&self, _theme: &Theme) -> iced::theme::Style {
@@ -238,6 +278,71 @@ impl Aurora {
         .padding([0.0, 6.0])
         .into()
     }
+
+    /// 底部实时调参面板：两枚滑条（主=弹跳强度，次=到位时长）+ 一行数字回显。半透明面
+    /// 叠在窗口底色上、与卡片同色系，读作一条毛玻璃控制条；固定在窗口底部，不遮挡卡片。
+    fn controls(&self, tokens: Tokens) -> Element<'_, Message> {
+        let bounce_row = slider_row(
+            "Bounce (spring strength)",
+            slider(BOUNCE_RANGE, self.bounce, Message::BounceChanged).step(0.01_f32),
+            format!("{:.2}", self.bounce),
+            tokens,
+        );
+        let duration_row = slider_row(
+            "Duration (seconds)",
+            slider(DURATION_RANGE, self.duration, Message::DurationChanged).step(0.01_f32),
+            format!("{:.2}s", self.duration),
+            tokens,
+        );
+
+        let readout = text(self.readout()).size(12.0).color(tokens.on_surface_muted);
+
+        container(column![bounce_row, duration_row, readout].spacing(10.0))
+            .width(Fill)
+            .padding([14.0, 24.0])
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(Background::Color(tokens.surface)),
+                border: Border {
+                    color: tokens.surface_border,
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// 把「滑条数值」翻译成用户能对上手感的物理量：阻尼比 ζ=1−bounce、标准二阶系统超调
+    /// 百分比、以及该过冲落在 96px 行程上的像素量，末尾附到位时长。全部保留 1 位小数。
+    fn readout(&self) -> String {
+        let mp = anim::overshoot_percent(self.bounce);
+        format!(
+            "bounce {:.1}   damping zeta {:.1}   overshoot {:.1}%  (~{:.1}px of {:.0}px)   settle ~{:.1}s",
+            self.bounce,
+            1.0 - self.bounce,
+            mp,
+            mp / 100.0 * scene::LIFT_DISTANCE,
+            scene::LIFT_DISTANCE,
+            self.duration,
+        )
+    }
+}
+
+/// 组装一枚滑条行：左固定宽标签 + 中间自适应滑条 + 右固定宽当前值。抽出以消除两行重复。
+fn slider_row<'a>(
+    label: &'static str,
+    control: impl Into<Element<'a, Message>>,
+    value: String,
+    tokens: Tokens,
+) -> Element<'a, Message> {
+    row![
+        text(label).size(13.0).color(tokens.title_text).width(190.0),
+        control.into(),
+        text(value).size(13.0).color(tokens.title_text).width(52.0),
+    ]
+    .spacing(16.0)
+    .align_y(alignment::Vertical::Center)
+    .into()
 }
 
 fn icon_button(glyph: Glyph, tokens: Tokens, message: Message) -> Element<'static, Message> {
