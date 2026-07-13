@@ -5,3 +5,16 @@ edition = "2024"
 
 [dependencies]
 aurora-base = { path = "../aurora-base" }
+# 只用运行时的 spawn(rt) + JoinSet/Semaphore/watch(sync) + 异步文件 IO(fs/io-util) + interval(time)。
+# 与 aurora-base 统一不强制 rt-multi-thread，运行时风格交由上层选择。
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "fs", "io-util", "time"] }
+# 客户端由 aurora-base 的工厂构建（rustls）；本 crate 仅使用其类型与方法，TLS 特性经工作区特性合并从 base 引入。
+reqwest = { version = "0.13", default-features = false }
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+# 集成测试用 wiremock（需真正后台运行时），故补 macros/rt-multi-thread，并显式带上 sync/time 便于用 watch/timeout。
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
+wiremock = "0.6"
+tempfile = "3"
