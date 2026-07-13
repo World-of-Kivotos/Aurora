@@ -15,6 +15,7 @@
 - 窗口：无边框 + 圆角 + 亚克力/云母背景。
 - 内容卡片：浮于背景之上的半透明毛玻璃。
 - 亚克力在老 Win10/精简系统上会失效 -> 自动降级为绘制的极光渐变背景（见下）。
+- 注：mailauncher 的 Living Surfaces 走“暖哑光面、零玻璃”路线，与 Aurora 选定的亚克力毛玻璃是两种质感。Aurora 只借用其弹簧手感，表面材质按亚克力走（除非另行决定改哑光）。
 
 ### 排版
 - 中文默认走系统字体（微软雅黑 / Segoe UI 混排），最稳、不增打包体积。可后续换思源黑体提升质感（代价：体积）。
@@ -33,7 +34,13 @@
 ## 三、动效
 
 总基调：弹性（spring），华丽游戏化。三类核心行为：
-1. 二段弹簧：第一段欠阻尼冲过头（overshoot），检测到穿过目标后切第二段过阻尼平滑回落；不清零速度，故可中断、有惯性。具体刚度/阻尼/质量/分界条件/预设参数待 dev 分支调研回填后锁定。
+1. 弹簧（两参模型，非“二段”）：源自 mailauncher develop 分支 frontend/src/design/motion.ts 的 Living Surfaces 动效系统。术语更正——是“两参弹簧”（用感知时长 duration + 弹跳量 bounce 两个参数刻画的标准阻尼谐振子，HyperOS/iOS 风），不是两段/分段弹簧。换算：ω=2π/duration，刚度 k=ω²，阻尼 c=2(1−bounce)ω，质量 m=1，阻尼比 ζ=1−bounce。五枚预设（k/c 已换算，mass=1）：
+   - springTap    duration0.22 bounce0.00  k=815.6 c=57.12  ζ=1.00  按压/悬停（零过冲，脆）
+   - springSettle duration0.26 bounce0.10  k=584.0 c=43.50  ζ=0.90  卡片落定/滑块跟随（最常用）
+   - springPop    duration0.32 bounce0.20  k=385.5 c=31.42  ζ=0.80  原位往返归位（过冲最明显）
+   - springSoft   duration0.34 bounce0.12  k=341.5 c=32.53  ζ=0.88  整页入场
+   - springMorph  duration0.35 bounce0.14  k=322.3 c=30.88  ζ=0.86  图标↔菜单形变
+   实现：Spring{current,velocity,target,k,c,mass}，半隐式欧拉逐帧 step，settled 阈值约 0.01 后吸附并停订阅；目标变化只改 target 不清零 velocity（可中断、有惯性）。springTap 的 ζ=1 不加过冲。
 2. 原位往返（共享元素过渡）：元素从触发它的位置飞出，返回时飞回原位。需要一个 overlay 过渡层记录源/目标几何并驱动飞行插值。
 3. 滑动卡片：列表/面板的滑入滑出与重排（FLIP 式）。
 
