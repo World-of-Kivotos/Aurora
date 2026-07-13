@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# 纯解析 crate：只需 serde 派生 + serde_json 落地反序列化。
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+# 每个 crate 独立错误枚举（architecture.md 二节）。
+thiserror = "2.0.18"
+# 版本号回退识别与加载器版本抽取依赖正则：严格版本式、库坐标前缀、id 内嵌版本子串。
+regex = "1.13.0"

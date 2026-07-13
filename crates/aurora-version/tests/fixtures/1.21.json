@@ -1,0 +1,86 @@
+{
+  "id": "1.21",
+  "type": "release",
+  "time": "2024-06-13T08:24:03+00:00",
+  "releaseTime": "2024-06-13T08:24:03+00:00",
+  "minimumLauncherVersion": 21,
+  "complianceLevel": 1,
+  "mainClass": "net.minecraft.client.main.Main",
+  "assets": "17",
+  "javaVersion": { "component": "java-runtime-delta", "majorVersion": 21 },
+  "assetIndex": {
+    "id": "17",
+    "sha1": "63a8198cacdc21ca940567d5a292e7849f4e2b5c",
+    "size": 449557,
+    "totalSize": 821436429,
+    "url": "https://piston-meta.mojang.com/v1/packages/63a8198cacdc21ca940567d5a292e7849f4e2b5c/17.json"
+  },
+  "downloads": {
+    "client": {
+      "sha1": "0e9a07b9bb3390602f977073aa12884a4ce12431",
+      "size": 26836080,
+      "url": "https://piston-data.mojang.com/v1/objects/0e9a07b9bb3390602f977073aa12884a4ce12431/client.jar"
+    }
+  },
+  "logging": {
+    "client": {
+      "argument": "-Dlog4j.configurationFile=${path}",
+      "file": {
+        "id": "client-1.12.xml",
+        "sha1": "bd65e7d2e3c237be76cfbef4c2405033d7f91521",
+        "size": 888,
+        "url": "https://piston-data.mojang.com/v1/objects/bd65e7d2e3c237be76cfbef4c2405033d7f91521/client-1.12.xml"
+      },
+      "type": "log4j2-xml"
+    }
+  },
+  "libraries": [
+    {
+      "downloads": {
+        "artifact": {
+          "path": "com/google/code/gson/gson/2.10.1/gson-2.10.1.jar",
+          "sha1": "b3add478d4382b78ea20b1671390a858002feb6c",
+          "size": 283367,
+          "url": "https://libraries.minecraft.net/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar"
+        }
+      },
+      "name": "com.google.code.gson:gson:2.10.1"
+    },
+    {
+      "downloads": {
+        "artifact": {
+          "path": "org/lwjgl/lwjgl-freetype/3.3.3/lwjgl-freetype-3.3.3-natives-linux.jar",
+          "sha1": "149070a5480900347071b7074779531f25a6e3dc",
+          "size": 1245129,
+          "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl-freetype/3.3.3/lwjgl-freetype-3.3.3-natives-linux.jar"
+        }
+      },
+      "name": "org.lwjgl:lwjgl-freetype:3.3.3:natives-linux",
+      "rules": [ { "action": "allow", "os": { "name": "linux" } } ]
+    }
+  ],
+  "arguments": {
+    "game": [
+      "--username", "${auth_player_name}",
+      "--version", "${version_name}",
+      "--gameDir", "${game_directory}",
+      "--assetsDir", "${assets_root}",
+      "--assetIndex", "${assets_index_name}",
+      "--uuid", "${auth_uuid}",
+      { "rules": [ { "action": "allow", "features": { "is_demo_user": true } } ], "value": "--demo" },
+      { "rules": [ { "action": "allow", "features": { "has_custom_resolution": true } } ], "value": [ "--width", "${resolution_width}", "--height", "${resolution_height}" ] }
+    ],
+    "jvm": [
+      { "rules": [ { "action": "allow", "os": { "name": "osx" } } ], "value": [ "-XstartOnFirstThread" ] },
+      { "rules": [ { "action": "allow", "os": { "name": "windows" } } ], "value": "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump" },
+      { "rules": [ { "action": "allow", "os": { "arch": "x86" } } ], "value": "-Xss1M" },
+      "-Djava.library.path=${natives_directory}",
+      "-Djna.tmpdir=${natives_directory}",
+      "-Dorg.lwjgl.system.SharedLibraryExtractPath=${natives_directory}",
+      "-Dio.netty.native.workdir=${natives_directory}",
+      "-Dminecraft.launcher.brand=${launcher_name}",
+      "-Dminecraft.launcher.version=${launcher_version}",
+      "-cp", "${classpath}"
+    ]
+  }
+}
