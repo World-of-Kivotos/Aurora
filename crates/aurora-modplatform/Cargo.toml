@@ -5,4 +5,27 @@ edition = "2024"
 
 [dependencies]
 aurora-base = { path = "../aurora-base" }
+# 仅用其 DownloadTask 类型：把平台版本文件转成下载引擎可执行的任务，下载动作交给上层编排。
 aurora-download = { path = "../aurora-download" }
+# 客户端由 aurora-base 工厂构建（rustls）；这里显式开 json（响应体反序列化）+ query（拼查询串，
+# reqwest 0.13 起 .query() 单独门控在此特性）。default-features=false 是刚需——否则 reqwest 默认拉
+# native-tls，与全局 rustls 决策冲突。
+reqwest = { version = "0.13", default-features = false, features = ["json", "query"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+# 解析 Forge/NeoForge 的 META-INF/*.toml 元数据；parse+serde 是 toml::from_str 的前置特性。
+toml = { version = "1", features = ["parse", "serde"] }
+# 读取 jar（zip）内的模组描述文件。default-features=false 关掉 bzip2/zstd/lzma 等 C 依赖后端，
+# 只留纯 Rust 的 deflate（flate2/miniz_oxide），规避 Windows 无 C 编译器时的构建失败。
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+thiserror = "2.0.18"
+tracing = "0.1"
+# 目录扫描(fs)、把 zip 阻塞读放进 spawn_blocking(rt)、聚合搜索并发用 tokio::join!(macros)。
+# 运行时风格由上层选择，不强制 rt-multi-thread。
+tokio = { version = "1", default-features = false, features = ["fs", "rt", "macros"] }
+
+[dev-dependencies]
+# wiremock 需真正后台运行时，测试用 multi_thread flavor，故补 macros/rt-multi-thread，并带 fs 便于建临时模组目录。
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "fs"] }
+wiremock = "0.6"
+tempfile = "3"
