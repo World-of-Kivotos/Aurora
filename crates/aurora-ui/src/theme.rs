@@ -1,10 +1,10 @@
 //! 主题令牌：亮/暗双主题的完整设计令牌 + 与主题无关的尺度刻度（间距/圆角/字号/字体）。
 //!
-//! 页面与组件只引用令牌，不写死色值/尺寸，方便整套换肤与统一改版。色彩体系（白底为主 + 渐变强调）：
-//! 亮色以白/近白为基底画布、仅在角落叠极淡柔光；深色以中性深底同理。蓝→粉斜渐变只作强调色用在主按钮、
-//! 选中导航项/列表行、进度、焦点高光、关键图标，不铺满背景。另有卡片面/描边、多级前景文字、提升面
-//! （标题栏/导航栏，近实底以便作覆盖层）、交互态高光。尺度刻度走 4px 栅格。字体固定微软雅黑
-//! （Windows 自带 CJK 字形，无需内嵌）。
+//! 页面与组件只引用令牌，不写死色值/尺寸，方便整套换肤与统一改版。色彩体系（纯白不透明 + 渐变强调）：
+//! 亮色以纯白为基底画布、深色以纯深底为基底，均不透明、无毛玻璃/半透明/角落柔光。蓝→粉斜渐变只作强调
+//! 色用在主按钮、选中导航项/列表行、进度、焦点高光、关键图标，不铺满背景。卡片与背景同为不透明纯色，
+//! 靠柔和阴影 + 极淡描边分层。另有多级前景文字、提升面（标题栏/导航栏）、交互态高光。尺度刻度走 4px
+//! 栅格。字体固定微软雅黑（Windows 自带 CJK 字形，无需内嵌）。
 
 use iced::{Color, Font, Theme, gradient::Linear};
 
@@ -75,16 +75,16 @@ impl Mode {
 /// 一套解析后的主题令牌。所有颜色随 [`Mode`] 变化；尺度刻度是模块级常量（不随主题变）。
 #[derive(Debug, Clone, Copy)]
 pub struct Tokens {
-    /// 背景基底色（白/近白或中性深底）。背景层铺满此色，是「白底为主」的主视觉。
+    /// 背景基底色（纯白或纯深底，均不透明）。背景层铺满此色，是「纯白不透明」的主视觉。
     pub bg_from: Color,
-    /// 背景次级点缀色（供 [`aurora_linear`](Tokens::aurora_linear) 复用；背景层的角落柔光另取强调色）。
+    /// 背景次级色（仅供 [`aurora_linear`](Tokens::aurora_linear) 助手复用；背景层只铺 bg_from 纯色）。
     pub bg_to: Color,
 
-    /// 卡片毛玻璃面（半透明，叠在背景上）。
+    /// 卡片面（不透明纯白/深底；靠阴影 + 描边与背景分层，不靠透明）。
     pub surface: Color,
-    /// 卡片描边。
+    /// 卡片描边（极淡，与不透明卡片配合作分层）。
     pub surface_border: Color,
-    /// 提升面（标题栏/导航栏，比卡片更实一点，界定结构）。
+    /// 提升面（标题栏/导航栏，不透明纯色以便作覆盖层干净盖住内容）。
     pub elevated: Color,
     /// 提升面描边。
     pub elevated_border: Color,
@@ -112,7 +112,7 @@ pub struct Tokens {
 
     /// 阴影颜色（含 alpha，用于卡片投影）。
     pub shadow: Color,
-    /// 窗口兜底底色（透明窗口下极少直接可见，仅作保险）。供页面 agent 取用（外壳走透明底）。
+    /// 窗口基底底色（与 bg_from 一致，不透明窗口的清屏色）。供页面 agent 取用。
     #[allow(dead_code)]
     pub window_base: Color,
 }
@@ -125,8 +125,8 @@ impl Tokens {
             .add_stop(1.0, self.accent_to)
     }
 
-    /// 背景基底→点缀的线性渐变（约 45° 斜向）。背景层走「基底铺满 + 角落极淡柔光」不用此助手；此处提供
-    /// widget 级（角度式）渐变，供页面 agent 在容器背景复用同款极淡底纹（外壳当前未直接使用）。
+    /// 背景基底→次级色的线性渐变（约 45° 斜向）。背景层只铺 bg_from 纯色不用此助手；此处提供 widget 级
+    /// （角度式）极淡渐变，供页面 agent 在容器背景复用同款极淡底纹（外壳当前未直接使用）。
     #[allow(dead_code)]
     pub fn aurora_linear(&self) -> Linear {
         Linear::new(ACCENT_ANGLE)
@@ -138,15 +138,15 @@ impl Tokens {
 /// 按模式解析令牌。
 pub fn tokens(mode: Mode) -> Tokens {
     match mode {
-        // 白底为主：基底近白，仅角落叠极淡蓝/粉柔光（背景层）；卡片高不透明白 + 极淡描边 + 柔和阴影，
-        // 界限清晰有浮起感；提升面近实白以便作导航覆盖层干净盖住内容；文字深色保证白底可读；蓝→粉只在
-        // 强调元素出现。
+        // 纯白不透明：基底纯白铺满，无角落柔光；卡片不透明纯白 + 极淡描边 + 柔和阴影，靠阴影与描边同白底
+        // 分层、界限清晰有浮起感；提升面同为不透明纯白以便作导航覆盖层干净盖住内容；文字深色保证白底可读；
+        // 蓝→粉只在强调元素出现。
         Mode::Light => Tokens {
-            bg_from: Color::from_rgb8(0xF6, 0xF8, 0xFC),
-            bg_to: Color::from_rgb8(0xEC, 0xF1, 0xFB),
-            surface: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.90),
+            bg_from: Color::from_rgb8(0xFF, 0xFF, 0xFF),
+            bg_to: Color::from_rgb8(0xF5, 0xF7, 0xFC),
+            surface: Color::from_rgb8(0xFF, 0xFF, 0xFF),
             surface_border: Color::from_rgba8(0x2A, 0x3A, 0x66, 0.10),
-            elevated: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.96),
+            elevated: Color::from_rgb8(0xFF, 0xFF, 0xFF),
             elevated_border: Color::from_rgba8(0x2A, 0x3A, 0x66, 0.08),
             on_surface: Color::from_rgb8(0x1B, 0x24, 0x36),
             on_surface_muted: Color::from_rgba8(0x1B, 0x24, 0x36, 0.58),
@@ -158,16 +158,17 @@ pub fn tokens(mode: Mode) -> Tokens {
             accent_to: Color::from_rgb8(0xFF, 0x8F, 0xC7),
             accent_text: Color::from_rgb8(0xFF, 0xFF, 0xFF),
             shadow: Color::from_rgba8(0x23, 0x30, 0x4F, 0.14),
-            window_base: Color::from_rgb8(0xF6, 0xF8, 0xFC),
+            window_base: Color::from_rgb8(0xFF, 0xFF, 0xFF),
         },
-        // 深底为主：中性深炭底（非饱和蓝紫铺满），角落同叠极淡蓝/粉柔光；卡片走弱亮玻璃面，提升面近实
-        // 深底以便作导航覆盖层；蓝→粉同样只在强调元素出现，与亮色一致的「深底 + 渐变强调」而非彩色铺满。
+        // 纯深底不透明：中性深炭底铺满，无角落柔光；卡片与提升面同为不透明深底面板（#181D2B），比背景略亮
+        // 一档、靠阴影与描边分层，提升面借此干净作导航覆盖层；蓝→粉同样只在强调元素出现，与亮色一致的
+        // 「纯底 + 渐变强调」而非彩色铺满。
         Mode::Dark => Tokens {
             bg_from: Color::from_rgb8(0x11, 0x14, 0x20),
             bg_to: Color::from_rgb8(0x1A, 0x1F, 0x2E),
-            surface: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.06),
+            surface: Color::from_rgb8(0x18, 0x1D, 0x2B),
             surface_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.12),
-            elevated: Color::from_rgba8(0x18, 0x1D, 0x2B, 0.97),
+            elevated: Color::from_rgb8(0x18, 0x1D, 0x2B),
             elevated_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.10),
             on_surface: Color::from_rgb8(0xE8, 0xEE, 0xFF),
             on_surface_muted: Color::from_rgba8(0xE8, 0xEE, 0xFF, 0.62),
@@ -179,7 +180,7 @@ pub fn tokens(mode: Mode) -> Tokens {
             accent_to: Color::from_rgb8(0xFF, 0x8F, 0xC7),
             accent_text: Color::from_rgb8(0xFF, 0xFF, 0xFF),
             shadow: Color::from_rgba8(0x00, 0x00, 0x00, 0.50),
-            window_base: Color::from_rgb8(0x0E, 0x11, 0x18),
+            window_base: Color::from_rgb8(0x11, 0x14, 0x20),
         },
     }
 }

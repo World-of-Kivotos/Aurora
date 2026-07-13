@@ -1,6 +1,6 @@
-//! 应用外壳：iced 0.14 无边框圆角透明窗口 + 可见亚克力（失效退极光渐变）+ 自绘标题栏 + 左侧可展开
-//! 图标导航栏 + 右内容区。持有后端门面句柄、全局路由与消息，负责把帧与消息转发给当前页、把页面 Task
-//! 用 `.map` 包回全局。页面 agent 不碰本文件：各页只在 `pages/<page>.rs` 内按契约填充。
+//! 应用外壳：iced 0.14 无边框圆角不透明窗口（纯白/纯深底）+ 自绘标题栏 + 左侧可展开图标导航栏 +
+//! 右内容区。持有后端门面句柄、全局路由与消息，负责把帧与消息转发给当前页、把页面 Task 用 `.map`
+//! 包回全局。页面 agent 不碰本文件：各页只在 `pages/<page>.rs` 内按契约填充。
 
 use std::sync::Arc;
 
@@ -82,14 +82,6 @@ impl Screen {
     }
 }
 
-/// 亚克力应用结果。据此决定背景层是否画极光渐变（生效则透明让亚克力透出，失效则画渐变兜底）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AcrylicStatus {
-    Pending,
-    Active,
-    Unsupported,
-}
-
 /// 后端就绪后的外壳内容：门面句柄 + 当前页 + 各页状态。
 struct Ready {
     core: Arc<Aurora>,
@@ -118,9 +110,8 @@ enum Stage {
 /// 应用状态。
 pub struct App {
     mode: Mode,
-    /// 主窗口 Id（`open_events` 捕获后用于窗口命令与亚克力应用）。
+    /// 主窗口 Id（`open_events` 捕获后用于最小化/关闭/拖拽等窗口命令）。
     window: Option<window::Id>,
-    acrylic: AcrylicStatus,
     background: AuroraBackground,
     /// 导航栏是否处于展开态（hover 驱动）。
     nav_expanded: bool,
@@ -151,8 +142,6 @@ pub enum Message {
     DragWindow,
     /// 主窗口打开，携带其 Id。
     WindowOpened(window::Id),
-    /// 亚克力应用结果。
-    AcrylicResult(bool),
     /// 后端门面载入完成（成功句柄或错误说明）。
     CoreLoaded(Result<Arc<Aurora>, String>),
     /// 主页消息。
@@ -172,7 +161,6 @@ impl App {
         let app = App {
             mode: Mode::Light,
             window: None,
-            acrylic: AcrylicStatus::Pending,
             background: AuroraBackground::new(),
             nav_expanded: false,
             nav_width: Animated::new(NAV_COLLAPSED, anim::aurora_rail()),
@@ -194,7 +182,6 @@ impl App {
                 self.last_tick = Some(now);
                 self.nav_width.step(dt);
                 self.page_enter.step(dt);
-                self.background.step(dt);
                 // 把帧广播给当前页推进其动画。
                 if let Stage::Ready(ready) = &mut self.stage {
                     let ctx = Ctx {
@@ -224,22 +211,13 @@ impl App {
             }
             Message::ToggleTheme => {
                 self.mode = self.mode.toggled();
-                // 主题变了，若亚克力生效需按新明暗重涂着色。
-                self.reapply_acrylic()
+                Task::none()
             }
             Message::Minimize => self.window_task(|id| window::minimize(id, true)),
             Message::Close => self.window_task(window::close),
             Message::DragWindow => self.window_task(window::drag),
             Message::WindowOpened(id) => {
                 self.window = Some(id);
-                self.apply_acrylic(id)
-            }
-            Message::AcrylicResult(applied) => {
-                self.acrylic = if applied {
-                    AcrylicStatus::Active
-                } else {
-                    AcrylicStatus::Unsupported
-                };
                 Task::none()
             }
             Message::CoreLoaded(result) => {
@@ -299,9 +277,7 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let shell_animating = !self.nav_width.settled()
-            || !self.page_enter.settled()
-            || self.background.animating();
+        let shell_animating = !self.nav_width.settled() || !self.page_enter.settled();
         let page_animating = match &self.stage {
             Stage::Ready(ready) => page_animating(ready.screen, &ready.pages),
             _ => false,
@@ -322,8 +298,7 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         let tokens = theme::tokens(self.mode);
-        let draw_gradient = !matches!(self.acrylic, AcrylicStatus::Active);
-        let background = self.background.view(tokens, draw_gradient);
+        let background = self.background.view(tokens);
 
         let foreground: Element<'_, Message> = match &self.stage {
             Stage::Loading => center_message("正在初始化 Aurora…", tokens),
@@ -479,10 +454,11 @@ impl App {
     }
 
     fn style(&self, _theme: &Theme) -> iced::theme::Style {
-        // 窗口底为透明：亚克力生效时露出亚克力，失效时露出背景层画的极光渐变。
+        // 窗口底为不透明纯色（Light 纯白 / Dark 纯深底），无桌面穿透；随明暗走令牌基底色。
+        let tokens = theme::tokens(self.mode);
         iced::theme::Style {
-            background_color: iced::Color::TRANSPARENT,
-            text_color: theme::tokens(self.mode).title_text,
+            background_color: tokens.bg_from,
+            text_color: tokens.title_text,
         }
     }
 
@@ -494,23 +470,6 @@ impl App {
         match self.window {
             Some(id) => action(id),
             None => window::latest().and_then(action),
-        }
-    }
-
-    /// 对给定窗口应用当前明暗的亚克力，结果经 AcrylicResult 回报。
-    fn apply_acrylic(&self, id: window::Id) -> Task<Message> {
-        let tint = acrylic_tint(self.mode);
-        window::run(id, move |handle| {
-            window_vibrancy::apply_acrylic(handle, Some(tint)).is_ok()
-        })
-        .map(Message::AcrylicResult)
-    }
-
-    /// 主题切换后按新明暗重涂亚克力（窗口未知时无操作）。
-    fn reapply_acrylic(&self) -> Task<Message> {
-        match self.window {
-            Some(id) => self.apply_acrylic(id),
-            None => Task::none(),
         }
     }
 }
@@ -624,22 +583,14 @@ fn titlebar_button(theme: &Theme, status: button::Status) -> button::Style {
     style
 }
 
-/// window-vibrancy 亚克力着色（RGBA，A 为强度）。按明暗给不同底色。
-fn acrylic_tint(mode: Mode) -> (u8, u8, u8, u8) {
-    match mode {
-        Mode::Dark => (18, 22, 40, 160),
-        Mode::Light => (245, 247, 255, 160),
-    }
-}
-
 fn window_settings() -> window::Settings {
     let mut settings = window::Settings {
         size: Size::new(1000.0, 640.0),
         min_size: Some(Size::new(760.0, 480.0)),
         resizable: true,
         decorations: false,
-        // 透明窗口是「可见亚克力」的前提；亚克力失效时由背景层画的极光渐变兜底。
-        transparent: true,
+        // 不透明窗口：内容自绘纯白/纯深底，无桌面穿透。无边框圆角与投影走下面的 DWM 设置。
+        transparent: false,
         ..window::Settings::default()
     };
 
