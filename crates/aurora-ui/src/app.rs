@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use aurora_core::Aurora;
 use iced::time::Instant;
-use iced::widget::{button, column, container, mouse_area, row, stack, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
 use iced::{
-    Alignment, Background, Border, Element, Fill, Length, Size, Subscription, Task, Theme, Vector,
-    window,
+    Alignment, Background, Border, Element, Fill, Length, Shadow, Size, Subscription, Task, Theme,
+    Vector, window,
 };
 
 use crate::anim::{self, Animated};
@@ -170,12 +170,12 @@ pub enum Message {
 impl App {
     fn boot() -> (Self, Task<Message>) {
         let app = App {
-            mode: Mode::Dark,
+            mode: Mode::Light,
             window: None,
             acrylic: AcrylicStatus::Pending,
             background: AuroraBackground::new(),
             nav_expanded: false,
-            nav_width: Animated::new(NAV_COLLAPSED, anim::aurora()),
+            nav_width: Animated::new(NAV_COLLAPSED, anim::aurora_rail()),
             page_enter: Animated::new(1.0, anim::aurora_enter()),
             last_tick: None,
             stage: Stage::Loading,
@@ -335,14 +335,31 @@ impl App {
         stack![background, body].into()
     }
 
-    /// Ready 状态的完整外壳：左导航 + 右内容。
+    /// Ready 状态的完整外壳：内容层 + 浮在其上的导航覆盖层。
+    ///
+    /// 导航栏做成 `stack` 覆盖层而非并排列：内容层左侧只用一枚固定 [`NAV_COLLAPSED`] 宽的占位（`Space`）
+    /// 让内容从收起宽度之后起排，导航展开/收起时内容**不再逐帧重排**（省去整棵内容子树的重排，稳住帧
+    /// 率）；导航面板按弹簧宽度浮在内容之上展开。hover 命中区即导航面板自身：收起 64、展开 208 两个边界
+    /// 天然构成滞回（须移入 64 才展开、移出 208 才收起），配合脆弹簧（[`anim::aurora_rail`] 零过冲）不会
+    /// 出现命中边界来回扫过光标的抖动。
     fn shell<'a>(&'a self, ready: &'a Ready, tokens: Tokens) -> Element<'a, Message> {
-        row![self.nav_rail(ready, tokens), self.content(ready)]
+        let base = row![
+            Space::new()
+                .width(Length::Fixed(NAV_COLLAPSED))
+                .height(Length::Fill),
+            self.content(ready),
+        ]
+        .width(Fill)
+        .height(Fill);
+
+        stack![base, self.nav_rail(ready, tokens)]
+            .width(Fill)
             .height(Fill)
             .into()
     }
 
-    /// 左侧可展开导航栏。宽度由弹簧驱动；hover 进入/离开切换展开态。
+    /// 左侧可展开导航栏（外壳的覆盖层）。宽度由弹簧驱动；hover 进入/离开切换展开态。面板近实底 + 右侧
+    /// 柔和阴影，展开时干净盖住其下内容并呈浮起感。
     fn nav_rail<'a>(&'a self, ready: &'a Ready, tokens: Tokens) -> Element<'a, Message> {
         let width = self.nav_width.value();
         let reveal = ((width - NAV_COLLAPSED) / (NAV_EXPANDED - NAV_COLLAPSED)).clamp(0.0, 1.0);
@@ -372,6 +389,12 @@ impl App {
                     color: tokens.elevated_border,
                     width: 1.0,
                     radius: 0.0.into(),
+                },
+                // 右侧柔和投影，让展开的面板从内容上「浮起」，界限清晰。
+                shadow: Shadow {
+                    color: tokens.shadow,
+                    offset: Vector::new(3.0, 0.0),
+                    blur_radius: 16.0,
                 },
                 ..container::Style::default()
             });

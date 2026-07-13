@@ -70,6 +70,12 @@ pub fn aurora_enter() -> Params {
     params_from(0.30, 0.34)
 }
 
+/// 导航栏宽度这类布局量的脆弹簧（bounce 0.0 / duration 0.24s，ζ=1.00 临界阻尼）。宽度是布局量，
+/// 过冲会让侧边栏「抽一下」并让 hover 命中边界来回扫过光标造成抖动；故取零过冲、脆而快的手感。
+pub fn aurora_rail() -> Params {
+    params_from(0.0, 0.24)
+}
+
 /// 两参手感模型：由弹跳强度 `bounce` 与到位时长 `duration`（秒，质量恒为 1）换算刚度/阻尼。
 /// ω=2π/duration，k=ω²，c=2(1−bounce)ω。bounce 即 1−ζ，故阻尼比 ζ=1−bounce：
 /// bounce=0 得临界阻尼零过冲，bounce 越大越欠阻尼、过冲越明显。
@@ -346,6 +352,18 @@ mod tests {
             press_peak < default_peak,
             "按压应比默认更脆 press={press_peak} default={default_peak}"
         );
+    }
+
+    #[test]
+    fn aurora_rail_settles_without_overshoot() {
+        // 导航栏脆弹簧 ζ=1.00 临界阻尼：宽度弹到目标不得越过（避免侧边栏「抽一下」与 hover 边界抖动）。
+        let mut s = Spring::new(0.0, aurora_rail());
+        s.set_target(100.0);
+        let peak = run_to_peak(&mut s, 1.0 / 240.0, 2000);
+        assert!(peak <= 100.5, "导航栏脆弹簧不应过冲 peak={peak}");
+        assert!(s.settled());
+        assert_eq!(s.current, 100.0);
+        assert_eq!(s.velocity, 0.0);
     }
 
     #[test]

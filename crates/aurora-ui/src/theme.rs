@@ -1,8 +1,10 @@
 //! 主题令牌：亮/暗双主题的完整设计令牌 + 与主题无关的尺度刻度（间距/圆角/字号/字体）。
 //!
-//! 页面与组件只引用令牌，不写死色值/尺寸，方便整套换肤与统一改版。色彩体系：极光背景蓝→粉斜渐变、
-//! 卡片毛玻璃面/描边、多级前景文字、提升面（标题栏/导航栏）、交互态高光、蓝→粉强调渐变。尺度刻度
-//! 走 4px 栅格。字体固定微软雅黑（Windows 自带 CJK 字形，无需内嵌）。
+//! 页面与组件只引用令牌，不写死色值/尺寸，方便整套换肤与统一改版。色彩体系（白底为主 + 渐变强调）：
+//! 亮色以白/近白为基底画布、仅在角落叠极淡柔光；深色以中性深底同理。蓝→粉斜渐变只作强调色用在主按钮、
+//! 选中导航项/列表行、进度、焦点高光、关键图标，不铺满背景。另有卡片面/描边、多级前景文字、提升面
+//! （标题栏/导航栏，近实底以便作覆盖层）、交互态高光。尺度刻度走 4px 栅格。字体固定微软雅黑
+//! （Windows 自带 CJK 字形，无需内嵌）。
 
 use iced::{Color, Font, Theme, gradient::Linear};
 
@@ -73,9 +75,9 @@ impl Mode {
 /// 一套解析后的主题令牌。所有颜色随 [`Mode`] 变化；尺度刻度是模块级常量（不随主题变）。
 #[derive(Debug, Clone, Copy)]
 pub struct Tokens {
-    /// 极光背景渐变起点（浅蓝端）。
+    /// 背景基底色（白/近白或中性深底）。背景层铺满此色，是「白底为主」的主视觉。
     pub bg_from: Color,
-    /// 极光背景渐变终点（粉端）。
+    /// 背景次级点缀色（供 [`aurora_linear`](Tokens::aurora_linear) 复用；背景层的角落柔光另取强调色）。
     pub bg_to: Color,
 
     /// 卡片毛玻璃面（半透明，叠在背景上）。
@@ -123,8 +125,8 @@ impl Tokens {
             .add_stop(1.0, self.accent_to)
     }
 
-    /// 极光背景线性渐变（约 45° 斜向，浅蓝→粉）。背景层的画布走几何渐变（两点式），此处提供 widget
-    /// 级（角度式）渐变，供页面 agent 在容器背景复用同款极光（外壳当前未直接使用）。
+    /// 背景基底→点缀的线性渐变（约 45° 斜向）。背景层走「基底铺满 + 角落极淡柔光」不用此助手；此处提供
+    /// widget 级（角度式）渐变，供页面 agent 在容器背景复用同款极淡底纹（外壳当前未直接使用）。
     #[allow(dead_code)]
     pub fn aurora_linear(&self) -> Linear {
         Linear::new(ACCENT_ANGLE)
@@ -136,43 +138,48 @@ impl Tokens {
 /// 按模式解析令牌。
 pub fn tokens(mode: Mode) -> Tokens {
     match mode {
+        // 白底为主：基底近白，仅角落叠极淡蓝/粉柔光（背景层）；卡片高不透明白 + 极淡描边 + 柔和阴影，
+        // 界限清晰有浮起感；提升面近实白以便作导航覆盖层干净盖住内容；文字深色保证白底可读；蓝→粉只在
+        // 强调元素出现。
         Mode::Light => Tokens {
-            bg_from: Color::from_rgb8(0xA9, 0xC7, 0xFF),
-            bg_to: Color::from_rgb8(0xFF, 0xC2, 0xE2),
-            surface: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.72),
-            surface_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.90),
-            elevated: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.55),
-            elevated_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.75),
-            on_surface: Color::from_rgb8(0x1B, 0x24, 0x40),
-            on_surface_muted: Color::from_rgba8(0x1B, 0x24, 0x40, 0.60),
+            bg_from: Color::from_rgb8(0xF6, 0xF8, 0xFC),
+            bg_to: Color::from_rgb8(0xEC, 0xF1, 0xFB),
+            surface: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.90),
+            surface_border: Color::from_rgba8(0x2A, 0x3A, 0x66, 0.10),
+            elevated: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.96),
+            elevated_border: Color::from_rgba8(0x2A, 0x3A, 0x66, 0.08),
+            on_surface: Color::from_rgb8(0x1B, 0x24, 0x36),
+            on_surface_muted: Color::from_rgba8(0x1B, 0x24, 0x36, 0.58),
             title_text: Color::from_rgb8(0x23, 0x30, 0x4F),
-            icon: Color::from_rgb8(0x33, 0x41, 0x5C),
-            hover: Color::from_rgba8(0x33, 0x41, 0x5C, 0.10),
-            selected: Color::from_rgba8(0x6F, 0xA8, 0xFF, 0.22),
+            icon: Color::from_rgb8(0x3A, 0x47, 0x63),
+            hover: Color::from_rgba8(0x2A, 0x3A, 0x66, 0.07),
+            selected: Color::from_rgba8(0x6F, 0xA8, 0xFF, 0.20),
             accent_from: Color::from_rgb8(0x6F, 0xA8, 0xFF),
             accent_to: Color::from_rgb8(0xFF, 0x8F, 0xC7),
             accent_text: Color::from_rgb8(0xFF, 0xFF, 0xFF),
-            shadow: Color::from_rgba8(0x23, 0x30, 0x4F, 0.18),
-            window_base: Color::from_rgb8(0xCF, 0xE0, 0xFF),
+            shadow: Color::from_rgba8(0x23, 0x30, 0x4F, 0.14),
+            window_base: Color::from_rgb8(0xF6, 0xF8, 0xFC),
         },
+        // 深底为主：中性深炭底（非饱和蓝紫铺满），角落同叠极淡蓝/粉柔光；卡片走弱亮玻璃面，提升面近实
+        // 深底以便作导航覆盖层；蓝→粉同样只在强调元素出现，与亮色一致的「深底 + 渐变强调」而非彩色铺满。
         Mode::Dark => Tokens {
-            bg_from: Color::from_rgb8(0x1B, 0x2B, 0x52),
-            bg_to: Color::from_rgb8(0x3E, 0x23, 0x40),
-            surface: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.10),
-            surface_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.22),
-            elevated: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.06),
-            elevated_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.14),
+            bg_from: Color::from_rgb8(0x11, 0x14, 0x20),
+            bg_to: Color::from_rgb8(0x1A, 0x1F, 0x2E),
+            surface: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.06),
+            surface_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.12),
+            elevated: Color::from_rgba8(0x18, 0x1D, 0x2B, 0.97),
+            elevated_border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.10),
             on_surface: Color::from_rgb8(0xE8, 0xEE, 0xFF),
             on_surface_muted: Color::from_rgba8(0xE8, 0xEE, 0xFF, 0.62),
             title_text: Color::from_rgb8(0xE6, 0xEC, 0xFF),
             icon: Color::from_rgb8(0xC7, 0xD2, 0xEC),
-            hover: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.08),
-            selected: Color::from_rgba8(0x6F, 0xA8, 0xFF, 0.26),
+            hover: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.07),
+            selected: Color::from_rgba8(0x6F, 0xA8, 0xFF, 0.28),
             accent_from: Color::from_rgb8(0x6F, 0xA8, 0xFF),
             accent_to: Color::from_rgb8(0xFF, 0x8F, 0xC7),
             accent_text: Color::from_rgb8(0xFF, 0xFF, 0xFF),
-            shadow: Color::from_rgba8(0x00, 0x00, 0x00, 0.45),
-            window_base: Color::from_rgb8(0x16, 0x21, 0x3C),
+            shadow: Color::from_rgba8(0x00, 0x00, 0x00, 0.50),
+            window_base: Color::from_rgb8(0x0E, 0x11, 0x18),
         },
     }
 }
