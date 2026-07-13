@@ -12,7 +12,7 @@ mod scene;
 mod theme;
 
 use iced::alignment;
-use iced::time::{self, Duration, Instant};
+use iced::time::Instant;
 use iced::widget::{button, canvas, container, mouse_area, row, stack, text};
 use iced::window;
 use iced::{Background, Border, Element, Fill, Size, Subscription, Task, Theme};
@@ -149,10 +149,14 @@ impl Aurora {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        // 收敛即停：只要还有弹簧未静止就保持 16ms 帧订阅，全部静止后退订以省电。
+        // 收敛即停：仅在有弹簧未静止时挂帧订阅，全部静止后退订以省电。
         let animating = self.cards.iter().any(|card| !card.lift.settled());
         let ticks = if animating {
-            time::every(Duration::from_millis(16)).map(Message::Tick)
+            // 用 window::frames() 而非 time::every(16ms) 驱动动画：前者每呈现一帧触发一次，
+            // 随合成器按显示器刷新率跑并与 vsync 同步、帧距均匀；后者在 Windows 上受系统
+            // 定时器 ~15.6ms 粒度限制，请求 16ms 被上取整到 ~31ms（~32fps）且与刷新不同步。
+            // 产出的 Instant 为本帧 RedrawRequested 时刻，直接喂给 Tick 与 last_tick 求真实 dt。
+            window::frames().map(Message::Tick)
         } else {
             Subscription::none()
         };
