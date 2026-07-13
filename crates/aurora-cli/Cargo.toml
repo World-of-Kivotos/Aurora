@@ -5,3 +5,10 @@ edition = "2024"
 
 [dependencies]
 aurora-core = { path = "../aurora-core" }
+# 子命令解析（derive API）。
+clap = { version = "4", features = ["derive"] }
+# 端到端异步驱动 + 事件/日志 channel。
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync"] }
+# 库内只发事件的 tracing 在此层配置 subscriber（fmt + env-filter）。
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
