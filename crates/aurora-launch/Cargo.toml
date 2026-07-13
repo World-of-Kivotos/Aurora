@@ -1,0 +1,11 @@
+[package]
+name = "aurora-launch"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aurora-base = { path = "../aurora-base" }
+aurora-auth = { path = "../aurora-auth" }
+aurora-version = { path = "../aurora-version" }
+aurora-java = { path = "../aurora-java" }
+aurora-instance = { path = "../aurora-instance" }

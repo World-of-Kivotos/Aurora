@@ -1,0 +1,8 @@
+[package]
+name = "aurora-modplatform"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aurora-base = { path = "../aurora-base" }
+aurora-download = { path = "../aurora-download" }
