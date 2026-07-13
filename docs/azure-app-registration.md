@@ -50,18 +50,22 @@
 
 现象：个人微软账号（如 QQ 邮箱账号）登录 portal.azure.com / entra.microsoft.com 时，报 "所选用户帐户在租户 'Microsoft Services' 中不存在，且无法访问应用程序 c44b4083-3bb0-49c1-b47d-974e53cbdf3c"，或进了欢迎页但"没有订阅"、搜索不可用、弹 AADSTS16000 interaction_required。
 
-成因：`c44b4083-...` 就是 Azure Portal 本身；`f8cdef31-a31e-4b4a-93e4-5f571e91255a`（显示名 "Microsoft Services"）是微软给"没有自己目录/订阅"的纯个人账号默认挂靠的公共受限租户。账号在这里只是受限访客，没有创建应用的权限，故门户取不到访问令牌。这是 2024-11 以来的已知问题，非账号损坏。
+成因：`c44b4083-...` 就是 Azure Portal 本身；`f8cdef31-a31e-4b4a-93e4-5f571e91255a`（显示名 "Microsoft Services"）是微软给"没有自己目录/订阅"的纯个人账号默认挂靠的公共受限租户。账号在这里只是受限访客，没有创建应用的权限，故门户取不到访问令牌。进一步地，微软自 2024 年起禁止"在目录外部创建应用程序"，纯个人账号已彻底不能注册应用，历史遗留的个人账号 app 也无法迁移，只能在新目录里重建。所以唯一出路是先给账号搞到一个属于自己的目录/租户。
 
-解决（让账号拥有自己的目录）：
-1. 彻底登出：account.microsoft.com → 在所有位置退出；然后开无痕/隐私窗口，后续都在无痕窗口操作，避免 SSO 又把你带回受限租户。
-2. 建自己的租户（免费、通常不要卡）：无痕窗口打开深链接 `https://portal.azure.com/#create/Microsoft.AzureActiveDirectory`（或 entra.microsoft.com → Identity → Manage tenants → Create），类型选 Microsoft Entra ID，填组织名与国家，创建。你会成为该租户的全局管理员。
-3. 切换到新租户：右上角设置齿轮 → 切换目录 → 选新建的租户。
-4. 再进 App registrations → New registration，正常注册。
-5. 备选：若创建向导也被坏令牌卡住，用 <https://azure.microsoft.com/free> 注册免费账户，会自动生成 Default Directory（可能要绑卡验证）。
+重要：**"Entra 管理中心 → 管理租户 → 创建" 与深链接 `portal.azure.com/#create/Microsoft.AzureActiveDirectory` 对"零目录"账号走不通**——官方规定只有付费客户才能从 Entra 管理中心创建租户。别在这条路上耗。
 
-应用注册在哪个租户不影响 Minecraft 登录——client_id 通用，登录仍走 consumers 端点。
+解决（三选一，让账号拥有自己的目录）：
+1. 先彻底登出：account.microsoft.com → 在所有位置退出；开无痕/隐私窗口，后续都在无痕窗口操作，避免 SSO 又把你带回受限租户。
+2. 选一条获取目录的路径：
+   - M365 开发人员计划（不绑卡，门槛：资格审核 + 约 90 天靠开发活动续期）：无痕窗口访问 <https://developer.microsoft.com/microsoft-365/dev-program>，用该账号 Join now，如实填开发用途，领取后得到一个全新 E5 开发者租户（分配 `xxx.onmicrosoft.com` 域名）。
+   - M365 免费试用租户（不绑卡，验证手机号，30 天试用）：注册 Microsoft 365 商业版免费试用，自动生成新目录。门槛比开发者计划低（不做资格审核），但有试用期。
+   - Azure 免费账户（要绑卡做身份验证、不扣费、目录永久、app 注册永久免费）：<https://azure.microsoft.com/free>，自动生成 Default Directory。最稳、最适合长期运行的正式产品，代价是绑一张卡。
+3. 切换到新目录：entra.microsoft.com 右上角设置齿轮 → 切换目录 → 选新建的租户（别停在 Microsoft Services）。
+4. 再进 App registrations → New registration，横幅消失即可正常注册。
 
-来源：<https://learn.microsoft.com/en-gb/answers/questions/2223918/unable-to-manage-or-leave-microsoft-services-tenan> ；<https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-create-new-tenant> ；应用 GUID 对照 <https://github.com/dmb2168/o365-appids/blob/master/ids.md>
+选型提醒（针对 Aurora 这种要发布的产品）：开发者计划/试用租户都有有效期，生产环境一旦到期会导致所有用户登录中断，不适合正式发布用；正式发布应使用 Azure 免费账户这种永久目录。开发调试期根本不必自建，直接用第零节的调试 client_id 即可，把自建目录推迟到接近发布再办。应用注册在哪个租户不影响 Minecraft 登录——client_id 通用，登录仍走 consumers 端点。
+
+来源：<https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/microsoft-entra-id-free>（付费客户才能建租户 + Azure 免费账户需绑卡验证）；<https://learn.microsoft.com/en-us/office/developer-program/microsoft-365-developer-program-faq>（开发者计划）；<https://learn.microsoft.com/en-gb/answers/questions/2127352/how-to-move-an-azure-application-created-under-a-p>（个人账号 app 无法迁移）；应用 GUID 对照 <https://github.com/dmb2168/o365-appids/blob/master/ids.md>
 
 ## 六、已知怪癖
 
