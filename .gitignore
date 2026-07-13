@@ -1,2 +1,5 @@
 /target
 /target-*
+
+# 内部工程协作规范，不公开
+/CLAUDE.md
