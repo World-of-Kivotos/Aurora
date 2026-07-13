@@ -48,6 +48,28 @@ pub const SOFT: Params = Params::new(341.5, 32.53);
 #[allow(dead_code)]
 pub const MORPH: Params = Params::new(322.3, 30.88);
 
+// ---- Aurora 默认手感预设 ----
+//
+// 用户实测选定的三档手感（偏华丽）。以函数而非 const 暴露，避免手算 k/c 常量随 duration/bounce
+// 调整而漂移失真：换算逻辑只此一处（[`params_from`]），预设即其命名调用点。
+
+/// Aurora 默认弹簧（bounce 0.35 / duration 0.30s，ζ=0.65）。大多数过渡的默认手感。
+pub fn aurora() -> Params {
+    params_from(0.35, 0.30)
+}
+
+/// 按压/悬停更脆的手感（bounce 0.10 / duration 0.22s，ζ=0.90）。用于按钮按下、图标点按。
+/// 供页面 agent 给按压形变取用（外壳当前未直接使用）。
+#[allow(dead_code)]
+pub fn aurora_press() -> Params {
+    params_from(0.10, 0.22)
+}
+
+/// 整页入场略软的手感（bounce 0.30 / duration 0.34s，ζ=0.70）。用于页面切换、卡片首次落定。
+pub fn aurora_enter() -> Params {
+    params_from(0.30, 0.34)
+}
+
 /// 两参手感模型：由弹跳强度 `bounce` 与到位时长 `duration`（秒，质量恒为 1）换算刚度/阻尼。
 /// ω=2π/duration，k=ω²，c=2(1−bounce)ω。bounce 即 1−ζ，故阻尼比 ζ=1−bounce：
 /// bounce=0 得临界阻尼零过冲，bounce 越大越欠阻尼、过冲越明显。
@@ -58,6 +80,8 @@ pub fn params_from(bounce: f32, duration: f32) -> Params {
 
 /// 标准二阶欠阻尼系统的阶跃超调百分比 Mp。ζ=1−bounce：ζ≥1（bounce≤0）时无过冲返回 0，
 /// 否则 Mp = exp(−π·ζ/√(1−ζ²))·100。用于把「bounce 数值」翻译成用户能感知的过冲幅度。
+/// 供调参界面/页面 agent 展示手感取用（外壳当前未直接使用）。
+#[allow(dead_code)]
 pub fn overshoot_percent(bounce: f32) -> f32 {
     let zeta = 1.0 - bounce;
     if zeta >= 1.0 {
@@ -119,6 +143,59 @@ impl Spring {
     /// 收敛判定：距目标位移与速度的绝对值均在阈值内。
     pub fn settled(&self) -> bool {
         (self.target - self.current).abs() < REST_EPSILON && self.velocity.abs() < REST_EPSILON
+    }
+}
+
+/// 便捷的动画值封装：内含一枚 [`Spring`]，把「设目标 / 逐帧推进 / 取当前值 / 判静止」收敛成一个
+/// 最小接口，供组件与页面持有。多维动画（x/y/缩放）持多枚 [`Animated`] 即可。
+///
+/// 与直接用 [`Spring`] 相比，[`Animated`] 只暴露语义方法（不暴露 k/c/velocity 字段），页面无需关心
+/// 积分细节；改手感用 [`set_params`](Self::set_params)（保留 current/velocity，可中断切换）。
+#[derive(Debug, Clone, Copy)]
+pub struct Animated {
+    spring: Spring,
+}
+
+impl Animated {
+    /// 以初值与手感创建静止动画值（current==target，速度 0）。
+    pub fn new(value: f32, params: Params) -> Self {
+        Self {
+            spring: Spring::new(value, params),
+        }
+    }
+
+    /// 设定新目标，保留当前速度（可中断、有惯性）。
+    pub fn set(&mut self, target: f32) {
+        self.spring.set_target(target);
+    }
+
+    /// 推进一帧（dt 秒，内部钳制到 [`MAX_DT`]）。
+    pub fn step(&mut self, dt: f32) {
+        self.spring.step(dt);
+    }
+
+    /// 当前值（用于插值渲染，如位移/缩放/透明度）。
+    pub fn value(&self) -> f32 {
+        self.spring.current
+    }
+
+    /// 当前目标值。供页面 agent 判断动画朝向（外壳当前未直接使用）。
+    #[allow(dead_code)]
+    pub fn target(&self) -> f32 {
+        self.spring.target
+    }
+
+    /// 是否已收敛静止（用于决定是否继续挂帧订阅）。
+    pub fn settled(&self) -> bool {
+        self.spring.settled()
+    }
+
+    /// 换手感：只改 k/c，保留 current/velocity/target。进行中的动画会当帧平滑改变手感、不跳变。
+    /// 供页面 agent 运行期切换手感取用（外壳当前未直接使用）。
+    #[allow(dead_code)]
+    pub fn set_params(&mut self, params: Params) {
+        self.spring.k = params.k;
+        self.spring.c = params.c;
     }
 }
 
@@ -239,6 +316,65 @@ mod tests {
         assert!(high > low, "bounce 越大过冲越大 low={low} high={high}");
         // 已知值校核：bounce=0.2 → ζ=0.8 → Mp≈1.52%。
         assert!((low - 1.516).abs() < 0.05, "bounce=0.2 过冲应≈1.5% 实得 {low}");
+    }
+
+    #[test]
+    fn aurora_preset_matches_selected_feel() {
+        // 用户实测选定：bounce 0.35 / duration 0.30。预设必须等于该两参换算，不得漂移。
+        let p = aurora();
+        let expect = params_from(0.35, 0.30);
+        assert_eq!(p, expect);
+        // ζ=1−bounce=0.65 欠阻尼：驱动真实弹簧必然过冲。
+        let mut s = Spring::new(0.0, p);
+        s.set_target(100.0);
+        let peak = run_to_peak(&mut s, 1.0 / 240.0, 2000);
+        assert!(peak > 100.5, "Aurora 默认应有过冲 peak={peak}");
+    }
+
+    #[test]
+    fn aurora_press_is_crisper_than_default() {
+        // 按压手感 ζ=0.90 明显比默认 ζ=0.65 更接近临界阻尼，过冲更小。
+        let mut press = Spring::new(0.0, aurora_press());
+        press.set_target(100.0);
+        let press_peak = run_to_peak(&mut press, 1.0 / 240.0, 2000);
+
+        let mut default = Spring::new(0.0, aurora());
+        default.set_target(100.0);
+        let default_peak = run_to_peak(&mut default, 1.0 / 240.0, 2000);
+
+        assert!(
+            press_peak < default_peak,
+            "按压应比默认更脆 press={press_peak} default={default_peak}"
+        );
+    }
+
+    #[test]
+    fn animated_tracks_target_and_settles_exactly() {
+        let mut a = Animated::new(0.0, aurora());
+        a.set(64.0);
+        assert_eq!(a.target(), 64.0);
+        for _ in 0..3000 {
+            a.step(1.0 / 120.0);
+            if a.settled() {
+                break;
+            }
+        }
+        assert!(a.settled());
+        // 收敛后严格吸附到目标。
+        assert_eq!(a.value(), 64.0);
+    }
+
+    #[test]
+    fn animated_set_params_preserves_motion() {
+        let mut a = Animated::new(0.0, aurora());
+        a.set(100.0);
+        a.step(1.0 / 120.0);
+        let mid = a.value();
+        assert!(mid > 0.0, "第一帧后应已位移");
+        // 换手感不应把值或目标清零（可中断切换）。
+        a.set_params(aurora_press());
+        assert_eq!(a.value(), mid);
+        assert_eq!(a.target(), 100.0);
     }
 
     #[test]

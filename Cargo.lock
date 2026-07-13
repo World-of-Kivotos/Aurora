@@ -500,6 +500,7 @@ dependencies = [
 name = "aurora-ui"
 version = "0.1.0"
 dependencies = [
+ "aurora-core",
  "iced",
  "window-vibrancy",
 ]
