@@ -13,3 +13,18 @@ aurora-instance = { path = "../aurora-instance" }
 aurora-install = { path = "../aurora-install" }
 aurora-modplatform = { path = "../aurora-modplatform" }
 aurora-launch = { path = "../aurora-launch" }
+# 仅用于在门面结构里持有由 aurora-base 工厂构建的 reqwest::Client 并克隆分发；本 crate 不直接调
+# reqwest 的方法，TLS/json 等特性由 aurora-base 统一开启（default-features=false 规避 native-tls）。
+reqwest = { version = "0.13", default-features = false }
+# 门面里跑批量下载/安装(rt)、事件与日志 channel(sync)、Java 探测走 spawn_blocking(rt)。
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "fs", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+# 网络逻辑用 wiremock 本地 mock 验证（需真正后台运行时，multi_thread flavor）。
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
+wiremock = "0.6"
+tempfile = "3"
