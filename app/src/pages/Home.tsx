@@ -2,22 +2,30 @@
 // 真调 IPC：入场并行 invoke current_account + list_installed，渲染真实后端数据；加载/错误态显式处理。
 // 离线账户创建顺带示范“进度事件流”范式：订阅 onCoreEvent，把门面发来的告警/阶段写进状态行。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
+import { Modal } from "../components/Modal";
+import { LogConsole } from "../components/LogConsole";
+import { useToast } from "../components/Toast";
 import { AlertIcon, LayersIcon, PlayIcon, RefreshIcon, UserIcon } from "../components/icons";
 import { pageItem } from "../lib/motion";
 import {
   createOfflineAccount,
   currentAccount,
+  launchGame,
   listInstalled,
   onCoreEvent,
+  onGameLog,
+  stopGame,
   type AccountDto,
   type AccountType,
+  type GameLog,
   type InstalledVersionDto,
+  type LaunchArgs,
   type VersionScanDto,
 } from "../lib/ipc";
 
@@ -40,12 +48,29 @@ function loaderText(v: InstalledVersionDto): string {
 }
 
 export function Home() {
+  const { toast } = useToast();
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // 启动链路状态：launching=命令在途，running=进程已起。日志行随 onGameLog 累积到 logConsole。
+  const [launching, setLaunching] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [pid, setPid] = useState<number | null>(null);
+  const [logLines, setLogLines] = useState<GameLog[]>([]);
+  const [logOpen, setLogOpen] = useState(false);
+  // 进程运行期间持续存活的事件订阅，仅在结束游戏 / 组件卸载时统一 unlisten。
+  const runUnlisten = useRef<Array<() => void>>([]);
+
+  const dropRunListeners = useCallback(() => {
+    runUnlisten.current.forEach((fn) => fn());
+    runUnlisten.current = [];
+  }, []);
+
+  // 组件卸载兜底：清空运行期订阅，避免监听器泄漏。
+  useEffect(() => () => dropRunListeners(), [dropRunListeners]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,14 +118,64 @@ export function Home() {
   const current = versions[0] ?? null;
   const canLaunch = !loading && !!account && versions.length > 0;
 
-  const handlePlay = useCallback(() => {
-    // 启动链路（launch 命令）由后续 agent 接入；此处如实反馈就绪状态，不伪造成功。
-    setStatus(
-      canLaunch
-        ? `就绪：可启动 ${versions[0].id}（launch 命令将由后续 agent 接入）`
-        : "请先创建账户并安装至少一个版本",
-    );
-  }, [canLaunch, versions]);
+  const handlePlay = useCallback(async () => {
+    if (!account || versions.length === 0) return;
+    const versionId = versions[0].id;
+    setLaunching(true);
+    setError(null);
+    setStatus(null);
+    setLogLines([]);
+    setLogOpen(true);
+
+    // 先订阅日志与进度事件，再 invoke，避免漏掉启动早期的输出。
+    const unGame = await onGameLog((line) => setLogLines((prev) => [...prev, line]));
+    const unCore = await onCoreEvent((ev) => {
+      if (ev.kind === "warning") {
+        setStatus(`告警：${ev.message}`);
+        toast(`告警：${ev.message}`, "error");
+      } else if (ev.kind === "stage") {
+        setStatus(ev.message);
+      }
+    });
+    runUnlisten.current = [unGame, unCore];
+
+    // 微软/外置登录用 accountUuid 走服务器校验；离线账户只有本地名，用 offlineName。
+    const args: LaunchArgs =
+      account.account_type === "offline"
+        ? { versionId, offlineName: account.name }
+        : { versionId, accountUuid: account.uuid };
+
+    try {
+      const launched = await launchGame(args);
+      setPid(launched.pid);
+      setRunning(true);
+      setStatus(`已启动 ${versionId}`);
+      toast(launched.pid != null ? `已启动 ${versionId}，PID ${launched.pid}` : `已启动 ${versionId}`, "success");
+    } catch (e) {
+      // 进程未起：撤销订阅，错误冒泡到错误块与 toast，不吞。
+      dropRunListeners();
+      setError(String(e));
+      toast(String(e), "error");
+    } finally {
+      setLaunching(false);
+    }
+  }, [account, versions, toast, dropRunListeners]);
+
+  const handleStop = useCallback(async () => {
+    try {
+      await stopGame();
+      setStatus("已结束游戏");
+      toast("已结束游戏", "success");
+    } catch (e) {
+      setError(String(e));
+      toast(String(e), "error");
+    } finally {
+      // 无论 stop 成败都收束运行态与订阅：进程若已退出，命令报错也不该留下悬挂监听。
+      dropRunListeners();
+      setRunning(false);
+      setPid(null);
+    }
+  }, [toast, dropRunListeners]);
 
   const cur = current ? splitId(current.id) : null;
 
@@ -198,14 +273,47 @@ export function Home() {
           <Button
             variant="primary"
             icon={<PlayIcon />}
-            onClick={handlePlay}
-            disabled={loading}
+            onClick={() => void handlePlay()}
+            disabled={!canLaunch || launching || running}
             className="w-full py-[17px] text-[17px]"
           >
-            开始游戏
+            {launching ? "启动中…" : running ? "运行中" : "开始游戏"}
           </Button>
+          {(running || logLines.length > 0) && (
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => setLogOpen(true)} className="flex-1">
+                查看日志
+              </Button>
+              {running && (
+                <Button variant="secondary" onClick={() => void handleStop()} className="flex-1">
+                  结束游戏
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </motion.section>
+
+      <Modal
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        title={running && pid != null ? `运行中 · PID ${pid}` : running ? "运行中" : "游戏日志"}
+        footer={
+          running ? (
+            <Button variant="primary" onClick={() => void handleStop()}>
+              结束游戏
+            </Button>
+          ) : (
+            <Button variant="secondary" onClick={() => setLogOpen(false)}>
+              关闭
+            </Button>
+          )
+        }
+      >
+        <div className="h-72">
+          <LogConsole lines={logLines} />
+        </div>
+      </Modal>
 
       {status && <p className="mb-6 font-mono text-[12px] text-ink/60">{status}</p>}
 
