@@ -11,12 +11,17 @@ use aurora_auth::{
     YggdrasilClient, YggdrasilCredentials, offline_account, validate_username,
 };
 
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::event::{CoreEvent, EventSink, emit};
 use crate::facade::Aurora;
 
-/// 环境变量名：微软登录 client_id 的调试回落来源。
+/// 环境变量名：微软登录 client_id 的回落来源。
 pub const MSA_CLIENT_ID_ENV: &str = "AURORA_MSA_CLIENT_ID";
+
+/// 内置默认微软登录 client_id：官方启动器的公共客户端 id，Mojang 已认可，开箱即用于开发/调试。
+/// 待 Aurora 自有应用（bf8c139d-45e9-48c0-b469-175e8234e516）通过 aka.ms/mce-reviewappid 审批后替换为它；
+/// 用户在 config.json 填 msa_client_id 或设环境变量 AURORA_MSA_CLIENT_ID 均可覆盖。
+pub const DEFAULT_MSA_CLIENT_ID: &str = "00000000402B5328";
 
 /// 走完微软设备码登录全链并把结果账户写入账户库。
 ///
@@ -97,9 +102,11 @@ fn select_profile(
 }
 
 impl Aurora {
-    /// 解析微软登录 client_id：优先配置，其次环境变量；都缺失报 [`CoreError::MissingClientId`]。
+    /// 解析微软登录 client_id：优先配置，其次环境变量，最后回落到内置默认（[`DEFAULT_MSA_CLIENT_ID`]），
+    /// 保证正版登录开箱可用。返回 Result 仅为与调用点的 `?` 保持一致，实际恒为 Ok。
     pub(crate) fn msa_client_id(&self) -> Result<String> {
-        self.config()
+        Ok(self
+            .config()
             .msa_client_id
             .clone()
             .or_else(|| {
@@ -107,7 +114,7 @@ impl Aurora {
                     .ok()
                     .filter(|s| !s.is_empty())
             })
-            .ok_or(CoreError::MissingClientId)
+            .unwrap_or_else(|| DEFAULT_MSA_CLIENT_ID.to_owned()))
     }
 
     /// 创建一个离线账户（不落库，供离线启动即用即弃）。
@@ -190,6 +197,7 @@ impl Aurora {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::CoreError;
     use aurora_auth::Result as AuthResult;
     use std::sync::{Arc, Mutex};
     use wiremock::matchers::{method, path};
@@ -459,16 +467,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_client_id_errors() {
+    fn client_id_falls_back_to_builtin_default() {
         let tmp = tempfile::tempdir().unwrap();
         let config = crate::config::AuroraConfig {
             msa_client_id: None,
             ..crate::config::AuroraConfig::default()
         };
         let aurora = Aurora::for_test(config, tmp.path().to_path_buf(), tmp.path().to_path_buf());
-        // 未配置且（大概率）无环境变量时报 MissingClientId。
+        // 未配置且无环境变量时回落到内置调试 client_id，保证正版登录开箱可用；删掉回落此断言即挂。
         if std::env::var(MSA_CLIENT_ID_ENV).is_err() {
-            assert!(matches!(aurora.msa_client_id(), Err(CoreError::MissingClientId)));
+            assert_eq!(aurora.msa_client_id().unwrap(), DEFAULT_MSA_CLIENT_ID);
         }
     }
 }
