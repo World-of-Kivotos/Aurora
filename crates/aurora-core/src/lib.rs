@@ -26,6 +26,7 @@ pub mod error;
 pub mod event;
 pub mod facade;
 pub mod install;
+pub mod java;
 pub mod launch;
 pub mod search;
 pub mod versions;
@@ -46,7 +47,7 @@ pub use aurora_install::{LoaderSummary, VanillaSummary};
 pub use aurora_instance::{
     BrokenReason, BrokenVersion, DiscoveredVersion, IsolationPolicy, VersionScan,
 };
-pub use aurora_java::JavaInstallation;
+pub use aurora_java::{DetectSource, InstalledRuntime, JavaInstallation, JavaVersion};
 pub use aurora_launch::{
     CrashCategory, CrashDiagnosis, ExitReport, GameSession, LogLine, LogStream, analyze,
     detect_crash,

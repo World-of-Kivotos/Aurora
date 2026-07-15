@@ -28,3 +28,4 @@ tracing = "0.1"
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 wiremock = "0.6"
 tempfile = "3"
+sha1 = "0.11"

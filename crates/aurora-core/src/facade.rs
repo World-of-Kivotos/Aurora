@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use aurora_base::retry::RetryPolicy;
 use aurora_download::{DownloadConfig, DownloadPool, Downloader};
 use aurora_install::{GameLayout, InstallContext, VERSION_MANIFEST_V2};
+use aurora_instance::IsolationPolicy;
 use aurora_version::RuntimeContext;
 
-use crate::config::AuroraConfig;
+use crate::config::{AuroraConfig, DownloadSourcePolicy, MemorySettings};
 use crate::error::Result;
 
 /// 门面：组合下层 crate 的统一入口。
@@ -100,6 +101,55 @@ impl Aurora {
         crate::config::ConfigStore::at(&self.config_path)
             .save(&self.config)
             .await
+    }
+
+    /// 设置文件下载源策略（下次装配下载池即生效）。
+    pub fn set_download_source(&mut self, policy: DownloadSourcePolicy) {
+        self.config.download_source = policy;
+    }
+
+    /// 设置版本列表源策略，并据此重算版本清单地址。
+    ///
+    /// 清单地址在构造时按此策略一次性改写为官方或镜像；只改配置字段不会生效，故这里同步重算。
+    pub fn set_version_list_source(&mut self, policy: DownloadSourcePolicy) -> Result<()> {
+        self.manifest_url = policy.rewrite_primary(VERSION_MANIFEST_V2)?;
+        self.config.version_list_source = policy;
+        Ok(())
+    }
+
+    /// 设置批量下载的文件级并发上限。
+    pub fn set_download_concurrency(&mut self, concurrency: usize) {
+        self.config.download_concurrency = concurrency;
+    }
+
+    /// 设置内存分配（-Xmx / -Xms）。
+    pub fn set_memory(&mut self, memory: MemorySettings) {
+        self.config.memory = memory;
+    }
+
+    /// 设置全局版本隔离档位。
+    pub fn set_isolation_policy(&mut self, policy: IsolationPolicy) {
+        self.config.isolation_policy = policy;
+    }
+
+    /// 设置找不到匹配 Java 时是否自动下载。
+    pub fn set_auto_download_java(&mut self, enabled: bool) {
+        self.config.auto_download_java = enabled;
+    }
+
+    /// 设置缓存目录（None 表示回落默认位置）。
+    pub fn set_cache_directory(&mut self, dir: Option<PathBuf>) {
+        self.config.cache_directory = dir;
+    }
+
+    /// 设置游戏目录并写入配置（区别于仅改运行期字段的 [`Aurora::set_game_dir`]）。
+    ///
+    /// 同时更新运行期 `game_dir` 与 `config.game_directory`，`save_config` 落盘后下次 `load` 生效；
+    /// 而 `set_game_dir` 只改运行期字段，供 CLI 的临时覆盖使用。
+    pub fn set_game_directory(&mut self, game_dir: impl Into<PathBuf>) {
+        let dir = game_dir.into();
+        self.config.game_directory = Some(dir.clone());
+        self.game_dir = dir;
     }
 
     // ---- 内部共享装配 ----
@@ -213,5 +263,67 @@ impl Aurora {
     pub(crate) fn with_curseforge_base(mut self, url: impl Into<String>) -> Self {
         self.curseforge_base = url.into();
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_aurora() -> Aurora {
+        Aurora::for_test(
+            AuroraConfig::default(),
+            PathBuf::from("/data"),
+            PathBuf::from("/data/.minecraft"),
+        )
+    }
+
+    #[test]
+    fn config_setters_write_through() {
+        let mut aurora = test_aurora();
+        aurora.set_download_source(DownloadSourcePolicy::MirrorFirst);
+        aurora.set_download_concurrency(16);
+        aurora.set_auto_download_java(false);
+        aurora.set_memory(MemorySettings {
+            max_mb: 8192,
+            min_mb: Some(1024),
+        });
+        aurora.set_isolation_policy(IsolationPolicy::All);
+
+        let cfg = aurora.config();
+        assert_eq!(cfg.download_source, DownloadSourcePolicy::MirrorFirst);
+        assert_eq!(cfg.download_concurrency, 16);
+        assert!(!cfg.auto_download_java);
+        assert_eq!(cfg.memory.max_mb, 8192);
+        assert_eq!(cfg.memory.min_mb, Some(1024));
+        assert_eq!(cfg.isolation_policy, IsolationPolicy::All);
+    }
+
+    #[test]
+    fn set_version_list_source_rederives_manifest_url() {
+        let mut aurora = test_aurora();
+        aurora
+            .set_version_list_source(DownloadSourcePolicy::MirrorFirst)
+            .expect("改写清单地址");
+        assert_eq!(
+            aurora.config().version_list_source,
+            DownloadSourcePolicy::MirrorFirst
+        );
+        // 清单地址应等于按新策略改写的结果；删掉 setter 里的重算行会退回默认地址，此断言即挂。
+        let expected = DownloadSourcePolicy::MirrorFirst
+            .rewrite_primary(VERSION_MANIFEST_V2)
+            .expect("镜像改写");
+        assert_eq!(aurora.manifest_url(), expected);
+    }
+
+    #[test]
+    fn set_game_directory_syncs_runtime_and_config() {
+        let mut aurora = test_aurora();
+        aurora.set_game_directory(PathBuf::from("/games/mc"));
+        assert_eq!(aurora.game_dir(), Path::new("/games/mc"));
+        assert_eq!(
+            aurora.config().game_directory.as_deref(),
+            Some(Path::new("/games/mc"))
+        );
     }
 }

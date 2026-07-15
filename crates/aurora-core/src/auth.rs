@@ -6,8 +6,9 @@
 //! 凭据库，跨平台可用。
 
 use aurora_auth::{
-    Account, AccountCredentials, AccountManager, CredentialStore, DeviceCodeResponse, MicrosoftAuth,
-    MicrosoftCredentials, MicrosoftSession, UsernameCheck, offline_account, validate_username,
+    Account, AccountCredentials, AccountManager, AuthError, CredentialStore, DeviceCodeResponse,
+    GameProfile, MicrosoftAuth, MicrosoftCredentials, MicrosoftSession, UsernameCheck,
+    YggdrasilClient, YggdrasilCredentials, offline_account, validate_username,
 };
 
 use crate::error::{CoreError, Result};
@@ -46,6 +47,53 @@ fn account_from_session(session: &MicrosoftSession) -> Account {
             minecraft_expires_at: Some(session.minecraft_expires_at),
         }),
     )
+}
+
+/// 走完 Authlib-Injector（Yggdrasil）用户名密码登录并把结果账户写入账户库。
+///
+/// 流程：`authenticate` -> 选定角色 -> 组装账户 -> upsert 落库。返回落库后的账户。
+/// `api_root`（已由 [`resolve_api_root`](aurora_auth::yggdrasil::resolve_api_root) 解析）连同已
+/// 构造的 `client` 一并传入，既复用同一 HTTP 客户端，也便于用 mock 认证端点做落库测试。
+pub async fn perform_authlib_login<S: CredentialStore>(
+    client: &YggdrasilClient,
+    api_root: &str,
+    manager: &mut AccountManager<S>,
+    username: &str,
+    password: &str,
+) -> Result<Account> {
+    let resp = client.authenticate(username, password, None).await?;
+    let profile = select_profile(resp.available_profiles, resp.selected_profile)?;
+    // api_root 单独持有：YggdrasilClient 内部的根地址不对外暴露，凭据需自带以供刷新/校验复用。
+    let account = Account::new(
+        profile.id,
+        profile.name,
+        AccountCredentials::AuthlibInjector(YggdrasilCredentials {
+            api_root: api_root.to_owned(),
+            access_token: resp.access_token,
+            client_token: resp.client_token,
+        }),
+    );
+    manager.upsert(account.clone())?;
+    Ok(account)
+}
+
+/// 选定登录角色：优先服务端已选中角色，否则取可用角色列表首个。
+///
+/// 多角色账号的交互式选择（列出全部角色供用户点选）留待后续 UI；当前按「首个可用」自动定角色。
+/// 账户下无任何角色时认证虽成功却无从组装档案，按协议不符冒泡为 [`AuthError::Response`]。
+fn select_profile(
+    available: Vec<GameProfile>,
+    selected: Option<GameProfile>,
+) -> Result<GameProfile> {
+    selected
+        .or_else(|| available.into_iter().next())
+        .ok_or_else(|| {
+            AuthError::Response {
+                context: "Yggdrasil 认证",
+                detail: "认证成功但账户下无可用角色，请先在验证服务器创建游戏角色".into(),
+            }
+            .into()
+        })
 }
 
 impl Aurora {
@@ -95,6 +143,23 @@ impl Aurora {
         let auth = MicrosoftAuth::new(self.http(), client_id);
         let mut manager = self.open_accounts()?;
         perform_microsoft_login(&auth, &mut manager, on_code).await
+    }
+
+    /// 走 Authlib-Injector 用户名密码登录并把账户写入加密账户库，返回登录到的账户。
+    ///
+    /// `server_url` 为用户填写的第三方验证服务器地址：先经 `resolve_api_root` 解析出真正的 API
+    /// 根地址（跟随重定向与 `X-Authlib-Injector-API-Location` 头），再据此构造 Yggdrasil 客户端
+    /// 完成认证与落库。解析出的根地址随凭据一并存储，供后续刷新/校验与 javaagent 拼装复用。
+    pub async fn authlib_login(
+        &self,
+        server_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Account> {
+        let api_root = aurora_auth::yggdrasil::resolve_api_root(&self.http(), server_url).await?;
+        let client = YggdrasilClient::new(self.http(), &api_root);
+        let mut manager = self.open_accounts()?;
+        perform_authlib_login(&client, &api_root, &mut manager, username, password).await
     }
 
     /// 读取账户库中的全部账户。
@@ -253,6 +318,111 @@ mod tests {
             reloaded.current().unwrap().uuid,
             "0123456789abcdef0123456789abcdef"
         );
+    }
+
+    /// 构造指向 mock 服务器、关闭重试的 Yggdrasil 客户端。
+    fn yggdrasil_client_for(api_root: &str) -> YggdrasilClient {
+        let client = aurora_base::http::build_client().unwrap();
+        YggdrasilClient::new(client, api_root).with_retry(no_retry())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn authlib_login_persists_authlib_account() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/authserver/authenticate"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"accessToken":"acc-tok","clientToken":"cli-tok",
+                    "availableProfiles":[{"id":"aaaa1111aaaa1111aaaa1111aaaa1111","name":"Hero"}],
+                    "selectedProfile":{"id":"aaaa1111aaaa1111aaaa1111aaaa1111","name":"Hero"}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let api_root = format!("{}/", server.uri());
+        let client = yggdrasil_client_for(&api_root);
+        let store = MemStore::default();
+        let mut manager = AccountManager::load(store.clone()).unwrap();
+
+        let account =
+            perform_authlib_login(&client, &api_root, &mut manager, "user@example.com", "pw")
+                .await
+                .unwrap();
+
+        assert_eq!(account.uuid, "aaaa1111aaaa1111aaaa1111aaaa1111");
+        assert_eq!(account.name, "Hero");
+        assert_eq!(
+            account.account_type,
+            aurora_auth::AccountType::AuthlibInjector
+        );
+        match &account.credentials {
+            AccountCredentials::AuthlibInjector(c) => {
+                assert_eq!(c.api_root, api_root);
+                assert_eq!(c.access_token, "acc-tok");
+                assert_eq!(c.client_token, "cli-tok");
+            }
+            other => panic!("期望 AuthlibInjector 凭据，得到 {other:?}"),
+        }
+
+        // 从同一份底层字节重载，账户与「当前」应还原（首个账户自动成为当前）。
+        let reloaded = AccountManager::load(store).unwrap();
+        assert_eq!(reloaded.accounts().len(), 1);
+        assert_eq!(
+            reloaded.current().unwrap().uuid,
+            "aaaa1111aaaa1111aaaa1111aaaa1111"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn authlib_login_falls_back_to_first_available_profile() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/authserver/authenticate"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"accessToken":"acc","clientToken":"cli",
+                    "availableProfiles":[
+                        {"id":"1111111111111111aaaaaaaaaaaaaaaa","name":"First"},
+                        {"id":"2222222222222222bbbbbbbbbbbbbbbb","name":"Second"}],
+                    "selectedProfile":null}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let api_root = format!("{}/", server.uri());
+        let client = yggdrasil_client_for(&api_root);
+        let mut manager = AccountManager::load(MemStore::default()).unwrap();
+
+        let account = perform_authlib_login(&client, &api_root, &mut manager, "u", "p")
+            .await
+            .unwrap();
+
+        // 无选中角色时定为第一个可用角色。
+        assert_eq!(account.uuid, "1111111111111111aaaaaaaaaaaaaaaa");
+        assert_eq!(account.name, "First");
+    }
+
+    #[test]
+    fn select_profile_prefers_selected_over_available() {
+        let available = vec![GameProfile {
+            id: "aaaa".into(),
+            name: "Available".into(),
+        }];
+        let selected = GameProfile {
+            id: "zzzz".into(),
+            name: "Selected".into(),
+        };
+        let chosen = select_profile(available, Some(selected)).unwrap();
+        assert_eq!(chosen.id, "zzzz");
+        assert_eq!(chosen.name, "Selected");
+    }
+
+    #[test]
+    fn select_profile_errors_when_account_has_no_profile() {
+        let err = select_profile(Vec::new(), None).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreError::Auth(AuthError::Response { context, .. }) if context == "Yggdrasil 认证"
+        ));
     }
 
     #[test]

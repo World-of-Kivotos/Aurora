@@ -359,6 +359,7 @@ async fn launch(
         max_memory_mb: max_memory,
         min_memory_mb: None,
         fullscreen,
+        ..Default::default()
     };
 
     let (sink, printer) = spawn_event_printer();
