@@ -1,17 +1,17 @@
-// 主页（设计标杆）：编辑部版式 —— 报头 + 非对称启动特写（巨号当前版本号为主角）+ 大字版本清单。
-// 真调 IPC：入场并行 invoke current_account + list_installed，渲染真实后端数据；加载/错误态显式处理。
-// 离线账户创建顺带示范“进度事件流”范式：订阅 onCoreEvent，把门面发来的告警/阶段写进状态行。
+// 主页：极简启动屏 —— 报头 + 巨号当前版本号（左上）+ 皮肤头像账户 chip 与开始游戏（右下）。
+// 已安装版本列表移交「版本」页；主页只聚焦"以谁的身份、启动哪个版本"这一个动作。
+// 真调 IPC：入场并行 current_account + list_installed；启动走 launch_game + 日志窗；错误显式冒泡不吞。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
-import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { LogConsole } from "../components/LogConsole";
+import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
-import { AlertIcon, LayersIcon, PlayIcon, RefreshIcon, UserIcon } from "../components/icons";
+import { AlertIcon, PlayIcon, RefreshIcon } from "../components/icons";
 import { pageItem } from "../lib/motion";
 import {
   createOfflineAccount,
@@ -35,7 +35,7 @@ const ACCOUNT_TYPE_LABEL: Record<AccountType, string> = {
   authlib_injector: "外置登录",
 };
 
-// 版本 id 拆成主段 + 加载器后缀（"1.20.1-fabric" -> {base:"1.20.1", sfx:"-fabric"}），后缀在版面里以朱红呈现。
+// 版本 id 拆成主段 + 加载器后缀（"1.20.1-fabric" -> {base:"1.20.1", sfx:"-fabric"}）。
 function splitId(id: string): { base: string; sfx: string } {
   const i = id.indexOf("-");
   return i < 0 ? { base: id, sfx: "" } : { base: id.slice(0, i), sfx: id.slice(i) };
@@ -55,7 +55,7 @@ export function Home() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  // 启动链路状态：launching=命令在途，running=进程已起。日志行随 onGameLog 累积到 logConsole。
+  // 启动链路状态：launching=命令在途，running=进程已起。日志行随 onGameLog 累积。
   const [launching, setLaunching] = useState(false);
   const [running, setRunning] = useState(false);
   const [pid, setPid] = useState<number | null>(null);
@@ -69,7 +69,6 @@ export function Home() {
     runUnlisten.current = [];
   }, []);
 
-  // 组件卸载兜底：清空运行期订阅，避免监听器泄漏。
   useEffect(() => () => dropRunListeners(), [dropRunListeners]);
 
   const load = useCallback(async () => {
@@ -113,8 +112,6 @@ export function Home() {
   }, []);
 
   const versions = scan?.versions ?? [];
-  const broken = scan?.broken ?? [];
-  const total = versions.length + broken.length;
   const current = versions[0] ?? null;
   const canLaunch = !loading && !!account && versions.length > 0;
 
@@ -150,7 +147,10 @@ export function Home() {
       setPid(launched.pid);
       setRunning(true);
       setStatus(`已启动 ${versionId}`);
-      toast(launched.pid != null ? `已启动 ${versionId}，PID ${launched.pid}` : `已启动 ${versionId}`, "success");
+      toast(
+        launched.pid != null ? `已启动 ${versionId}，PID ${launched.pid}` : `已启动 ${versionId}`,
+        "success",
+      );
     } catch (e) {
       // 进程未起：撤销订阅，错误冒泡到错误块与 toast，不吞。
       dropRunListeners();
@@ -178,6 +178,13 @@ export function Home() {
   }, [toast, dropRunListeners]);
 
   const cur = current ? splitId(current.id) : null;
+  // 加载器标签：优先用扫描解析出的加载器（"Forge 47.4.20"），回落到版本 id 后缀（去前导 - 与下划线）。
+  const loaderLabel =
+    current && current.loaders.length > 0
+      ? loaderText(current)
+      : cur && cur.sfx
+        ? cur.sfx.replace(/^-/, "").replace(/_/g, " ")
+        : null;
 
   return (
     <>
@@ -189,7 +196,7 @@ export function Home() {
             <>
               <div className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</div>
               <div className="mt-1.5 font-mono text-[12px] tracking-[0.08em] text-ink/60 tabular-nums">
-                {loading ? "读取中" : account ? "准备就绪" : "未就绪"}
+                {loading ? "读取中" : running ? "运行中" : canLaunch ? "准备就绪" : "未就绪"}
               </div>
             </>
           }
@@ -208,88 +215,84 @@ export function Home() {
         </Card>
       )}
 
-      {/* 启动特写：非对称双栏，巨号版本号为主角 */}
-      <motion.section
-        variants={pageItem}
-        aria-label="启动"
-        className="mb-[34px] grid grid-cols-[1.45fr_0.95fr] items-end gap-[52px] max-[1080px]:grid-cols-1 max-[1080px]:gap-8"
-      >
+      {/* 极简启动屏：版本号左上，启动集群右下，中间大留白 */}
+      <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
         <div className="min-w-0">
           <div className="mb-[14px] flex items-center gap-3 text-[11px] font-bold tracking-[0.2em] text-ink/60">
             <span className="inline-block h-[2px] w-[26px] bg-accent" />
-            准备就绪 · 当前版本
+            {cur ? "准备就绪 · 当前版本" : "当前版本"}
           </div>
           {cur ? (
             <>
-              <p className="m-0 text-[clamp(46px,6.7vw,86px)] leading-[0.9] font-extrabold tracking-[-0.035em] whitespace-nowrap tabular-nums">
+              <p className="m-0 text-[clamp(46px,6.4vw,84px)] leading-[0.9] font-extrabold tracking-[-0.035em] tabular-nums break-words">
                 {cur.base}
-                {cur.sfx && <span className="font-bold tracking-[-0.02em] text-accent">{cur.sfx}</span>}
               </p>
-              <div className="mt-[18px] flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[12.5px] text-ink/40">
-                <span>
-                  <span className="font-bold tracking-[0.12em] text-ink/60">加载器</span>{" "}
-                  <span className="font-mono tabular-nums">{current ? loaderText(current) : "—"}</span>
-                </span>
-                {account && (
-                  <span>
-                    <span className="font-bold tracking-[0.12em] text-ink/60">账户</span> {account.name}
-                  </span>
-                )}
-              </div>
+              {loaderLabel && (
+                <p className="mt-1.5 max-w-full truncate text-[clamp(19px,2.5vw,32px)] font-bold tracking-[-0.01em] text-accent">
+                  {loaderLabel}
+                </p>
+              )}
             </>
           ) : (
-            <p className="m-0 text-[28px] font-extrabold text-ink/26">
+            <p className="m-0 text-[32px] font-extrabold text-ink/26">
               {loading ? "读取中…" : "尚未安装版本"}
             </p>
           )}
         </div>
 
-        <div className="flex flex-col gap-4">
+        {/* 启动集群：右下角 —— 皮肤头像账户 chip + 大启动按钮 */}
+        <div className="mt-auto flex flex-col items-end gap-5 pt-10">
           {account ? (
-            <div className="flex items-center gap-[15px] rounded-[3px] border border-ink/9 bg-paper-sink px-4 py-[14px]">
-              <span className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[3px] bg-ink text-[22px] font-extrabold text-paper-on">
-                {account.name.slice(0, 1).toUpperCase()}
-              </span>
-              <div className="flex min-w-0 flex-col gap-[5px]">
-                <div className="truncate text-[19px] leading-none font-extrabold">{account.name}</div>
-                <span className="self-start rounded-[2px] border border-ink/16 px-2 py-[3px] text-[10.5px] font-bold tracking-[0.14em] text-ink/60">
+            <div className="flex items-center gap-3">
+              <SkinHead uuid={account.uuid} name={account.name} size={42} />
+              <div className="min-w-0 text-right">
+                <div className="truncate text-[16px] leading-tight font-extrabold">{account.name}</div>
+                <div className="mt-0.5 text-[11px] tracking-[0.1em] text-ink/45">
                   {ACCOUNT_TYPE_LABEL[account.account_type]}
-                </span>
+                </div>
               </div>
             </div>
           ) : (
-            <Card>
-              <EmptyState
-                icon={<UserIcon />}
-                title={loading ? "正在读取账户…" : "还没有账户"}
-                action={
-                  loading
-                    ? undefined
-                    : { label: "创建离线账户", onClick: () => void handleCreateOffline(), disabled: busy }
-                }
-              />
-            </Card>
-          )}
-          <Button
-            variant="primary"
-            icon={<PlayIcon />}
-            onClick={() => void handlePlay()}
-            disabled={!canLaunch || launching || running}
-            className="w-full py-[17px] text-[17px]"
-          >
-            {launching ? "启动中…" : running ? "运行中" : "开始游戏"}
-          </Button>
-          {(running || logLines.length > 0) && (
-            <div className="flex gap-3">
-              <Button variant="secondary" onClick={() => setLogOpen(true)} className="flex-1">
-                查看日志
-              </Button>
-              {running && (
-                <Button variant="secondary" onClick={() => void handleStop()} className="flex-1">
-                  结束游戏
+            <div className="flex flex-col items-end gap-2">
+              <span className="text-[13px] text-ink/45">
+                {loading ? "正在读取账户…" : "还没有账户"}
+              </span>
+              {!loading && (
+                <Button variant="secondary" onClick={() => void handleCreateOffline()} disabled={busy}>
+                  创建离线账户
                 </Button>
               )}
             </div>
+          )}
+
+          <div className="flex flex-col items-end gap-3">
+            <Button
+              variant="primary"
+              icon={<PlayIcon />}
+              onClick={() => void handlePlay()}
+              disabled={!canLaunch || launching || running}
+              className="px-9 py-[18px] text-[18px]"
+            >
+              {launching ? "启动中…" : running ? "运行中" : "开始游戏"}
+            </Button>
+            {(running || logLines.length > 0) && (
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => setLogOpen(true)}>
+                  查看日志
+                </Button>
+                {running && (
+                  <Button variant="secondary" onClick={() => void handleStop()}>
+                    结束游戏
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {status && (
+            <p className="max-w-[420px] truncate text-right font-mono text-[12px] text-ink/50">
+              {status}
+            </p>
           )}
         </div>
       </motion.section>
@@ -314,82 +317,6 @@ export function Home() {
           <LogConsole lines={logLines} />
         </div>
       </Modal>
-
-      {status && <p className="mb-6 font-mono text-[12px] text-ink/60">{status}</p>}
-
-      {/* 已安装版本：大字非对称清单 */}
-      <motion.section variants={pageItem} aria-label="已安装版本" className="mt-auto">
-        <div className="mb-0.5 flex items-baseline justify-between border-b border-ink/16 pb-[11px]">
-          <h2 className="text-[19px] font-extrabold">已安装版本</h2>
-          <span className="font-mono text-[11px] tracking-[0.14em] text-ink/40 tabular-nums">
-            共 {String(total).padStart(2, "0")} 项
-          </span>
-        </div>
-        {total > 0 ? (
-          <ul className="m-0 list-none p-0">
-            {versions.map((v, i) => {
-              const s = splitId(v.id);
-              return (
-                <li
-                  key={v.id}
-                  className="flex items-baseline justify-between gap-6 border-b border-ink/9 py-[13px] last:border-b-0"
-                >
-                  <span className="flex items-baseline gap-0.5 text-[24px] font-bold tracking-[-0.01em] tabular-nums">
-                    {s.base}
-                    {s.sfx && <span className="font-semibold text-ink/40">{s.sfx}</span>}
-                    {i === 0 && (
-                      <span className="ml-3 self-center text-[9.5px] font-extrabold tracking-[0.18em] text-accent">
-                        当前
-                      </span>
-                    )}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-[14px]">
-                    <span
-                      className={
-                        v.is_release
-                          ? "rounded-[2px] border border-ink/16 px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-ink/60"
-                          : "rounded-[2px] bg-ink px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-paper-on"
-                      }
-                    >
-                      {v.is_release ? "正式版" : "快照"}
-                    </span>
-                    <span className="min-w-[118px] text-right font-mono text-[12px] text-ink/40 tabular-nums">
-                      {loaderText(v)}
-                    </span>
-                  </span>
-                </li>
-              );
-            })}
-            {broken.map((b) => {
-              const s = splitId(b.id);
-              return (
-                <li
-                  key={b.id}
-                  className="flex items-baseline justify-between gap-6 border-b border-ink/9 py-[13px] last:border-b-0"
-                >
-                  <span className="flex items-baseline gap-0.5 text-[24px] font-bold tracking-[-0.01em] tabular-nums text-danger">
-                    {s.base}
-                    {s.sfx && <span className="font-semibold">{s.sfx}</span>}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-[14px]">
-                    <span className="rounded-[2px] border border-danger/50 px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-danger">
-                      损坏
-                    </span>
-                    <span className="min-w-[118px] text-right font-mono text-[12px] text-danger tabular-nums">
-                      {b.reason}
-                    </span>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <EmptyState
-            icon={<LayersIcon />}
-            title={loading ? "正在扫描版本…" : "还没有安装任何版本"}
-          />
-        )}
-      </motion.section>
     </>
   );
 }
