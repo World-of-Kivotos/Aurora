@@ -8,6 +8,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { PageHeader } from "../components/PageHeader";
 import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
+import { SkinHead } from "../components/SkinHead";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { UserIcon, RefreshIcon, AlertIcon } from "../components/icons";
@@ -34,11 +35,6 @@ const TYPE_LABEL: Record<AccountType, string> = {
 
 const INPUT_CLS =
   "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink/40 hover:border-ink/40 focus:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
-
-// 头像取名字首个码位（Array.from 正确切割 CJK/代理对）；空名兜底问号仅为字形占位，非业务掩盖。
-function initialOf(name: string): string {
-  return Array.from(name.trim())[0]?.toUpperCase() ?? "?";
-}
 
 interface TextFieldProps {
   label: string;
@@ -294,15 +290,7 @@ export function Account() {
                   ].join(" ")}
                 >
                   <div className="flex items-center gap-3.5">
-                    <div
-                      className={[
-                        "flex h-11 w-11 shrink-0 items-center justify-center rounded-[3px] text-[17px] font-extrabold text-paper-on",
-                        isCurrent ? "bg-accent" : "bg-ink",
-                      ].join(" ")}
-                      aria-hidden="true"
-                    >
-                      {initialOf(a.name)}
-                    </div>
+                    <SkinHead uuid={a.uuid} name={a.name} size={44} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-[15px] font-bold">{a.name}</span>
