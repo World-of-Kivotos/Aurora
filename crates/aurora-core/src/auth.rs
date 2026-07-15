@@ -18,10 +18,14 @@ use crate::facade::Aurora;
 /// 环境变量名：微软登录 client_id 的回落来源。
 pub const MSA_CLIENT_ID_ENV: &str = "AURORA_MSA_CLIENT_ID";
 
-/// 内置默认微软登录 client_id：官方启动器的公共客户端 id，Mojang 已认可，开箱即用于开发/调试。
-/// 待 Aurora 自有应用（bf8c139d-45e9-48c0-b469-175e8234e516）通过 aka.ms/mce-reviewappid 审批后替换为它；
-/// 用户在 config.json 填 msa_client_id 或设环境变量 AURORA_MSA_CLIENT_ID 均可覆盖。
-pub const DEFAULT_MSA_CLIENT_ID: &str = "00000000402B5328";
+/// 内置默认微软登录 client_id：Aurora 自有的 Azure AD 公共客户端应用（受支持账户类型＝个人 Microsoft 账户）。
+///
+/// 注意两点：1) 该应用须在 Azure「身份验证」里开启「允许公共客户端流」，设备码流才成立；
+/// 2) 走完设备码/XBL/XSTS 后，若最终 `login_with_xbox` 换 Minecraft 令牌那步返 403，说明该应用尚未通过
+/// aka.ms/mce-reviewappid 的 Mojang 审批（审批通过后此步即放行）。
+/// 旧的 login.live 调试 id `00000000402B5328` 不适用本项目的 Azure AD v2 端点（报 AADSTS700016），已弃用。
+/// 用户在 config.json 填 msa_client_id 或设环境变量 AURORA_MSA_CLIENT_ID 均可覆盖此默认。
+pub const DEFAULT_MSA_CLIENT_ID: &str = "bf8c139d-45e9-48c0-b469-175e8234e516";
 
 /// 走完微软设备码登录全链并把结果账户写入账户库。
 ///
