@@ -333,8 +333,8 @@ impl App {
             .into()
     }
 
-    /// 左侧可展开导航栏（外壳的覆盖层）。宽度由弹簧驱动；hover 进入/离开切换展开态。面板近实底 + 右侧
-    /// 柔和阴影，展开时干净盖住其下内容并呈浮起感。
+    /// 左侧可展开导航栏（外壳的覆盖层）。宽度由弹簧驱动；hover 进入/离开切换展开态。面板底为冷浅灰（比纯白
+    /// 内容区偏灰一档，好让白色选中胶囊浮起）+ 右侧柔和阴影，展开时干净盖住其下内容并呈浮起感。
     fn nav_rail<'a>(&'a self, ready: &'a Ready, tokens: Tokens) -> Element<'a, Message> {
         let width = self.nav_width.value();
         let reveal = ((width - NAV_COLLAPSED) / (NAV_EXPANDED - NAV_COLLAPSED)).clamp(0.0, 1.0);
@@ -359,7 +359,7 @@ impl App {
             .width(Length::Fixed(width))
             .height(Fill)
             .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(tokens.elevated)),
+                background: Some(Background::Color(tokens.nav_rail)),
                 border: Border {
                     color: tokens.elevated_border,
                     width: 1.0,

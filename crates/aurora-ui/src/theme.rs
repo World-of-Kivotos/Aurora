@@ -100,8 +100,13 @@ pub struct Tokens {
 
     /// 交互悬停高光（叠加在面上的弱高亮）。
     pub hover: Color,
-    /// 选中态背景（导航项当前页、列表选中项）。
+    /// 选中态背景（列表选中行，强调淡底）。导航选中胶囊另用 [`nav_selected`](Tokens::nav_selected)。
     pub selected: Color,
+
+    /// 导航栏底色：比纯白内容区偏灰一档（冷浅灰），让白色选中胶囊 + 投影从中「浮起」形成对比。
+    pub nav_rail: Color,
+    /// 导航选中胶囊底色（亮色纯白 / 暗色略提升面），配合 [`shadow`](Tokens::shadow) 从导航底浮起。
+    pub nav_selected: Color,
 
     /// 强调渐变起点（蓝）。
     pub accent_from: Color,
@@ -154,6 +159,8 @@ pub fn tokens(mode: Mode) -> Tokens {
             icon: Color::from_rgb8(0x3A, 0x47, 0x63),
             hover: Color::from_rgba8(0x2A, 0x3A, 0x66, 0.07),
             selected: Color::from_rgba8(0x6F, 0xA8, 0xFF, 0.20),
+            nav_rail: Color::from_rgb8(0xF3, 0xF5, 0xF9),
+            nav_selected: Color::from_rgb8(0xFF, 0xFF, 0xFF),
             accent_from: Color::from_rgb8(0x6F, 0xA8, 0xFF),
             accent_to: Color::from_rgb8(0xFF, 0x8F, 0xC7),
             accent_text: Color::from_rgb8(0xFF, 0xFF, 0xFF),
@@ -176,6 +183,8 @@ pub fn tokens(mode: Mode) -> Tokens {
             icon: Color::from_rgb8(0xC7, 0xD2, 0xEC),
             hover: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0.07),
             selected: Color::from_rgba8(0x6F, 0xA8, 0xFF, 0.28),
+            nav_rail: Color::from_rgb8(0x1D, 0x23, 0x31),
+            nav_selected: Color::from_rgb8(0x2A, 0x31, 0x43),
             accent_from: Color::from_rgb8(0x6F, 0xA8, 0xFF),
             accent_to: Color::from_rgb8(0xFF, 0x8F, 0xC7),
             accent_text: Color::from_rgb8(0xFF, 0xFF, 0xFF),
