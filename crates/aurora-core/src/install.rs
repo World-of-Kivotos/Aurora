@@ -1,10 +1,15 @@
-//! 版本安装编排：原版补全 + 可选 Mod 加载器（Fabric / Quilt）。
+//! 版本安装编排：原版补全 + 可选 Mod 加载器（Fabric / Quilt / Forge / NeoForge）。
 //!
 //! 门面把 aurora-install 的原版安装器与加载器安装器串起来，按当前配置的下载源策略与并发跑批量下载，
-//! 并在关键节点发出阶段事件。Forge/NeoForge 需要 Java 子进程执行 installer processors，属后续接入项，
-//! 本轮加载器安装聚焦无需本地安装器的 Fabric / Quilt。
+//! 并在关键节点发出阶段事件。Fabric / Quilt 的 meta 服务直接合成版本 JSON，无需本地安装器；
+//! Forge / NeoForge 则先读该版本要求的 Java 主版本、备妥运行时，再下载并执行官方 installer
+//! （内含 processors 子进程），故这两者的分支多一步 Java 解析。
 
-use aurora_install::{LoaderInstaller, LoaderSummary, VanillaInstaller, VanillaSummary};
+use aurora_install::{
+    ForgeInstaller, InstallContext, LoaderInstaller, LoaderSummary, VanillaInstaller,
+    VanillaSummary, forge_installer_url, neoforge_installer_url,
+};
+use aurora_version::VersionJson;
 
 use crate::error::Result;
 use crate::event::{CoreEvent, EventSink, emit};
@@ -17,6 +22,10 @@ pub enum LoaderChoice {
     Fabric,
     /// Quilt。
     Quilt,
+    /// Forge。
+    Forge,
+    /// NeoForge。
+    NeoForge,
 }
 
 impl LoaderChoice {
@@ -25,6 +34,8 @@ impl LoaderChoice {
         match self {
             LoaderChoice::Fabric => "Fabric",
             LoaderChoice::Quilt => "Quilt",
+            LoaderChoice::Forge => "Forge",
+            LoaderChoice::NeoForge => "NeoForge",
         }
     }
 }
@@ -74,15 +85,33 @@ impl Aurora {
                     events,
                     CoreEvent::stage(format!("开始安装 {} 加载器", choice.display_name())),
                 );
-                let installer = match choice {
+                let summary = match choice {
                     LoaderChoice::Fabric => {
-                        LoaderInstaller::fabric(cx).with_base_url(self.fabric_base())
+                        LoaderInstaller::fabric(cx)
+                            .with_base_url(self.fabric_base())
+                            .install(id, loader_version)
+                            .await?
                     }
                     LoaderChoice::Quilt => {
-                        LoaderInstaller::quilt(cx).with_base_url(self.quilt_base())
+                        LoaderInstaller::quilt(cx)
+                            .with_base_url(self.quilt_base())
+                            .install(id, loader_version)
+                            .await?
+                    }
+                    // Forge/NeoForge 无「最新版」查询接口，版本必须由调用方显式给出。
+                    LoaderChoice::Forge => {
+                        let forge_version = require_loader_version(choice, id, loader_version)?;
+                        let url = forge_installer_url(id, forge_version);
+                        self.install_forge(id, choice, forge_version, &url, cx, events)
+                            .await?
+                    }
+                    LoaderChoice::NeoForge => {
+                        let neoforge_version = require_loader_version(choice, id, loader_version)?;
+                        let url = neoforge_installer_url(neoforge_version);
+                        self.install_forge(id, choice, neoforge_version, &url, cx, events)
+                            .await?
                     }
                 };
-                let summary = installer.install(id, loader_version).await?;
                 emit(
                     events,
                     CoreEvent::stage(format!(
@@ -99,6 +128,91 @@ impl Aurora {
 
         Ok(InstallOutcome { vanilla, loader })
     }
+
+    /// 安装 Forge/NeoForge：先据原版版本 JSON 定 Java 主版本、备妥运行时，再下载并执行官方 installer。
+    ///
+    /// 与 Fabric/Quilt 不同，Forge/NeoForge 的 installer 内含需 Java 子进程执行的 processors，故本步依赖
+    /// [`Aurora::prepare_java`] 取得可执行 java。`installer_url` 由调用方按风味拼好（Forge 需 mc+loader
+    /// 两段，NeoForge 只需 loader 一段），本方法只负责 Java 解析、执行与把 [`aurora_install::ForgeSummary`]
+    /// 收敛成 [`LoaderSummary`]。`processors` 计数在 [`LoaderSummary`] 中无对应字段，改由阶段事件保留。
+    async fn install_forge(
+        &self,
+        id: &str,
+        choice: LoaderChoice,
+        loader_version: &str,
+        installer_url: &str,
+        cx: InstallContext<'_>,
+        events: Option<&EventSink>,
+    ) -> Result<LoaderSummary> {
+        // 原版安装已把版本 JSON 落在 versions/<id>/<id>.json，读回它取该版本要求的 Java 主版本
+        // （缺省回落 8，与 launch 路径一致）。processors 用它执行 Forge 安装逻辑。
+        let json_path = cx.layout.version_json(id);
+        let bytes = tokio::fs::read(&json_path)
+            .await
+            .map_err(|source| aurora_base::Error::Io {
+                path: json_path.clone(),
+                source,
+            })?;
+        let version = VersionJson::from_json_str(&String::from_utf8_lossy(&bytes))?;
+        let required_major = version
+            .java_version
+            .as_ref()
+            .map(|j| j.major_version)
+            .unwrap_or(8);
+
+        emit(
+            events,
+            CoreEvent::stage(format!(
+                "{} 安装器需要 Java {required_major}，开始解析运行时",
+                choice.display_name()
+            )),
+        );
+        let (_, java_path) = self.prepare_java(required_major, events).await?;
+
+        emit(
+            events,
+            CoreEvent::stage(format!(
+                "下载并执行 {} 安装器：{installer_url}",
+                choice.display_name()
+            )),
+        );
+        let summary = ForgeInstaller::new(cx, java_path)
+            .install(installer_url)
+            .await?;
+        emit(
+            events,
+            CoreEvent::stage(format!(
+                "{} 安装器执行完成：库 {} / 处理器 {}",
+                choice.display_name(),
+                summary.libraries,
+                summary.processors
+            )),
+        );
+
+        Ok(LoaderSummary {
+            id: summary.id,
+            loader_version: loader_version.to_owned(),
+            libraries: summary.libraries,
+        })
+    }
+}
+
+/// 取出 Forge/NeoForge 的显式 loader 版本；缺省即报错，绝不静默兜底一个版本。
+///
+/// Forge/NeoForge 的官方 maven 无 Fabric/Quilt 那样的「列出可用 loader」接口，无从推断推荐版，故要求
+/// 调用方显式传入。复用 [`aurora_install::Error::LoaderVersionNotFound`] 表达「没有可用 loader 版本」。
+fn require_loader_version<'a>(
+    choice: LoaderChoice,
+    game_version: &str,
+    loader_version: Option<&'a str>,
+) -> Result<&'a str> {
+    loader_version.ok_or_else(|| {
+        aurora_install::Error::LoaderVersionNotFound {
+            loader: choice.display_name(),
+            game_version: game_version.to_owned(),
+        }
+        .into()
+    })
 }
 
 #[cfg(test)]
@@ -231,6 +345,103 @@ mod tests {
             .join("0.15.0")
             .join("loader-0.15.0.jar");
         assert_eq!(tokio::fs::read(&lib).await.unwrap(), b"loader-jar");
+    }
+
+    /// 原版 JSON 声明 javaVersion.majorVersion，Forge 分支须读回它并据此解析 Java；这里给一个
+    /// 不存在的主版本（999）且关闭自动下载，令 prepare_java 必然报 NoJava。断言：
+    /// (1) 选择 Forge 走到了 Java 解析（Fabric/Quilt 分支不碰 Java），
+    /// (2) java 主版本正是从原版 JSON 读出的 999（非硬编码 8），
+    /// (3) 失败发生在下载 installer（硬编码 maven 地址）之前，故测试不触网。
+    /// 删掉「读版本 JSON 定 Java 主版本 + prepare_java」逻辑，本断言即挂。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_forge_reads_java_major_before_installer_download() {
+        let server = MockServer::start().await;
+        let base = server.uri();
+
+        Mock::given(method("GET"))
+            .and(path("/manifest.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"latest":{{"release":"test","snapshot":"test"}},
+                    "versions":[{{"id":"test","type":"release","url":"{base}/test.json",
+                    "time":"t","releaseTime":"t"}}]}}"#
+            )))
+            .mount(&server)
+            .await;
+        // 版本 JSON 携带 javaVersion.majorVersion=999（本机不可能装有 Java 999）。
+        Mock::given(method("GET"))
+            .and(path("/test.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"id":"test","type":"release","mainClass":"net.minecraft.client.main.Main",
+                    "javaVersion":{"component":"jre-legacy","majorVersion":999}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path().to_path_buf();
+        let mut aurora = Aurora::for_test(AuroraConfig::default(), mc.clone(), mc.clone())
+            .with_manifest_url(format!("{base}/manifest.json"));
+        // 关闭自动下载：无匹配 Java 时直接报 NoJava，而非去拉 Mojang 运行时（避免触网）。
+        aurora.set_auto_download_java(false);
+
+        let err = aurora
+            .install("test", Some(LoaderChoice::Forge), Some("47.2.0"), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::error::CoreError::NoJava { major: 999 }),
+            "应因缺 Java 999 而在下载 installer 前失败，实际：{err:?}"
+        );
+
+        // 原版 JSON 确已落盘（Forge 分支正是读它取 Java 主版本）。
+        let json_path = mc.join("versions").join("test").join("test.json");
+        assert!(json_path.is_file());
+    }
+
+    /// Forge/NeoForge 无「最新版」查询，缺省 loader 版本必须显式报错，绝不静默兜底。
+    /// 删掉 require_loader_version 的缺省校验（放任继续），错误类型将变（NoJava/下载失败），本断言即挂。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_forge_without_version_reports_loader_version_missing() {
+        let server = MockServer::start().await;
+        let base = server.uri();
+
+        Mock::given(method("GET"))
+            .and(path("/manifest.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"latest":{{"release":"test","snapshot":"test"}},
+                    "versions":[{{"id":"test","type":"release","url":"{base}/test.json",
+                    "time":"t","releaseTime":"t"}}]}}"#
+            )))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/test.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"id":"test","type":"release","mainClass":"net.minecraft.client.main.Main"}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path().to_path_buf();
+        let aurora = Aurora::for_test(AuroraConfig::default(), mc.clone(), mc)
+            .with_manifest_url(format!("{base}/manifest.json"));
+
+        // NeoForge 缺省版本 -> LoaderVersionNotFound（loader 名取自 display_name，game_version 为原版 id）。
+        let err = aurora
+            .install("test", Some(LoaderChoice::NeoForge), None, None)
+            .await
+            .unwrap_err();
+        match err {
+            crate::error::CoreError::Install(aurora_install::Error::LoaderVersionNotFound {
+                loader,
+                game_version,
+            }) => {
+                assert_eq!(loader, "NeoForge");
+                assert_eq!(game_version, "test");
+            }
+            other => panic!("应报 LoaderVersionNotFound，实际：{other:?}"),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

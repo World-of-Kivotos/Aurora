@@ -28,6 +28,7 @@ pub mod facade;
 pub mod install;
 pub mod java;
 pub mod launch;
+pub mod mods;
 pub mod search;
 pub mod versions;
 
@@ -38,6 +39,7 @@ pub use event::{CoreEvent, DownloadProgress, EventSink};
 pub use facade::Aurora;
 pub use install::{InstallOutcome, LoaderChoice};
 pub use launch::LaunchOptions;
+pub use mods::ModInstallOutcome;
 
 pub use auth::{MSA_CLIENT_ID_ENV, perform_microsoft_login};
 
@@ -53,7 +55,7 @@ pub use aurora_launch::{
     detect_crash,
 };
 pub use aurora_modplatform::{
-    AggregateResult, ModLoader, Platform, PlatformError, ResourceType, SearchHit, SearchQuery,
-    SortField,
+    AggregateResult, InstalledMod, MetadataFormat, ModLoader, ModMetadata, Platform, PlatformError,
+    ResourceType, SearchHit, SearchQuery, SortField,
 };
 pub use aurora_version::{LoaderInfo, LoaderKind, ManifestVersion, VersionManifest};

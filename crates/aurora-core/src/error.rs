@@ -33,6 +33,9 @@ pub enum CoreError {
     /// 启动链路错误。
     #[error(transparent)]
     Launch(#[from] aurora_launch::LaunchError),
+    /// Mod 平台错误（Modrinth/CurseForge 客户端、本地模组扫描与启禁）。
+    #[error(transparent)]
+    ModPlatform(#[from] aurora_modplatform::Error),
 
     /// 读取配置文件失败。
     #[error("读取配置文件 {path} 失败")]
@@ -58,6 +61,13 @@ pub enum CoreError {
     /// 请求启动/操作的版本本地未安装。
     #[error("本地未安装版本 {id}")]
     VersionNotInstalled { id: String },
+    /// 请求安装的模组版本/文件在平台上不存在。
+    #[error("平台 {platform} 上工程 {project_id} 未找到版本 {version_id}")]
+    ModVersionNotFound {
+        platform: &'static str,
+        project_id: String,
+        version_id: String,
+    },
     /// 找不到匹配主版本的 Java，且自动下载被关闭。
     #[error("未找到匹配 Java {major} 的运行时，且自动下载已关闭（开启 auto_download_java 或手动安装对应 Java）")]
     NoJava { major: u32 },
