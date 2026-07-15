@@ -1,0 +1,22 @@
+.shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+}
+
+.content {
+  flex: 1 1 auto;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-height: 100%;
+  /* 内容区外边距统一 32（SPACE_XL） */
+  padding: var(--space-xl);
+}

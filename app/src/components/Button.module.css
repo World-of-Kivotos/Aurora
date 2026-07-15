@@ -1,0 +1,46 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  /* spec 固定内边距 [10,16]，10 不属于间距刻度，此处按规格直写 */
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+}
+
+.primary {
+  background: var(--accent-gradient);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-soft);
+}
+
+.secondary {
+  background: var(--surface);
+  color: var(--on-surface);
+  border-color: var(--border-subtle);
+}
+
+.secondary:hover {
+  background: var(--surface-hover);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-solid);
+}

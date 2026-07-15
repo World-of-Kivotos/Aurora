@@ -1,0 +1,143 @@
+.launch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.launchInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.launchLabel {
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.launchHint {
+  font-size: var(--text-body);
+  color: var(--on-surface-muted);
+}
+
+.status {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--on-surface-muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+@media (max-width: 720px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cardHeading {
+  margin: 0 0 var(--space-md);
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+/* 账户行 */
+.accountRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-gradient);
+  color: var(--on-accent);
+}
+
+.accountMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.accountName {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.accountType {
+  font-size: var(--text-caption);
+  color: var(--on-surface-muted);
+}
+
+/* 版本列表 */
+.versionList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.versionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.versionId {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.tag {
+  font-size: var(--text-caption);
+  color: var(--on-surface-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.tagBroken {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 错误卡片 */
+.errorCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.errorIcon {
+  display: grid;
+  place-items: center;
+  color: var(--danger);
+}
+
+.errorText {
+  flex: 1 1 auto;
+  font-size: var(--text-body);
+  color: var(--danger);
+  word-break: break-word;
+}

@@ -1,0 +1,27 @@
+[package]
+name = "aurora-tauri"
+version = "0.1.0"
+description = "Aurora 启动器的 Tauri 外壳：把 aurora-core 门面通过 IPC 暴露给 React 前端"
+authors = ["Aurora"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# `_lib` 后缀避免 lib 与 bin 同名（Windows 上的已知冲突，见 rust-lang/cargo#8519）。
+name = "aurora_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 门面：前端全部能力经此 crate 暴露，不直接依赖任何下层 crate。
+aurora-core = { path = "../../crates/aurora-core" }
+# managed state 用 tokio::sync::Mutex（Aurora 兼有 &self async 与 &mut self 方法）；
+# 事件转发用 mpsc + spawn，故需 rt-multi-thread/macros/sync。
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
