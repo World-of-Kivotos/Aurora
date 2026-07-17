@@ -6,3 +6,6 @@
 
 # JetBrains IDE 本地配置
 /.idea/
+
+# VS Code Counter 代码统计输出
+/.VSCodeCounter/
