@@ -59,6 +59,8 @@ struct ConfigDto {
     has_client_id: bool,
     /// 找不到匹配 Java 时是否自动下载。
     auto_download_java: bool,
+    /// 当前选中的启动版本 id（版本页设定，主页据此启动）；未选择时为 null。
+    selected_version: Option<String>,
 }
 
 /// 已安装版本探测到的加载器 DTO。
@@ -75,6 +77,8 @@ struct LoaderDto {
 struct InstalledVersionDto {
     /// 版本 id（等于版本目录名）。
     id: String,
+    /// 基础 Minecraft 版本：modded 取版本 JSON 的 inheritsFrom，vanilla 即 id。
+    mc_version: String,
     /// 是否正式版（type == release）。
     is_release: bool,
     /// 是否装有任一 Mod 加载器。
@@ -314,6 +318,7 @@ fn scan_dto(scan: VersionScan) -> VersionScanDto {
             .into_iter()
             .map(|v| InstalledVersionDto {
                 id: v.id.clone(),
+                mc_version: v.json.inherits_from.clone().unwrap_or_else(|| v.id.clone()),
                 is_release: v.is_release(),
                 has_mod_loader: v.has_mod_loader(),
                 loaders: v
@@ -551,6 +556,21 @@ fn find_account_impl(_aurora: &Aurora, _uuid: &str) -> Result<Account, String> {
     Err(WINDOWS_ONLY.to_owned())
 }
 
+/// 启动前静默续期：微软账户缓存的 Minecraft 令牌过期时用 refresh_token 换新并回写；其它账户原样返回。
+/// refresh_token 也失效时给出可操作的重登提示。
+#[cfg(windows)]
+async fn ensure_fresh_impl(aurora: &Aurora, account: &Account) -> Result<Account, String> {
+    aurora.ensure_microsoft_fresh(account).await.map_err(|e| {
+        format!("微软账户续期失败，登录可能已过期，请在账户页重新登录（或检查网络）：{e}")
+    })
+}
+
+#[cfg(not(windows))]
+async fn ensure_fresh_impl(_aurora: &Aurora, account: &Account) -> Result<Account, String> {
+    // 非 Windows 无账户库，此路径实际到不了（find_account_impl 已先行报错）；原样返回以保证跨平台编译。
+    Ok(account.clone())
+}
+
 // ===== IPC 命令 =====
 //
 // 全部为 async：借用 managed state 的命令必须返回 Result（Tauri 对借用 State 的异步命令的硬性要求），
@@ -572,6 +592,7 @@ async fn get_config(state: State<'_, Mutex<Aurora>>) -> Result<ConfigDto, String
         isolation_policy: config.isolation_policy,
         has_client_id: config.msa_client_id.is_some(),
         auto_download_java: config.auto_download_java,
+        selected_version: config.selected_version.clone(),
     })
 }
 
@@ -834,6 +855,8 @@ async fn launch_game(
         let launched = match account_uuid.as_deref() {
             Some(uuid) => {
                 let account = find_account_impl(&aurora, uuid)?;
+                // 启动前静默续期：微软账户缓存令牌过期则用 refresh_token 换新，避免拿废令牌启动。
+                let account = ensure_fresh_impl(&aurora, &account).await?;
                 aurora
                     .launch_account(&version_id, &account, &options, Some(log_tx), Some(&event_tx))
                     .await
@@ -926,6 +949,7 @@ async fn update_config(
     auto_download_java: Option<bool>,
     cache_directory: Option<String>,
     client_id: Option<String>,
+    selected_version: Option<String>,
     state: State<'_, Mutex<Aurora>>,
 ) -> Result<(), String> {
     let mut aurora = state.lock().await;
@@ -954,6 +978,9 @@ async fn update_config(
     }
     if let Some(id) = client_id {
         aurora.set_client_id(id);
+    }
+    if let Some(id) = selected_version {
+        aurora.set_selected_version(Some(id));
     }
     aurora.save_config().await.map_err(|e| e.to_string())?;
     Ok(())
