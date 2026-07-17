@@ -148,19 +148,49 @@ pub fn split_args(input: &str) -> Vec<String> {
     out
 }
 
-/// JVM 参数去重：**完全相同**的字符串才去重（保序保留首个）。
+/// JVM 参数去重：保序保留首个，丢弃**完全相同**的项。
 ///
 /// 不做键级去重——`-Xmx2g` 与 `-Xmx4g` 是两个不同字符串，都保留（交由 JVM「后者生效」），也因此不会把
 /// `-XX:+UseG1GC` 之类的开关误并。
+///
+/// 配对标志（`--add-opens` / `--add-exports` / `-p` 等，值是紧随的独立 token）按「标志+值」整对去重：
+/// 这类标志会以**不同值多次**出现（Forge/NeoForge 的 JPMS 模块参数），若按单 token 去重，重复的标志名会被
+/// 当完全重复删掉、留下孤儿值滑到主类位置（`ClassNotFoundException: java.base/...`）——整对去重才能既并掉
+/// 真正重复的配对、又不拆散不同值的配对。
 pub fn dedup_jvm_args(args: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::with_capacity(args.len());
-    for arg in args {
-        if seen.insert(arg.clone()) {
-            out.push(arg);
+    let mut i = 0;
+    while i < args.len() {
+        if is_paired_jvm_flag(&args[i]) && i + 1 < args.len() {
+            let key = format!("{}\u{0}{}", args[i], args[i + 1]);
+            if seen.insert(key) {
+                out.push(args[i].clone());
+                out.push(args[i + 1].clone());
+            }
+            i += 2;
+            continue;
         }
+        if seen.insert(args[i].clone()) {
+            out.push(args[i].clone());
+        }
+        i += 1;
     }
     out
+}
+
+/// 值为紧随独立 token、且可能以不同值多次出现的 JVM 配对标志（JPMS 模块系统相关，Forge/NeoForge 依赖）。
+fn is_paired_jvm_flag(token: &str) -> bool {
+    matches!(
+        token,
+        "--add-opens"
+            | "--add-exports"
+            | "--add-reads"
+            | "--add-modules"
+            | "--patch-module"
+            | "-p"
+            | "--module-path"
+    )
 }
 
 /// 游戏参数合并：`extra` 里的 `--key value` 覆盖 `base` 中同名键的值；`--tweakClass` 是例外，累加不覆盖
@@ -305,6 +335,46 @@ mod tests {
         assert_eq!(
             dedup_jvm_args(args),
             vec!["-Xmx2g", "-XX:+UseG1GC", "-Xmx4g"]
+        );
+    }
+
+    #[test]
+    fn dedup_jvm_preserves_repeated_paired_flags() {
+        // Forge/NeoForge 的 --add-opens / --add-exports 以不同值多次出现（作为独立 token）：
+        // 必须整对保留，绝不能把重复的标志名当完全重复删掉——否则孤儿值滑到主类位置，启动即崩。
+        let args = vec![
+            "-p".to_string(),
+            "modpath".to_string(),
+            "--add-modules".to_string(),
+            "ALL-MODULE-PATH".to_string(),
+            "--add-opens".to_string(),
+            "java.base/java.util.jar=cpw.mods.securejarhandler".to_string(),
+            "--add-opens".to_string(),
+            "java.base/java.lang.invoke=cpw.mods.securejarhandler".to_string(),
+            "--add-exports".to_string(),
+            "java.base/sun.security.util=cpw.mods.securejarhandler".to_string(),
+            "--add-exports".to_string(),
+            "jdk.naming.dns/com.sun.jndi.dns=java.naming".to_string(),
+        ];
+        // 两个 --add-opens、两个 --add-exports 及其值全部原样保留（删掉整对去重逻辑此断言即挂）。
+        assert_eq!(dedup_jvm_args(args.clone()), args);
+    }
+
+    #[test]
+    fn dedup_jvm_collapses_identical_paired_flag() {
+        // 完全相同的配对（标志+值）仍去重为一份（合并 vanilla + loader 参数时可能重复）。
+        let args = vec![
+            "--add-opens".to_string(),
+            "java.base/java.lang.invoke=cpw.mods.securejarhandler".to_string(),
+            "--add-opens".to_string(),
+            "java.base/java.lang.invoke=cpw.mods.securejarhandler".to_string(),
+        ];
+        assert_eq!(
+            dedup_jvm_args(args),
+            vec![
+                "--add-opens".to_string(),
+                "java.base/java.lang.invoke=cpw.mods.securejarhandler".to_string(),
+            ]
         );
     }
 
