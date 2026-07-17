@@ -152,6 +152,11 @@ impl Aurora {
         self.game_dir = dir;
     }
 
+    /// 设置当前启动版本 id（`None` 表示清空选择，主页回落到扫描首项）。
+    pub fn set_selected_version(&mut self, id: Option<String>) {
+        self.config.selected_version = id;
+    }
+
     // ---- 内部共享装配 ----
 
     /// 共享 HTTP 客户端（克隆廉价：内部 `Arc`）。
@@ -325,5 +330,19 @@ mod tests {
             aurora.config().game_directory.as_deref(),
             Some(Path::new("/games/mc"))
         );
+    }
+
+    #[test]
+    fn set_selected_version_updates_config() {
+        let mut aurora = test_aurora();
+        assert!(aurora.config().selected_version.is_none());
+        aurora.set_selected_version(Some("1.20.1-Forge_47.4.20".to_owned()));
+        assert_eq!(
+            aurora.config().selected_version.as_deref(),
+            Some("1.20.1-Forge_47.4.20")
+        );
+        // 传 None 清空选择；删掉 setter 里的赋值这两条断言即挂。
+        aurora.set_selected_version(None);
+        assert!(aurora.config().selected_version.is_none());
     }
 }

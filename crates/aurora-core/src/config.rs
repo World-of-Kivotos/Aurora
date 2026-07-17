@@ -112,6 +112,8 @@ pub struct AuroraConfig {
     pub msa_client_id: Option<String>,
     /// 自定义游戏目录（`.minecraft`）；缺省时用数据目录下的 `.minecraft`。
     pub game_directory: Option<PathBuf>,
+    /// 当前选中的启动版本 id（版本页设定，主页据此启动）；缺省或指向已卸载版本时主页回落到扫描首项。
+    pub selected_version: Option<String>,
     /// 自定义缓存目录（对应功能矩阵「自定义缓存文件夹路径」）；缺省用系统默认。
     pub cache_directory: Option<PathBuf>,
     /// 找不到匹配 Java 时是否自动下载 Mojang 运行时。
@@ -128,6 +130,7 @@ impl Default for AuroraConfig {
             isolation_policy: IsolationPolicy::default(),
             msa_client_id: None,
             game_directory: None,
+            selected_version: None,
             cache_directory: None,
             auto_download_java: true,
         }
