@@ -11,13 +11,15 @@ import { Modal } from "../components/Modal";
 import { LogConsole } from "../components/LogConsole";
 import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
-import { AlertIcon, PlayIcon, RefreshIcon } from "../components/icons";
-import { pageItem } from "../lib/motion";
+import { AlertIcon, RefreshIcon } from "../components/icons";
+import { pageItem, springs } from "../lib/motion";
 import {
   createOfflineAccount,
   currentAccount,
+  getConfig,
   launchGame,
   listInstalled,
+  listMods,
   onCoreEvent,
   onGameLog,
   stopGame,
@@ -35,12 +37,6 @@ const ACCOUNT_TYPE_LABEL: Record<AccountType, string> = {
   authlib_injector: "外置登录",
 };
 
-// 版本 id 拆成主段 + 加载器后缀（"1.20.1-fabric" -> {base:"1.20.1", sfx:"-fabric"}）。
-function splitId(id: string): { base: string; sfx: string } {
-  const i = id.indexOf("-");
-  return i < 0 ? { base: id, sfx: "" } : { base: id.slice(0, i), sfx: id.slice(i) };
-}
-
 function loaderText(v: InstalledVersionDto): string {
   if (v.loaders.length === 0) return "—";
   const l = v.loaders[0];
@@ -51,6 +47,10 @@ export function Home() {
   const { toast } = useToast();
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
+  // config 里选中的启动版本 id；入场随 load 拉取，决定「开始游戏」启动哪个（版本页设定）。
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  // 当前版本的 Mod 数量（仅装了加载器时有意义）；随当前版本变化重取。
+  const [modCount, setModCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,9 +75,10 @@ export function Home() {
     setLoading(true);
     setError(null);
     try {
-      const [acc, sc] = await Promise.all([currentAccount(), listInstalled()]);
+      const [acc, sc, cfg] = await Promise.all([currentAccount(), listInstalled(), getConfig()]);
       setAccount(acc);
       setScan(sc);
+      setSelectedVersion(cfg.selected_version);
     } catch (e) {
       // 错误自然冒泡到这里统一展示，不吞。
       setError(String(e));
@@ -112,12 +113,34 @@ export function Home() {
   }, []);
 
   const versions = scan?.versions ?? [];
-  const current = versions[0] ?? null;
-  const canLaunch = !loading && !!account && versions.length > 0;
+  // 当前启动版本：优先 config 选中项（若仍已安装），否则回落扫描首项；版本页用同一套解析。
+  const current = versions.find((v) => v.id === selectedVersion) ?? versions[0] ?? null;
+  const canLaunch = !loading && !!account && !!current;
+  const currentId = current?.id ?? null;
+  const currentHasLoader = !!current && current.loaders.length > 0;
+
+  // 当前版本 Mod 数量：仅装了加载器时取，版本切换即重取；失败静默降级（辅助展示，不阻断主流程）。
+  useEffect(() => {
+    if (!currentId || !currentHasLoader) {
+      setModCount(null);
+      return;
+    }
+    let cancelled = false;
+    void listMods(currentId)
+      .then((mods) => {
+        if (!cancelled) setModCount(mods.length);
+      })
+      .catch(() => {
+        if (!cancelled) setModCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentId, currentHasLoader]);
 
   const handlePlay = useCallback(async () => {
-    if (!account || versions.length === 0) return;
-    const versionId = versions[0].id;
+    if (!account || !current) return;
+    const versionId = current.id;
     setLaunching(true);
     setError(null);
     setStatus(null);
@@ -159,7 +182,7 @@ export function Home() {
     } finally {
       setLaunching(false);
     }
-  }, [account, versions, toast, dropRunListeners]);
+  }, [account, current, toast, dropRunListeners]);
 
   const handleStop = useCallback(async () => {
     try {
@@ -177,21 +200,23 @@ export function Home() {
     }
   }, [toast, dropRunListeners]);
 
-  const cur = current ? splitId(current.id) : null;
-  // 加载器标签：优先用扫描解析出的加载器（"Forge 47.4.20"），回落到版本 id 后缀（去前导 - 与下划线）。
-  const loaderLabel =
-    current && current.loaders.length > 0
-      ? loaderText(current)
-      : cur && cur.sfx
-        ? cur.sfx.replace(/^-/, "").replace(/_/g, " ")
-        : null;
+  // 版本副行：MC 版本(若与实例名不同) · 加载器/原版 · Mod 数量，按需拼接；与主行(实例名)字号字重分层。
+  const versionMeta = current
+    ? [
+        current.mc_version !== current.id ? current.mc_version : null,
+        current.loaders.length > 0 ? loaderText(current) : "原版",
+        current.loaders.length > 0 && modCount !== null ? `${modCount} 个 Mod` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
 
   return (
     <>
       <motion.div variants={pageItem}>
         <PageHeader
           title="主页"
-          subtitle="启动你的 Minecraft 世界"
+          subtitle="Start your Minecraft journey~"
           right={
             <>
               <div className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</div>
@@ -215,36 +240,31 @@ export function Home() {
         </Card>
       )}
 
-      {/* 极简启动屏：版本号左上，启动集群右下，中间大留白 */}
+      {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}
       <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
-        <div className="min-w-0">
-          <div className="mb-[14px] flex items-center gap-3 text-[11px] font-bold tracking-[0.2em] text-ink/60">
-            <span className="inline-block h-[2px] w-[26px] bg-accent" />
-            {cur ? "准备就绪 · 当前版本" : "当前版本"}
-          </div>
-          {cur ? (
-            <>
-              <p className="m-0 text-[clamp(46px,6.4vw,84px)] leading-[0.9] font-extrabold tracking-[-0.035em] tabular-nums break-words">
-                {cur.base}
-              </p>
-              {loaderLabel && (
-                <p className="mt-1.5 max-w-full truncate text-[clamp(19px,2.5vw,32px)] font-bold tracking-[-0.01em] text-accent">
-                  {loaderLabel}
-                </p>
+        <div className="mt-auto flex flex-col items-end gap-6 pt-10">
+          {/* 版本信息：实例名(主，粗大) + MC版本 · 加载器 · Mod数(次，细小) */}
+          {current ? (
+            <div className="max-w-[460px] text-right">
+              <div className="truncate text-[19px] leading-tight font-extrabold tracking-[-0.01em]">
+                {current.id}
+              </div>
+              {versionMeta && (
+                <div className="mt-1 truncate font-mono text-[12px] tracking-[0.02em] text-ink/50">
+                  {versionMeta}
+                </div>
               )}
-            </>
+            </div>
           ) : (
-            <p className="m-0 text-[32px] font-extrabold text-ink/26">
+            <div className="text-right text-[15px] font-bold text-ink/30">
               {loading ? "读取中…" : "尚未安装版本"}
-            </p>
+            </div>
           )}
-        </div>
 
-        {/* 启动集群：右下角 —— 皮肤头像账户 chip + 大启动按钮 */}
-        <div className="mt-auto flex flex-col items-end gap-5 pt-10">
+          {/* 账户：头像 + 名字 / 类型 */}
           {account ? (
             <div className="flex items-center gap-3">
-              <SkinHead uuid={account.uuid} name={account.name} size={42} />
+              <SkinHead uuid={account.uuid} name={account.name} size={44} />
               <div className="min-w-0 text-right">
                 <div className="truncate text-[16px] leading-tight font-extrabold">{account.name}</div>
                 <div className="mt-0.5 text-[11px] tracking-[0.1em] text-ink/45">
@@ -265,16 +285,24 @@ export function Home() {
             </div>
           )}
 
+          {/* 主操作：放大的「竖线 + 文字」——全屏最大字，绝对主角。无填充方块，hover 点亮朱红、竖条抽高。 */}
           <div className="flex flex-col items-end gap-3">
-            <Button
-              variant="primary"
-              icon={<PlayIcon />}
+            <motion.button
+              type="button"
               onClick={() => void handlePlay()}
               disabled={!canLaunch || launching || running}
-              className="px-9 py-[18px] text-[18px]"
+              whileTap={{ scale: 0.99 }}
+              transition={springs.tap}
+              className="group inline-flex items-center gap-5 py-1 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
             >
-              {launching ? "启动中…" : running ? "运行中" : "开始游戏"}
-            </Button>
+              <span className="text-[clamp(34px,4.4vw,52px)] leading-none font-extrabold tracking-[-0.02em] text-ink transition-colors duration-200 group-hover:text-accent">
+                {launching ? "启动中" : running ? "运行中" : "Start"}
+              </span>
+              <span
+                aria-hidden="true"
+                className="h-[40px] w-[4px] shrink-0 bg-accent transition-all duration-200 group-hover:h-[58px]"
+              />
+            </motion.button>
             {(running || logLines.length > 0) && (
               <div className="flex gap-3">
                 <Button variant="secondary" onClick={() => setLogOpen(true)}>
@@ -290,7 +318,7 @@ export function Home() {
           </div>
 
           {status && (
-            <p className="max-w-[420px] truncate text-right font-mono text-[12px] text-ink/50">
+            <p className="max-w-[440px] truncate text-right font-mono text-[12px] text-ink/50">
               {status}
             </p>
           )}

@@ -13,10 +13,12 @@ import { useToast } from "../components/Toast";
 import { AlertIcon, LayersIcon, PackageIcon, RefreshIcon } from "../components/icons";
 import { pageItem } from "../lib/motion";
 import {
+  getConfig,
   installVersion,
   listInstalled,
   listManifest,
   onCoreEvent,
+  updateConfig,
   type InstalledVersionDto,
   type LoaderChoice,
   type ManifestDto,
@@ -83,6 +85,8 @@ export function Versions() {
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   const [scanLoading, setScanLoading] = useState(true);
   const [scanError, setScanError] = useState<string | null>(null);
+  // 当前选中的启动版本 id（config），与主页共享；点击已安装行写回 config。
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
 
   // ---- 清单链路 ----
   const [manifest, setManifest] = useState<ManifestDto | null>(null);
@@ -123,10 +127,37 @@ export function Versions() {
     }
   }, []);
 
+  // 读当前启动版本选择。失败不阻断本页主功能，仅提示；「当前」标记暂缺。
+  const loadConfig = useCallback(async () => {
+    try {
+      const c = await getConfig();
+      setSelectedVersion(c.selected_version);
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  }, [toast]);
+
   useEffect(() => {
     void loadInstalled();
     void loadManifest();
-  }, [loadInstalled, loadManifest]);
+    void loadConfig();
+  }, [loadInstalled, loadManifest, loadConfig]);
+
+  // 设为当前启动版本：乐观更新 + 写回 config，失败回滚。
+  const setCurrent = useCallback(
+    async (id: string) => {
+      const prev = selectedVersion;
+      setSelectedVersion(id);
+      try {
+        await updateConfig({ selectedVersion: id });
+        toast("已设为当前启动版本", "success");
+      } catch (e) {
+        setSelectedVersion(prev);
+        toast(String(e), "error");
+      }
+    },
+    [selectedVersion, toast],
+  );
 
   const installedIds = useMemo(
     () => new Set((scan?.versions ?? []).map((v) => v.id)),
@@ -195,6 +226,11 @@ export function Versions() {
   const versions = scan?.versions ?? [];
   const broken = scan?.broken ?? [];
   const installedTotal = versions.length + broken.length;
+  // 有效当前版本：选中项仍已安装则用它，否则回落扫描首项（与主页解析一致）。
+  const effectiveCurrentId =
+    selectedVersion && versions.some((v) => v.id === selectedVersion)
+      ? selectedVersion
+      : (versions[0]?.id ?? null);
 
   return (
     <>
@@ -242,29 +278,42 @@ export function Versions() {
           <ul className="m-0 list-none p-0">
             {versions.map((v) => {
               const s = splitId(v.id);
+              const isCurrent = v.id === effectiveCurrentId;
               return (
-                <li
-                  key={v.id}
-                  className="flex items-baseline justify-between gap-6 border-b border-ink/9 py-[13px] last:border-b-0"
-                >
-                  <span className="flex items-baseline gap-0.5 text-[24px] font-bold tracking-[-0.01em] tabular-nums">
-                    {s.base}
-                    {s.sfx && <span className="font-semibold text-ink/40">{s.sfx}</span>}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-[14px]">
-                    <span
-                      className={
-                        v.is_release
-                          ? "rounded-[2px] border border-ink/16 px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-ink/60"
-                          : "rounded-[2px] bg-ink px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-paper-on"
-                      }
-                    >
-                      {v.is_release ? "正式版" : "快照"}
+                <li key={v.id}>
+                  <button
+                    type="button"
+                    onClick={() => void setCurrent(v.id)}
+                    aria-pressed={isCurrent}
+                    title="设为当前启动版本"
+                    className="flex w-full cursor-pointer items-baseline justify-between gap-6 border-b border-ink/9 py-[13px] text-left transition-colors last:border-b-0 hover:bg-paper-sink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  >
+                    <span className="flex items-baseline gap-2.5">
+                      <span className="flex items-baseline gap-0.5 text-[24px] font-bold tracking-[-0.01em] tabular-nums">
+                        {s.base}
+                        {s.sfx && <span className="font-semibold text-ink/40">{s.sfx}</span>}
+                      </span>
+                      {isCurrent && (
+                        <span className="shrink-0 self-center rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.1em] text-accent">
+                          当前
+                        </span>
+                      )}
                     </span>
-                    <span className="min-w-[118px] text-right font-mono text-[12px] text-ink/40 tabular-nums">
-                      {loaderText(v)}
+                    <span className="flex shrink-0 items-center gap-[14px]">
+                      <span
+                        className={
+                          v.is_release
+                            ? "rounded-[2px] border border-ink/16 px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-ink/60"
+                            : "rounded-[2px] bg-ink px-[9px] py-1 text-[10.5px] font-bold tracking-[0.14em] text-paper-on"
+                        }
+                      >
+                        {v.is_release ? "正式版" : "快照"}
+                      </span>
+                      <span className="min-w-[118px] text-right font-mono text-[12px] text-ink/40 tabular-nums">
+                        {loaderText(v)}
+                      </span>
                     </span>
-                  </span>
+                  </button>
                 </li>
               );
             })}

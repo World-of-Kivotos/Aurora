@@ -36,6 +36,7 @@ export interface ConfigDto {
   isolation_policy: IsolationPolicy;
   has_client_id: boolean;
   auto_download_java: boolean;
+  selected_version: string | null;
 }
 
 export interface LoaderDto {
@@ -45,6 +46,7 @@ export interface LoaderDto {
 
 export interface InstalledVersionDto {
   id: string;
+  mc_version: string;
   is_release: boolean;
   has_mod_loader: boolean;
   loaders: LoaderDto[];
@@ -261,6 +263,7 @@ export interface ConfigPatch {
   autoDownloadJava?: boolean;
   cacheDirectory?: string;
   clientId?: string;
+  selectedVersion?: string;
 }
 
 export const updateConfig = (patch: ConfigPatch): Promise<void> => invoke("update_config", { ...patch });
