@@ -45,6 +45,21 @@ pub async fn perform_microsoft_login<S: CredentialStore>(
     Ok(account)
 }
 
+/// 用持久化的 refresh_token 静默续期微软账户：重跑 MSA 刷新 -> XBL/XSTS/Minecraft/profile 换新令牌，
+/// 按 uuid upsert 回写账户库（轮换后的 refresh_token 与新 Minecraft 令牌一并落盘），返回续好的账户。
+///
+/// 不含「是否需要续期」的判断——由调用方（[`Aurora::ensure_microsoft_fresh`]）先查缓存有效期再决定是否调用。
+pub async fn perform_microsoft_refresh<S: CredentialStore>(
+    auth: &MicrosoftAuth,
+    manager: &mut AccountManager<S>,
+    refresh_token: &str,
+) -> Result<Account> {
+    let session = auth.refresh_session(refresh_token).await?;
+    let account = account_from_session(&session);
+    manager.upsert(account.clone())?;
+    Ok(account)
+}
+
 /// 把一次微软会话摊平成可持久化的账户记录（缓存 Minecraft 令牌与到期时间，供下次免握手启动）。
 fn account_from_session(session: &MicrosoftSession) -> Account {
     Account::new(
@@ -154,6 +169,28 @@ impl Aurora {
         let auth = MicrosoftAuth::new(self.http(), client_id);
         let mut manager = self.open_accounts()?;
         perform_microsoft_login(&auth, &mut manager, on_code).await
+    }
+
+    /// 确保要启动的微软账户持有有效 Minecraft 令牌：缓存令牌在当前时刻仍有效则原样返回（不联网、不开库）；
+    /// 已过期或缺失则用 refresh_token 静默续期并回写账户库，返回续好的账户。非微软账户原样返回。
+    ///
+    /// refresh_token 也失效（满 90 天 / 被吊销）时，续期冒泡 [`aurora_auth::AuthError`]，由上层提示重新登录。
+    pub async fn ensure_microsoft_fresh(&self, account: &Account) -> Result<Account> {
+        let AccountCredentials::Microsoft(creds) = &account.credentials else {
+            return Ok(account.clone());
+        };
+        // 现实时刻若早于 1970（时钟异常）取 0，令缓存判定为过期而走续期——宁可多刷新，不拿废令牌启动。
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if creds.minecraft_token_valid_at(now) {
+            return Ok(account.clone());
+        }
+        let client_id = self.msa_client_id()?;
+        let auth = MicrosoftAuth::new(self.http(), client_id);
+        let mut manager = self.open_accounts()?;
+        perform_microsoft_refresh(&auth, &mut manager, &creds.refresh_token).await
     }
 
     /// 走 Authlib-Injector 用户名密码登录并把账户写入加密账户库，返回登录到的账户。
@@ -330,6 +367,56 @@ mod tests {
             reloaded.current().unwrap().uuid,
             "0123456789abcdef0123456789abcdef"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn microsoft_refresh_swaps_token_and_persists() {
+        let server = MockServer::start().await;
+        mount_full_login(&server).await; // 复用全链 mock；刷新走 /token(refresh) -> xbl/xsts/mc/profile
+
+        let store = MemStore::default();
+        let mut manager = AccountManager::load(store.clone()).unwrap();
+        // 先塞一个同 uuid 的旧账户，Minecraft 令牌已过期（到期时刻=1）。
+        manager
+            .upsert(Account::new(
+                "0123456789abcdef0123456789abcdef",
+                "OldName",
+                AccountCredentials::Microsoft(MicrosoftCredentials {
+                    refresh_token: "old-refresh".into(),
+                    minecraft_token: Some("OLD-MC".into()),
+                    minecraft_expires_at: Some(1),
+                }),
+            ))
+            .unwrap();
+        let auth = auth_for(&server);
+
+        let refreshed = perform_microsoft_refresh(&auth, &mut manager, "old-refresh")
+            .await
+            .unwrap();
+
+        // 换到新 Minecraft 令牌与轮换后的 refresh_token；到期时刻推到未来。
+        match &refreshed.credentials {
+            AccountCredentials::Microsoft(c) => {
+                assert_eq!(c.refresh_token, "rotated-refresh");
+                assert_eq!(c.minecraft_token.as_deref(), Some("MC-TOKEN"));
+                assert!(c.minecraft_expires_at.unwrap() > 1);
+            }
+            other => panic!("期望 Microsoft 凭据，得到 {other:?}"),
+        }
+        // 同 uuid 原地替换，未新增账户；重载后新令牌确已落盘（删掉 upsert 的落盘即挂）。
+        assert_eq!(manager.accounts().len(), 1);
+        let reloaded = AccountManager::load(store).unwrap();
+        match &reloaded
+            .find("0123456789abcdef0123456789abcdef")
+            .unwrap()
+            .credentials
+        {
+            AccountCredentials::Microsoft(c) => {
+                assert_eq!(c.refresh_token, "rotated-refresh");
+                assert_eq!(c.minecraft_token.as_deref(), Some("MC-TOKEN"));
+            }
+            other => panic!("期望 Microsoft 凭据，得到 {other:?}"),
+        }
     }
 
     /// 构造指向 mock 服务器、关闭重试的 Yggdrasil 客户端。
