@@ -3,8 +3,7 @@
 // snake_case 形参）；返回 DTO 字段是 serde 默认的 snake_case。页面只调用本文件导出的函数，不直接
 // import @tauri-apps/api，保证调用点集中、可测。
 
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "./tauri-bridge";
 
 // ---- 与后端 serde 枚举对应的字面量联合（均为 snake_case）----
 export type DownloadSourcePolicy = "auto" | "official_first" | "mirror_first";
