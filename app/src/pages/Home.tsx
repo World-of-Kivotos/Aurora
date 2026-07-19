@@ -7,12 +7,11 @@ import { motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
-import { Modal } from "../components/Modal";
-import { LogConsole } from "../components/LogConsole";
+import { LaunchControl, type LaunchPhase } from "../components/LaunchControl";
 import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
 import { AlertIcon, RefreshIcon } from "../components/icons";
-import { pageItem, springs } from "../lib/motion";
+import { pageItem } from "../lib/motion";
 import {
   createOfflineAccount,
   currentAccount,
@@ -54,13 +53,11 @@ export function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-  // 启动链路状态：launching=命令在途，running=进程已起。日志行随 onGameLog 累积。
+  // 启动链路状态：launching=命令在途，running=进程已起。
   const [launching, setLaunching] = useState(false);
   const [running, setRunning] = useState(false);
-  const [pid, setPid] = useState<number | null>(null);
-  const [logLines, setLogLines] = useState<GameLog[]>([]);
-  const [logOpen, setLogOpen] = useState(false);
+  // 游戏日志后台累积（不在 UI 显示，留作诊断 / 未来日志页）。
+  const logRef = useRef<GameLog[]>([]);
   // 进程运行期间持续存活的事件订阅，仅在结束游戏 / 组件卸载时统一 unlisten。
   const runUnlisten = useRef<Array<() => void>>([]);
 
@@ -91,26 +88,20 @@ export function Home() {
     void load();
   }, [load]);
 
-  // 创建离线账户：订阅进度事件流后再 invoke，结束务必 unlisten。
+  // 创建离线账户。
   const handleCreateOffline = useCallback(async () => {
     setBusy(true);
     setError(null);
-    setStatus(null);
-    const unlisten = await onCoreEvent((ev) => {
-      if (ev.kind === "warning") setStatus(`告警：${ev.message}`);
-      else if (ev.kind === "stage") setStatus(ev.message);
-    });
     try {
       const created = await createOfflineAccount("Steve");
       setAccount(created);
-      setStatus((prev) => prev ?? `已创建离线账户 ${created.name}`);
+      toast(`已创建离线账户 ${created.name}`, "success");
     } catch (e) {
       setError(String(e));
     } finally {
-      unlisten();
       setBusy(false);
     }
-  }, []);
+  }, [toast]);
 
   const versions = scan?.versions ?? [];
   // 当前启动版本：优先 config 选中项（若仍已安装），否则回落扫描首项；版本页用同一套解析。
@@ -143,19 +134,12 @@ export function Home() {
     const versionId = current.id;
     setLaunching(true);
     setError(null);
-    setStatus(null);
-    setLogLines([]);
-    setLogOpen(true);
+    logRef.current = [];
 
-    // 先订阅日志与进度事件，再 invoke，避免漏掉启动早期的输出。
-    const unGame = await onGameLog((line) => setLogLines((prev) => [...prev, line]));
+    // 先订阅日志与进度事件，再 invoke，避免漏掉启动早期的输出。日志只后台累积，告警仍冒泡到 toast。
+    const unGame = await onGameLog((line) => logRef.current.push(line));
     const unCore = await onCoreEvent((ev) => {
-      if (ev.kind === "warning") {
-        setStatus(`告警：${ev.message}`);
-        toast(`告警：${ev.message}`, "error");
-      } else if (ev.kind === "stage") {
-        setStatus(ev.message);
-      }
+      if (ev.kind === "warning") toast(`告警：${ev.message}`, "error");
     });
     runUnlisten.current = [unGame, unCore];
 
@@ -166,14 +150,8 @@ export function Home() {
         : { versionId, accountUuid: account.uuid };
 
     try {
-      const launched = await launchGame(args);
-      setPid(launched.pid);
+      await launchGame(args);
       setRunning(true);
-      setStatus(`已启动 ${versionId}`);
-      toast(
-        launched.pid != null ? `已启动 ${versionId}，PID ${launched.pid}` : `已启动 ${versionId}`,
-        "success",
-      );
     } catch (e) {
       // 进程未起：撤销订阅，错误冒泡到错误块与 toast，不吞。
       dropRunListeners();
@@ -187,8 +165,6 @@ export function Home() {
   const handleStop = useCallback(async () => {
     try {
       await stopGame();
-      setStatus("已结束游戏");
-      toast("已结束游戏", "success");
     } catch (e) {
       setError(String(e));
       toast(String(e), "error");
@@ -196,7 +172,6 @@ export function Home() {
       // 无论 stop 成败都收束运行态与订阅：进程若已退出，命令报错也不该留下悬挂监听。
       dropRunListeners();
       setRunning(false);
-      setPid(null);
     }
   }, [toast, dropRunListeners]);
 
@@ -211,12 +186,15 @@ export function Home() {
         .join(" · ")
     : "";
 
+  // 启动控件视觉阶段：命令在途=launching(写字爬升)，进程已起=spawned(补满并切 Stop)。
+  const launchPhase: LaunchPhase = launching ? "launching" : running ? "spawned" : "idle";
+
   return (
     <>
       <motion.div variants={pageItem}>
         <PageHeader
           title="主页"
-          subtitle="Start your Minecraft journey~"
+          subtitle="以选中的账户与版本启动游戏"
           right={
             <>
               <div className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</div>
@@ -285,66 +263,15 @@ export function Home() {
             </div>
           )}
 
-          {/* 主操作：放大的「竖线 + 文字」——全屏最大字，绝对主角。无填充方块，hover 点亮朱红、竖条抽高。 */}
-          <div className="flex flex-col items-end gap-3">
-            <motion.button
-              type="button"
-              onClick={() => void handlePlay()}
-              disabled={!canLaunch || launching || running}
-              whileTap={{ scale: 0.99 }}
-              transition={springs.tap}
-              className="group inline-flex items-center gap-5 py-1 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
-            >
-              <span className="text-[clamp(34px,4.4vw,52px)] leading-none font-extrabold tracking-[-0.02em] text-ink transition-colors duration-200 group-hover:text-accent">
-                {launching ? "启动中" : running ? "运行中" : "Start"}
-              </span>
-              <span
-                aria-hidden="true"
-                className="h-[40px] w-[4px] shrink-0 bg-accent transition-all duration-200 group-hover:h-[58px]"
-              />
-            </motion.button>
-            {(running || logLines.length > 0) && (
-              <div className="flex gap-3">
-                <Button variant="secondary" onClick={() => setLogOpen(true)}>
-                  查看日志
-                </Button>
-                {running && (
-                  <Button variant="secondary" onClick={() => void handleStop()}>
-                    结束游戏
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {status && (
-            <p className="max-w-[440px] truncate text-right font-mono text-[12px] text-ink/50">
-              {status}
-            </p>
-          )}
+          {/* 主操作：手写体 Aurora 启动动效（竖线扫左 → 按真实进度写字 → 进程起+2s → Stop）。日志后台存。 */}
+          <LaunchControl
+            phase={launchPhase}
+            disabled={!canLaunch}
+            onStart={() => void handlePlay()}
+            onStop={() => void handleStop()}
+          />
         </div>
       </motion.section>
-
-      <Modal
-        open={logOpen}
-        onClose={() => setLogOpen(false)}
-        title={running && pid != null ? `运行中 · PID ${pid}` : running ? "运行中" : "游戏日志"}
-        footer={
-          running ? (
-            <Button variant="primary" onClick={() => void handleStop()}>
-              结束游戏
-            </Button>
-          ) : (
-            <Button variant="secondary" onClick={() => setLogOpen(false)}>
-              关闭
-            </Button>
-          )
-        }
-      >
-        <div className="h-72">
-          <LogConsole lines={logLines} />
-        </div>
-      </Modal>
     </>
   );
 }

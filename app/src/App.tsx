@@ -6,7 +6,7 @@ import { AppShell } from "./components/AppShell";
 import { Home } from "./pages/Home";
 import { Account } from "./pages/Account";
 import { Versions } from "./pages/Versions";
-import { Resources } from "./pages/Resources";
+import { Download } from "./pages/Download";
 import { Settings } from "./pages/Settings";
 
 export default function App() {
@@ -17,7 +17,7 @@ export default function App() {
           <Route index element={<Home />} />
           <Route path="account" element={<Account />} />
           <Route path="versions" element={<Versions />} />
-          <Route path="resources" element={<Resources />} />
+          <Route path="download" element={<Download />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
