@@ -1,14 +1,22 @@
 // 应用外壳：无边框窗口内 = 自定义标题栏 + 主体（目录导航 + 内容区）。
 // 内容区按 pathname 作 key，路由切换时 motion 容器重挂载，重放入场 stagger（子级 pageItem 依次上滑）。
 
+import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
 import { pageContainer } from "../lib/motion";
+import { schedulePrefetch } from "../lib/prefetch";
 
 export function AppShell() {
   const location = useLocation();
+
+  // 外壳挂载即在空闲期预取下载页各 tab 的首屏（后端对清单与搜索都没有缓存，
+  // 不预取的话每次进下载页都要现等一次网络往返）。只跑一次，与路由无关。
+  useEffect(() => {
+    schedulePrefetch();
+  }, []);
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-paper">
       <Titlebar />
