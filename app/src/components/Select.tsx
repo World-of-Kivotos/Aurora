@@ -19,6 +19,8 @@ interface SelectProps<T extends string> {
   placeholder?: string;
   disabled?: boolean;
   ariaLabel?: string;
+  /** 透传到触发按钮，供调用方与同行的输入框/按钮对齐高度。 */
+  className?: string;
 }
 
 // 尾逗号 <T extends string,> 让 TSX 把它解析为泛型而非 JSX 标签。
@@ -29,6 +31,7 @@ export function Select<T extends string>({
   placeholder = "请选择",
   disabled,
   ariaLabel,
+  className,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -118,6 +121,7 @@ export function Select<T extends string>({
           "text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
           "disabled:pointer-events-none disabled:opacity-45",
           open ? "border-ink" : "border-ink/16 hover:border-ink/40",
+          className ?? "",
         ].join(" ")}
       >
         <span className={selected ? "text-ink" : "text-ink/45"}>

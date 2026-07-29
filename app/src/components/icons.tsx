@@ -94,6 +94,64 @@ export const RefreshIcon = (p: IconProps) => (
   </Base>
 );
 
+// ---- 下载中心 ----
+export const SearchIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Base>
+);
+
+export const DownloadIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 3v12" />
+    <path d="m7 11 5 5 5-5" />
+    <path d="M4 20h16" />
+  </Base>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="m4 12.5 5 5L20 6.5" />
+  </Base>
+);
+
+// 整合包：盒中盒，与单体资源（PackageIcon）区分。
+export const BoxesIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M3 8.5 8 6l5 2.5L8 11 3 8.5Z" />
+    <path d="M11 15.5 16 13l5 2.5L16 18l-5-2.5Z" />
+    <path d="M3 8.5v6l5 2.5v-6" />
+    <path d="M16 18v3" />
+  </Base>
+);
+
+// 资源包：画笔/调色，代表贴图外观。
+export const PaletteIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.5-1.4-1.8-1.4-3 0-.9.8-1.7 1.8-1.7H16a5 5 0 0 0 5-5c0-3.6-4-6.5-9-6.5Z" />
+    <circle cx="8" cy="9.5" r="1.1" />
+    <circle cx="15" cy="8" r="1.1" />
+  </Base>
+);
+
+// 光影：太阳，代表光照渲染。
+export const SunIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" />
+  </Base>
+);
+
+// 游戏版本：立方体网格，代表 MC 本体。
+export const CubeIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 2.5 3.5 7v10L12 21.5 20.5 17V7L12 2.5Z" />
+    <path d="M3.5 7 12 11.5 20.5 7" />
+    <path d="M12 11.5v10" />
+  </Base>
+);
+
 // ---- 自定义标题栏窗口控件（20 视口，细描边）----
 function WinBase({ size = 20, className, children }: IconProps & { children: ReactNode }) {
   return (
