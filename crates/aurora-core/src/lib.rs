@@ -26,6 +26,7 @@ pub mod error;
 pub mod event;
 pub mod facade;
 pub mod install;
+pub mod instance;
 pub mod java;
 pub mod launch;
 pub mod mods;
@@ -47,7 +48,8 @@ pub use auth::{MSA_CLIENT_ID_ENV, perform_microsoft_login};
 pub use aurora_auth::{Account, AccountType, DeviceCodeResponse, GameProfile};
 pub use aurora_install::{LoaderSummary, VanillaSummary};
 pub use aurora_instance::{
-    BrokenReason, BrokenVersion, DiscoveredVersion, IsolationPolicy, VersionScan,
+    BrokenReason, BrokenVersion, DiscoveredVersion, IsolationOverride, IsolationPolicy,
+    ResolvedIsolation, VersionScan, VersionSettings,
 };
 pub use aurora_java::{DetectSource, InstalledRuntime, JavaInstallation, JavaVersion};
 pub use aurora_launch::{

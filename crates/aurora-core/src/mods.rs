@@ -2,16 +2,14 @@
 //!
 //! 门面把 aurora-modplatform 的双平台客户端（Modrinth / CurseForge）与本地 `mods/` 目录管理串起来：
 //! 按平台取到目标版本的主文件，落到「该实例的 mods 目录」，再复用 aurora-modplatform 的本地扫描与
-//! 启禁切换。实例的 mods 目录不是固定的 `.minecraft/mods`——它随版本隔离策略走：隔离版本落到
-//! `versions/<id>/mods`，共享版本落到 `.minecraft/mods`，与启动时 [`Aurora::launch_account`] 计算工作
-//! 目录的规则完全一致（同一份 [`aurora_launch::resolve_game_directory`]），避免「装进去的 mod 启动时
+//! 启禁切换。实例的 mods 目录不是固定的 `.minecraft/mods`——它随版本隔离判定走：隔离版本落到
+//! `versions/<id>/mods`，共享版本落到 `.minecraft/mods`。判定统一取自
+//! [`Aurora::resolve_working_dir`]（与启动链路同源，含版本级隔离覆盖），避免「装进去的 mod 启动时
 //! 不生效」。
 
 use std::path::PathBuf;
 
 use aurora_download::DownloadTask;
-use aurora_instance::{IsolationOverride, discover_versions};
-use aurora_launch::resolve_game_directory;
 use aurora_modplatform::{
     CurseForgeClient, InstalledMod, ModrinthClient, Platform, disable_mod, enable_mod,
     scan_mods_dir,
@@ -121,27 +119,11 @@ impl Aurora {
 
     /// 解析某已安装版本对应的实例 mods 目录（`<工作目录>/mods`）。
     ///
-    /// 工作目录由版本隔离判定决定，与启动链路 [`aurora_launch::resolve_game_directory`] 同源：先发现
-    /// 版本拿到「是否装加载器 / 是否正式版」两项事实，再按全局隔离档位（版本级取跟随全局）算出隔离与
-    /// 否。版本本地未安装返回 [`CoreError::VersionNotInstalled`]。
-    async fn resolve_mods_dir(&self, version_id: &str) -> Result<PathBuf> {
-        let scan = discover_versions(self.game_dir()).await?;
-        let target = scan
-            .versions
-            .iter()
-            .find(|v| v.id == version_id)
-            .ok_or_else(|| CoreError::VersionNotInstalled {
-                id: version_id.to_owned(),
-            })?;
-        let resolved = resolve_game_directory(
-            self.game_dir(),
-            version_id,
-            self.config().isolation_policy,
-            IsolationOverride::FollowGlobal,
-            target.has_mod_loader(),
-            target.is_release(),
-        )
-        .await?;
+    /// 工作目录一律取自 [`Aurora::resolve_working_dir`]——与启动链路同一个函数、同一份版本级隔离覆盖，
+    /// 所以「装进去的 mod 启动时一定被读到」这条不变量由结构保证，而不是靠两处各自维护相同的参数。
+    /// 版本本地未安装返回 [`CoreError::VersionNotInstalled`]。
+    pub(crate) async fn resolve_mods_dir(&self, version_id: &str) -> Result<PathBuf> {
+        let resolved = self.resolve_working_dir(version_id).await?;
         Ok(resolved.working_dir.join("mods"))
     }
 

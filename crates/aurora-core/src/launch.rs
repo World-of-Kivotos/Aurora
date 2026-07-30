@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use aurora_auth::Account;
-use aurora_instance::{IsolationOverride, discover_versions};
+use aurora_instance::discover_versions;
 use aurora_java::{DetectSource, JavaInstallation, JavaRuntimeInstaller, detect_all, select_for_major};
 use aurora_launch::{
     AuthValues, CheckStatus, CommandBuilder, GamePaths, GameSession, LaunchCommand, LogLine,
-    MemoryConfig, PreLaunchInput, precheck, resolve_game_directory, spawn,
+    MemoryConfig, PreLaunchInput, precheck, spawn,
 };
 use aurora_version::{RuntimeContext, VersionJson, resolve};
 use tokio::sync::mpsc;
@@ -115,16 +115,11 @@ impl Aurora {
             .unwrap_or(8);
         let (installations, java_path) = self.prepare_java(required_major, events).await?;
 
-        // 版本隔离判定，产出工作目录。
-        let resolved = resolve_game_directory(
-            self.game_dir(),
-            version_id,
-            self.config().isolation_policy,
-            IsolationOverride::FollowGlobal,
-            target.has_mod_loader(),
-            target.is_release(),
-        )
-        .await?;
+        // 版本隔离判定，产出工作目录。走与装 Mod 同一个入口（含版本级隔离覆盖），
+        // 保证这里读的目录就是 mod 被装进去的那个。
+        let resolved = self
+            .resolve_working_dir_with(version_id, target.has_mod_loader(), target.is_release())
+            .await?;
         let working_dir = resolved.working_dir.clone();
         tokio::fs::create_dir_all(&working_dir)
             .await
