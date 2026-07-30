@@ -13,12 +13,12 @@ use std::path::PathBuf;
 
 use aurora_core::{
     Account, AccountType, AggregateResult, Aurora, CoreEvent, DetectSource, DeviceCodeResponse,
-    DownloadSourcePolicy, GameSession, InstalledMod, IsolationPolicy,
+    DownloadSourcePolicy, GameSession, InstalledMod, IsolationOverride, IsolationPolicy,
     JavaInstallation, JavaVersion, LaunchOptions, LoaderChoice, LogLine, LogStream, MemorySettings,
-    ModLoader, Platform, ResourceType, SearchHit, SearchQuery, SortField, VersionManifest,
-    VersionScan,
+    ModLoader, Platform, ResolvedIsolation, ResourceType, SearchHit, SearchQuery, SortField,
+    VersionManifest, VersionScan, VersionSettings,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
@@ -93,6 +93,58 @@ struct BrokenVersionDto {
     id: String,
     /// 损坏原因的人类可读说明。
     reason: String,
+}
+
+/// 版本级设置 DTO：用户设置本身 + 按该设置解析出的实际工作目录状态。
+#[derive(Serialize)]
+struct VersionSettingsDto {
+    /// 自定义描述（未设置为 null）。
+    description: Option<String>,
+    /// 自定义图标标识（未设置为 null）。
+    icon: Option<String>,
+    /// 是否收藏。
+    favorite: bool,
+    /// 自定义分类名（未设置为 null）。
+    category: Option<String>,
+    /// 版本级隔离覆盖档位。
+    isolation: IsolationOverride,
+    /// 该版本运行时的游戏工作目录绝对路径（mod 装进它下面的 `mods/`）。
+    working_dir: String,
+    /// 最终是否隔离（已综合全局档位、版本级覆盖与本地数据强制）。
+    isolated: bool,
+    /// 是否因版本目录下已有 mods/saves 而被强制隔离——此时覆盖设为「不隔离」也不会生效，
+    /// 界面需要据此解释为何开关看起来没起作用。
+    forced_by_local_data: bool,
+}
+
+impl VersionSettingsDto {
+    fn new(settings: VersionSettings, resolved: ResolvedIsolation) -> Self {
+        Self {
+            description: settings.description,
+            icon: settings.icon,
+            favorite: settings.favorite,
+            category: settings.category,
+            isolation: settings.isolation,
+            working_dir: resolved.working_dir.display().to_string(),
+            isolated: resolved.isolated,
+            forced_by_local_data: resolved.forced_by_local_data,
+        }
+    }
+}
+
+/// 写入版本级设置的入参（整体覆盖）。
+#[derive(Deserialize)]
+struct VersionSettingsInput {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    favorite: bool,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    isolation: IsolationOverride,
 }
 
 /// `versions/` 扫描结果 DTO。
@@ -1095,6 +1147,57 @@ async fn set_mod_enabled(
     Ok(path.display().to_string())
 }
 
+/// 读取某已安装版本的用户设置，并附上按当前设置解析出的实际工作目录。
+///
+/// 解析结果与设置一起返回，是为了让界面能常驻回显「这个实例的文件到底落在哪、是否隔离」——
+/// 隔离状态只写在设置里而不显示实际路径，玩家仍旧无从判断 mod 会被装到哪个 mods 目录。
+#[tauri::command]
+async fn get_version_settings(
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<VersionSettingsDto, String> {
+    let aurora = state.lock().await;
+    let settings = aurora
+        .version_settings(&version_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let resolved = aurora
+        .resolve_working_dir(&version_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(VersionSettingsDto::new(settings, resolved))
+}
+
+/// 整体覆盖某已安装版本的用户设置，返回写入后重新解析的结果。
+///
+/// 取整体覆盖而非逐字段 patch：`description` 这类 `Option` 字段在 patch 语义下无法区分
+/// 「不改」与「清空」，而这里的字段数很少，前端读出完整对象改完写回即可，语义无歧义。
+#[tauri::command]
+async fn set_version_settings(
+    version_id: String,
+    settings: VersionSettingsInput,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<VersionSettingsDto, String> {
+    let aurora = state.lock().await;
+    let next = VersionSettings {
+        description: settings.description,
+        icon: settings.icon,
+        favorite: settings.favorite,
+        category: settings.category,
+        isolation: settings.isolation,
+    };
+    aurora
+        .set_version_settings(&version_id, &next)
+        .await
+        .map_err(|e| e.to_string())?;
+    // 隔离覆盖可能刚被改写，这里重新解析，让前端拿到的路径与状态就是下次启动/装 Mod 会用的那份。
+    let resolved = aurora
+        .resolve_working_dir(&version_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(VersionSettingsDto::new(next, resolved))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1129,7 +1232,9 @@ pub fn run() {
             search_resources,
             install_mod,
             list_mods,
-            set_mod_enabled
+            set_mod_enabled,
+            get_version_settings,
+            set_version_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

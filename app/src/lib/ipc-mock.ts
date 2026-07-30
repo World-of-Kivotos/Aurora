@@ -180,9 +180,53 @@ const MODS = [
   { path: "", file_name: "jei-19.21.0.jar", enabled: false, metadata: { mod_id: "jei", name: "Just Enough Items", version: "19.21.0", description: null, authors: ["mezz"], loader: "fabric", format: "fabric.mod.json" } },
 ];
 
+// 版本级设置：mock 内存态，写进去能读回来，够阶段二的实例详情页离线开发。
+const VERSION_SETTINGS = new Map<string, Record<string, unknown>>();
+
+/** 复刻后端的隔离判定：本地数据强制 > 版本级覆盖 > 全局档位。 */
+function resolveVersionSettings(versionId: string) {
+  const saved = VERSION_SETTINGS.get(versionId) ?? {};
+  const version = INSTALLED.versions.find((v) => v.id === versionId);
+  const over = (saved.isolation as string) ?? "follow_global";
+  const policy = CONFIG.isolation_policy;
+  const byPolicy =
+    policy === "all"
+      ? true
+      : policy === "disabled"
+        ? false
+        : policy === "mod_loaders_only"
+          ? !!version?.has_mod_loader
+          : policy === "non_release_only"
+            ? !version?.is_release
+            : !!version?.has_mod_loader || !version?.is_release;
+  const isolated = over === "enabled" ? true : over === "disabled" ? false : byPolicy;
+  return {
+    description: (saved.description as string) ?? null,
+    icon: (saved.icon as string) ?? null,
+    favorite: (saved.favorite as boolean) ?? false,
+    category: (saved.category as string) ?? null,
+    isolation: over,
+    working_dir: isolated ? `${CONFIG.game_dir}\\versions\\${versionId}` : CONFIG.game_dir,
+    isolated,
+    forced_by_local_data: false,
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>): Promise<T> {
   await delay(180);
+
+  // 带副作用或需读写内存态的命令必须在 table 之前短路：下面那张 table 的每个值都在构造时求值，
+  // 把这类命令写进 table 会让任意一次 invoke 都触发一遍它们的副作用。
+  if (cmd === "get_version_settings") {
+    return resolveVersionSettings(_args?.versionId as string) as T;
+  }
+  if (cmd === "set_version_settings") {
+    const id = _args?.versionId as string;
+    VERSION_SETTINGS.set(id, (_args?.settings as Record<string, unknown>) ?? {});
+    return resolveVersionSettings(id) as T;
+  }
+
   const table: Record<string, unknown> = {
     get_config: CONFIG,
     list_installed: INSTALLED,

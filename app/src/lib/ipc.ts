@@ -308,6 +308,44 @@ export const setModEnabled = (
   enabled: boolean,
 ): Promise<string> => invoke<string>("set_mod_enabled", { versionId, fileName, enabled });
 
+// ---- 版本级设置 ----
+
+/** 版本级隔离覆盖：跟随全局档位，或让这一个实例强制开/关。 */
+export type IsolationOverride = "follow_global" | "enabled" | "disabled";
+
+/** 版本设置 + 按该设置解析出的实际工作目录状态（后端一并返回，界面据此回显"文件落在哪"）。 */
+export interface VersionSettingsDto {
+  description: string | null;
+  icon: string | null;
+  favorite: boolean;
+  category: string | null;
+  isolation: IsolationOverride;
+  /** 该实例的游戏工作目录绝对路径；mod 装进它下面的 mods/。 */
+  working_dir: string;
+  /** 最终是否隔离（已综合全局档位、版本级覆盖与本地数据强制）。 */
+  isolated: boolean;
+  /** 因版本目录下已有 mods/saves 而被强制隔离——此时把覆盖设为「不隔离」也不会生效。 */
+  forced_by_local_data: boolean;
+}
+
+/** 写入用入参：整体覆盖语义，读出完整对象改完写回（避免 patch 下无法区分"不改"与"清空"）。 */
+export interface VersionSettingsInput {
+  description?: string | null;
+  icon?: string | null;
+  favorite?: boolean;
+  category?: string | null;
+  isolation?: IsolationOverride;
+}
+
+export const getVersionSettings = (versionId: string): Promise<VersionSettingsDto> =>
+  invoke<VersionSettingsDto>("get_version_settings", { versionId });
+
+export const setVersionSettings = (
+  versionId: string,
+  settings: VersionSettingsInput,
+): Promise<VersionSettingsDto> =>
+  invoke<VersionSettingsDto>("set_version_settings", { versionId, settings });
+
 // ---- 事件订阅 ----
 // 组件卸载或流程结束务必调用返回的 unlisten，避免监听器泄漏。
 export const onCoreEvent = (handler: (event: CoreEvent) => void): Promise<UnlistenFn> =>
