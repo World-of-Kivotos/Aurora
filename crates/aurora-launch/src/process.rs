@@ -45,6 +45,9 @@ pub struct ExitReport {
     pub success: bool,
     /// 退出时缓存的最近若干行输出（供崩溃分析）。
     pub recent_lines: Vec<String>,
+    /// 是否由启动器主动终止（[`GameSession::kill`] 调用过）。主动终止的退出一律不算崩溃。
+    #[serde(default)]
+    pub terminated_by_launcher: bool,
 }
 
 /// 一次已启动的游戏会话。
@@ -52,6 +55,8 @@ pub struct GameSession {
     child: Child,
     recent: Arc<Mutex<VecDeque<String>>>,
     readers: Vec<JoinHandle<()>>,
+    /// kill 过即置位，随后由 [`GameSession::wait`] 带进 [`ExitReport`]。
+    terminated_by_launcher: bool,
 }
 
 impl GameSession {
@@ -65,8 +70,12 @@ impl GameSession {
         recent_snapshot(&self.recent)
     }
 
-    /// 强制结束进程（对应「取消启动」）。
+    /// 强制结束进程（对应「取消启动」/「结束游戏」）。
+    ///
+    /// 先置位再 kill：即便 kill 本身失败（进程已自行退出），这次意图也已记录，
+    /// 后续 [`ExitReport`] 不会把这次退出误认成崩溃。
     pub async fn kill(&mut self) -> Result<()> {
+        self.terminated_by_launcher = true;
         self.child.kill().await.map_err(LaunchError::Wait)
     }
 
@@ -84,6 +93,7 @@ impl GameSession {
             code: status.code(),
             success: status.success(),
             recent_lines: recent_snapshot(&self.recent),
+            terminated_by_launcher: self.terminated_by_launcher,
         })
     }
 }
@@ -120,12 +130,19 @@ pub fn spawn(command: &LaunchCommand, log_tx: Option<mpsc::Sender<LogLine>>) -> 
         child,
         recent,
         readers,
+        terminated_by_launcher: false,
     })
 }
 
 /// 崩溃触发判定：非零退出（或无退出码，多半是被杀/崩溃）即视为崩溃；即便退出码为 0，只要输出里出现明确的
 /// 崩溃标记也判为崩溃（部分崩溃会正常退出但已生成崩溃报告）。
+///
+/// 启动器主动终止的会话先行短路：Windows 上 `TerminateProcess` 会留下非零退出码、Unix 上被信号杀死则
+/// 连退出码都没有，两种表现都会命中下面的启发式——玩家点「结束游戏」不该收到一次崩溃指认。
 pub fn detect_crash(report: &ExitReport) -> bool {
+    if report.terminated_by_launcher {
+        return false;
+    }
     if crate::crash::has_crash_marker(&report.recent_lines.join("\n")) {
         return true;
     }
@@ -207,6 +224,7 @@ mod tests {
             code: Some(0),
             success: true,
             recent_lines: vec!["Stopping!".to_owned()],
+            terminated_by_launcher: false,
         };
         assert!(!detect_crash(&ok));
 
@@ -214,13 +232,16 @@ mod tests {
             code: Some(1),
             success: false,
             recent_lines: vec!["some output".to_owned()],
+            terminated_by_launcher: false,
         };
         assert!(detect_crash(&nonzero));
 
+        // 外部原因被杀（非启动器所为）：无从判断，保守判为崩溃。
         let killed = ExitReport {
             code: None,
             success: false,
             recent_lines: vec![],
+            terminated_by_launcher: false,
         };
         assert!(detect_crash(&killed));
     }
@@ -231,8 +252,45 @@ mod tests {
             code: Some(0),
             success: true,
             recent_lines: vec!["---- Minecraft Crash Report ----".to_owned()],
+            terminated_by_launcher: false,
         };
         assert!(detect_crash(&report));
+    }
+
+    /// 玩家点「结束游戏」：两个平台各自的退出表现都不得被当成崩溃。
+    /// 删掉 detect_crash 里的主动终止短路，这两条断言即挂。
+    #[test]
+    fn launcher_termination_is_never_a_crash() {
+        // Unix：被信号杀死，无退出码。
+        let signaled = ExitReport {
+            code: None,
+            success: false,
+            recent_lines: vec![],
+            terminated_by_launcher: true,
+        };
+        assert!(!detect_crash(&signaled));
+
+        // Windows：TerminateProcess 留下非零退出码。
+        let terminated = ExitReport {
+            code: Some(1),
+            success: false,
+            recent_lines: vec!["[Render thread] Stopping!".to_owned()],
+            terminated_by_launcher: true,
+        };
+        assert!(!detect_crash(&terminated));
+    }
+
+    /// 主动终止优先于崩溃标记：玩家在游戏已经崩了之后点结束，仍按主动终止处理，
+    /// 避免把一次用户操作报成崩溃。崩溃现场仍在 recent_lines 里，诊断可另行取用。
+    #[test]
+    fn launcher_termination_outranks_crash_marker() {
+        let report = ExitReport {
+            code: None,
+            success: false,
+            recent_lines: vec!["---- Minecraft Crash Report ----".to_owned()],
+            terminated_by_launcher: true,
+        };
+        assert!(!detect_crash(&report));
     }
 
     #[test]
