@@ -180,6 +180,8 @@ export interface GameLog {
 export const CORE_EVENT = "aurora://core-event";
 export const DEVICE_CODE_EVENT = "aurora://device-code";
 export const GAME_LOG_EVENT = "aurora://game-log";
+/** 游戏异常退出时后端推送的崩溃诊断；玩家主动结束游戏不会触发（见 detect_crash 的主动终止短路）。 */
+export const GAME_CRASH_EVENT = "aurora://game-crash";
 
 // ---- 命令封装（参数键 camelCase）----
 export const getConfig = (): Promise<ConfigDto> => invoke<ConfigDto>("get_config");
@@ -356,3 +358,209 @@ export const onDeviceCode = (handler: (code: DeviceCode) => void): Promise<Unlis
 
 export const onGameLog = (handler: (line: GameLog) => void): Promise<UnlistenFn> =>
   listen<GameLog>(GAME_LOG_EVENT, (e) => handler(e.payload));
+
+/** 游戏异常退出后的崩溃诊断推送。负载即 last_crash 的同款报告，收到时日志已归档完毕。 */
+export const onGameCrash = (handler: (report: CrashReport) => void): Promise<UnlistenFn> =>
+  listen<CrashReport>(GAME_CRASH_EVENT, (e) => handler(e.payload));
+
+// ---- Mod 生态：版本列表 / 落位矩阵 / 依赖计划 / 卷宗 / 更新 / 历史 / 崩溃诊断 ----
+// 这一组 DTO 由 aurora-core 直出（Tauri 层不再包一层壳），字段名即 Rust serde 的 snake_case。
+
+/** 发布通道。beta/alpha 必须在界面上显式标注，避免玩家在不知情的前提下装到预览版。 */
+export type ReleaseChannel = "release" | "beta" | "alpha";
+
+/** 依赖关系类型。安装计划只自动收 required，其余仅作展示，不替玩家做决定。 */
+export type DependencyKind = "required" | "optional" | "incompatible" | "embedded";
+
+export interface ModDependency {
+  /** Modrinth 为 project_id，CurseForge 为 modId 的十进制字符串；平台没给为 null。 */
+  project_id: string | null;
+  /** 依赖锁定了精确版本时才有值，否则交由依赖解析择优。 */
+  version_id: string | null;
+  kind: DependencyKind;
+}
+
+/** 工程版本的跨平台统一视图：Modrinth 的 version 与 CurseForge 的 file 都归一到它。 */
+export interface ModVersionInfo {
+  /** 安装时回传给后端的版本标识：Modrinth 为版本 id，CurseForge 为 fileId 的十进制字符串。 */
+  version_id: string;
+  project_id: string;
+  platform: PlatformId;
+  name: string;
+  version_number: string;
+  release_channel: ReleaseChannel;
+  /** 已剥离加载器名的纯 MC 版本号。空数组表示平台没给元数据，不等于不支持。 */
+  game_versions: string[];
+  /** 小写加载器名，同样可能为空（平台元数据缺失）。 */
+  loaders: string[];
+  file_name: string;
+  file_size: number | null;
+  sha1: string | null;
+  /** ISO 8601；平台缺失该字段时为空串。 */
+  date_published: string;
+  dependencies: ModDependency[];
+}
+
+/** 兼容判定。unknown 是「平台没给足够元数据」，界面上作软提示放行，不能当成不兼容拦下来。 */
+export type Compatibility =
+  | { kind: "match" }
+  | { kind: "mismatch"; reason: string }
+  | { kind: "unknown" };
+
+/** 某个已装实例对某工程的落位判定。后端已按「完美匹配 > 可能可行 > 不兼容」排好序，界面直接按序渲染。 */
+export interface InstanceMatch {
+  version_id: string;
+  mc_version: string;
+  /** 该实例已装的加载器种类（小写名）。 */
+  loaders: string[];
+  compatibility: Compatibility;
+  /** 该实例下最合适的版本；没有兼容版本时为 null。 */
+  best_version: ModVersionInfo | null;
+  /** 该工程已装在此实例里时给出文件名（卷宗与磁盘 join 的结果），据此把「安装」改成「更新/重装」。 */
+  already_installed: string | null;
+}
+
+export interface PlannedItem {
+  version: ModVersionInfo;
+  /** 因谁被带进来（project_id）；用户主动选的那项为 null。 */
+  required_by: string | null;
+  /** 该实例已装同工程同版本，本次跳过下载。 */
+  already_satisfied: boolean;
+}
+
+/** 一次安装的完整计划。items[0] 恒为用户主动选的那项。 */
+export interface InstallPlan {
+  items: PlannedItem[];
+  /** 被跳过的非必需依赖、或找不到匹配版本的依赖，每条一句中文；界面必须如实展示而不是假装没有。 */
+  skipped: string[];
+}
+
+/** 卷宗条目：Mod 身份的单一来源。file_name 是与磁盘 join 的键——磁盘才是权威，卷宗只补身份。 */
+export interface LedgerEntry {
+  file_name: string;
+  platform: PlatformId;
+  project_id: string;
+  version_id: string;
+  sha1: string | null;
+  /** 安装时刻 unix 秒。 */
+  installed_at: number;
+  /** 作为谁的依赖被带进来（project_id）；用户主动装的为 null。 */
+  installed_as_dependency_of: string | null;
+}
+
+export interface Ledger {
+  entries: LedgerEntry[];
+}
+
+export interface UpdateCandidate {
+  file_name: string;
+  current_version_id: string;
+  latest: ModVersionInfo;
+}
+
+/** 变更事件。追加式，永不改写既有条目；update 的旧文件以 `<old_file>.old` 留在原目录等待回滚。 */
+export type HistoryEvent =
+  | { kind: "install"; id: string; at: number; files: string[] }
+  | {
+      kind: "update";
+      id: string;
+      at: number;
+      file_name: string;
+      old_file: string;
+      from_version: string;
+      to_version: string;
+    }
+  | { kind: "rollback"; id: string; at: number; reverted_event: string }
+  | { kind: "remove"; id: string; at: number; files: string[] };
+
+/** 与 DOM 的全局 History 同名，模块作用域内以本定义为准；名字由跨模块契约锁定，不要另起别名。 */
+export interface History {
+  events: HistoryEvent[];
+}
+
+export interface RollbackCheck {
+  event_id: string;
+  can_rollback: boolean;
+  /** 不可回滚时给出的中文原因；可回滚时为 null。 */
+  reason: string | null;
+}
+
+/**
+ * 一条崩溃诊断。category 取自 aurora-launch 的 CrashCategory，八种取值：
+ * java_version_mismatch / out_of_memory / missing_dependency / mixin_failure /
+ * duplicate_mod / native_library_missing / graphics_driver / corrupted_jar。
+ */
+export interface CrashDiagnosis {
+  category: string;
+  summary: string;
+  advice: string;
+  /** 正则从日志提取的附加信息（缺失的 Mod id、要求的 Java 版本等）；没提到为 null。 */
+  detail: string | null;
+  /** 命中的原始日志行（后端已裁剪长度）。 */
+  matched: string;
+}
+
+/** 可疑 Mod。规则命中只是线索不是定论，文案一律写「日志指向 X」，不写「X 导致崩溃」。 */
+export interface CrashSuspect {
+  mod_id: string;
+  /** 卷宗里对得上的文件名；对不上时只报 mod id。 */
+  file_name: string | null;
+}
+
+export interface CrashReport {
+  diagnoses: CrashDiagnosis[];
+  suspects: CrashSuspect[];
+  /** 归档日志路径，供「打开日志」用；没有归档为 null。 */
+  log_path: string | null;
+}
+
+/** 列出工程的全部可用版本，按发布时间倒序。两个过滤条件传空数组表示不过滤。 */
+export const listModVersions = (
+  platform: PlatformId,
+  projectId: string,
+  gameVersions: string[] = [],
+  loaders: ModLoader[] = [],
+): Promise<ModVersionInfo[]> =>
+  invoke<ModVersionInfo[]>("list_mod_versions", { platform, projectId, gameVersions, loaders });
+
+/** 算出「全部已装实例 × 该工程最佳版本」的判定矩阵，供落位层直接铺开——不强制玩家先进实例。 */
+export const matchInstances = (platform: PlatformId, projectId: string): Promise<InstanceMatch[]> =>
+  invoke<InstanceMatch[]>("match_instances", { platform, projectId });
+
+export const planInstall = (
+  versionId: string,
+  platform: PlatformId,
+  projectId: string,
+  modVersionId: string,
+): Promise<InstallPlan> =>
+  invoke<InstallPlan>("plan_install", { versionId, platform, projectId, modVersionId });
+
+/** 对卷宗里没有身份的已装 Mod 做哈希反查补身份，返回补上的条数（反查不到的本地 Mod 会被跳过）。 */
+export const identifyInstalledMods = (versionId: string): Promise<number> =>
+  invoke<number>("identify_installed_mods", { versionId });
+
+export const checkUpdates = (versionId: string): Promise<UpdateCandidate[]> =>
+  invoke<UpdateCandidate[]>("check_updates", { versionId });
+
+export const listHistory = (versionId: string): Promise<History> =>
+  invoke<History>("list_history", { versionId });
+
+export const rollbackChecks = (versionId: string): Promise<RollbackCheck[]> =>
+  invoke<RollbackCheck[]>("rollback_checks", { versionId });
+
+export const rollback = (versionId: string, eventId: string): Promise<void> =>
+  invoke("rollback", { versionId, eventId });
+
+/** `.old` 备份占用的总字节数，用于把磁盘代价显式告诉玩家。 */
+export const backupSize = (versionId: string): Promise<number> =>
+  invoke<number>("backup_size", { versionId });
+
+export const diagnoseCrash = (versionId: string, logText: string): Promise<CrashReport> =>
+  invoke<CrashReport>("diagnose_crash", { versionId, logText });
+
+/** 读取该实例最近一次归档日志并诊断；没有归档返回 null。 */
+export const lastCrash = (versionId: string): Promise<CrashReport | null> =>
+  invoke<CrashReport | null>("last_crash", { versionId });
+
+export const listLedger = (versionId: string): Promise<Ledger> =>
+  invoke<Ledger>("list_ledger", { versionId });

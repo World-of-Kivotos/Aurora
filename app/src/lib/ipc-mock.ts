@@ -2,6 +2,22 @@
 // 让前端能脱离 Rust 后端独立开发/截图。仅开发期生效——正式打包在 Tauri 里走真 IPC（见 tauri-bridge.ts）。
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
+// Mod 生态那批 mock 数据直接用 ipc.ts 的 DTO 类型标注：一旦 mock 与契约漂移，tsc 当场报错，
+// 而不是等接上真后端才在运行期发现字段名对不上。仅类型导入，不产生运行期循环依赖。
+import type {
+  CrashDiagnosis,
+  CrashReport,
+  History,
+  HistoryEvent,
+  InstallPlan,
+  InstanceMatch,
+  Ledger,
+  LedgerEntry,
+  ModVersionInfo,
+  PlatformId,
+  RollbackCheck,
+  UpdateCandidate,
+} from "./ipc";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -212,6 +228,533 @@ function resolveVersionSettings(versionId: string) {
   };
 }
 
+// ---- Mod 生态 mock：版本表 / 落位矩阵 / 依赖计划 / 卷宗 / 更新 / 历史 / 崩溃诊断 ----
+
+/** 版本表种子：platform / project_id / version_id 由调用方按入参回填，其余是共用的版本事实。 */
+type VersionSeed = Omit<ModVersionInfo, "platform" | "project_id" | "version_id"> & {
+  /** [Modrinth 版本 id, CurseForge fileId]。两边 id 形状差异很大，mock 也照实还原，
+   *  否则前端很容易写出只在 Modrinth 下成立的 id 处理逻辑。 */
+  ids: [string, number];
+};
+
+const FABRIC_API_ID = "P7dR8mSH";
+const CLOTH_CONFIG_ID = "9s6osm5g";
+
+// 以 Sodium 的真实发布节奏为骨架（Fabric 与 NeoForge 各出一份构建，1.20.1 之后不再出 Forge），
+// 按发布时间倒序排列。三种通道、四条 MC 线、带 required/optional 依赖、以及「平台没给元数据」
+// 的边界都齐了，够版本选择器与落位层吃到全部形状。
+const MOD_VERSION_SEEDS: VersionSeed[] = [
+  {
+    ids: ["mL5rvsWq", 6482013],
+    name: "Sodium 0.7.2 for MC 1.21.9",
+    version_number: "mc1.21.9-0.7.2",
+    release_channel: "release",
+    game_versions: ["1.21.9", "1.21.8"],
+    loaders: ["fabric"],
+    file_name: "sodium-fabric-0.7.2+mc1.21.9.jar",
+    file_size: 1704213,
+    sha1: "3f1c9a04b7d25e608cbb1a5f7d4e2c9018ab63f5",
+    date_published: "2026-07-08T14:12:33Z",
+    dependencies: [{ project_id: FABRIC_API_ID, version_id: null, kind: "required" }],
+  },
+  {
+    ids: ["Xq2pKdRn", 6482016],
+    name: "Sodium 0.7.2 for MC 1.21.9 (NeoForge)",
+    version_number: "mc1.21.9-0.7.2-neoforge",
+    release_channel: "release",
+    game_versions: ["1.21.9"],
+    loaders: ["neoforge"],
+    file_name: "sodium-neoforge-0.7.2+mc1.21.9.jar",
+    file_size: 1798024,
+    sha1: "c05b8e7719a3fd42d6b0e18c73a95f2ce4d1706b",
+    date_published: "2026-07-08T14:09:02Z",
+    dependencies: [],
+  },
+  {
+    ids: ["7hVtQmLd", 6301884],
+    name: "Sodium 0.7.0 Alpha for MC 1.21.5",
+    version_number: "mc1.21.5-0.7.0-alpha",
+    release_channel: "alpha",
+    game_versions: ["1.21.5"],
+    loaders: ["fabric"],
+    file_name: "sodium-fabric-0.7.0-alpha+mc1.21.5.jar",
+    file_size: 1655090,
+    sha1: "9d47ac2e0f6b83115c7ae920d3f8b6417e0c5da2",
+    date_published: "2026-04-02T07:58:41Z",
+    dependencies: [{ project_id: FABRIC_API_ID, version_id: null, kind: "required" }],
+  },
+  {
+    ids: ["JGdvfMPT", 6188402],
+    name: "Sodium 0.6.13 for MC 1.21.4",
+    version_number: "mc1.21.4-0.6.13",
+    release_channel: "release",
+    game_versions: ["1.21.4", "1.21.3"],
+    loaders: ["fabric"],
+    file_name: "sodium-fabric-0.6.13+mc1.21.4.jar",
+    file_size: 1612805,
+    sha1: "5b2f0d81c6ea47399ff1c0d2b7e5a8341cf9e017",
+    date_published: "2026-02-19T11:03:27Z",
+    dependencies: [{ project_id: FABRIC_API_ID, version_id: null, kind: "required" }],
+  },
+  {
+    ids: ["Wn8cKtVb", 6188407],
+    name: "Sodium 0.6.13 for MC 1.21.4 (NeoForge)",
+    version_number: "mc1.21.4-0.6.13-neoforge",
+    release_channel: "release",
+    game_versions: ["1.21.4"],
+    loaders: ["neoforge"],
+    file_name: "sodium-neoforge-0.6.13+mc1.21.4.jar",
+    file_size: 1701338,
+    sha1: "a71e3c9d5480bb26f0e4172c98d5b3a06e2f4c88",
+    date_published: "2026-02-19T10:58:55Z",
+    dependencies: [],
+  },
+  {
+    // 上传者只在 CurseForge 勾了 Client / Java 17，既没标 MC 版本也没标加载器。
+    // 这类文件是 Unknown 档的来源，界面必须软提示放行而不是当成不兼容拦掉。
+    ids: ["Rz4mYpQe", 6042771],
+    name: "Sodium 0.6.9",
+    version_number: "0.6.9",
+    release_channel: "release",
+    game_versions: [],
+    loaders: [],
+    file_name: "sodium-0.6.9.jar",
+    file_size: null,
+    sha1: null,
+    date_published: "2026-01-14T20:30:12Z",
+    dependencies: [],
+  },
+  {
+    ids: ["Lp3sBnKw", 5904113],
+    name: "Sodium 0.6.6 Beta for MC 1.21.1",
+    version_number: "mc1.21.1-0.6.6-beta",
+    release_channel: "beta",
+    game_versions: ["1.21.1"],
+    loaders: ["fabric"],
+    file_name: "sodium-fabric-0.6.6-beta+mc1.21.1.jar",
+    file_size: 1588402,
+    sha1: "e14b70a2c9df6538a0b1e47d92c3f8016ba5d47e",
+    date_published: "2025-11-27T16:44:09Z",
+    dependencies: [
+      { project_id: FABRIC_API_ID, version_id: null, kind: "required" },
+      { project_id: CLOTH_CONFIG_ID, version_id: null, kind: "optional" },
+    ],
+  },
+  {
+    ids: ["tPKvLNVW", 5772006],
+    name: "Sodium 0.6.5 for MC 1.21.1",
+    version_number: "mc1.21.1-0.6.5",
+    release_channel: "release",
+    game_versions: ["1.21.1", "1.21"],
+    loaders: ["fabric"],
+    file_name: "sodium-fabric-0.6.5+mc1.21.1.jar",
+    file_size: 1571244,
+    sha1: "77c0f4a1b9e3d6250af8c31be74d095a2f6e18c3",
+    date_published: "2025-09-16T09:21:50Z",
+    dependencies: [{ project_id: FABRIC_API_ID, version_id: null, kind: "required" }],
+  },
+  {
+    ids: ["Yh6zAqDf", 5510934],
+    name: "Sodium 0.5.11 for MC 1.20.1",
+    version_number: "mc1.20.1-0.5.11",
+    release_channel: "release",
+    game_versions: ["1.20.1"],
+    loaders: ["fabric"],
+    file_name: "sodium-fabric-0.5.11+mc1.20.1.jar",
+    file_size: 1284096,
+    sha1: "2ab6108fd7c94e3350bb1f6d8a27ce401d93f5aa",
+    date_published: "2025-06-04T13:07:18Z",
+    dependencies: [{ project_id: FABRIC_API_ID, version_id: null, kind: "required" }],
+  },
+];
+
+/**
+ * 把种子铺成某平台某工程的版本列表。CurseForge 的版本标识是 fileId 十进制字符串。
+ *
+ * 种子是照 Sodium 的真实版本表写的，结构价值在于覆盖了 Unknown 档（平台没给元数据）、beta 通道
+ * 与必需/可选依赖三种情形。换工程时只把身份字段（名称、文件名）替换掉、保留这套结构，
+ * 免得每个工程都手写一份版本表；否则点任何一个 Mod，弹层里显示的都是 Sodium，走查就失去意义。
+ */
+function modVersions(platform: PlatformId, projectId: string): ModVersionInfo[] {
+  const hit = SEARCH_HITS.find((h) => h.project_id === projectId);
+  const title = hit?.title ?? "Sodium";
+  const slug = hit?.slug ?? "sodium";
+  // 前置库自己不该依赖自己：点 Fabric API 时把种子里的 Fabric API 依赖去掉。
+  const dropSelfDep = (deps: ModVersionInfo["dependencies"]) =>
+    deps.filter((d) => d.project_id !== projectId);
+  return MOD_VERSION_SEEDS.map(({ ids, ...rest }) => ({
+    ...rest,
+    platform,
+    project_id: projectId,
+    name: rest.name.replace("Sodium", title),
+    file_name: rest.file_name.replace("sodium", slug),
+    dependencies: dropSelfDep(rest.dependencies),
+    version_id: platform === "curseforge" ? String(ids[1]) : ids[0],
+  }));
+}
+
+/** 按 version_number 取种子铺出的版本；取不到直接抛，避免 mock 里悄悄写错版本号还一路装成功。 */
+function versionByNumber(versions: ModVersionInfo[], versionNumber: string): ModVersionInfo {
+  const found = versions.find((v) => v.version_number === versionNumber);
+  if (!found) throw new Error(`[mock] 版本表里没有 version_number=${versionNumber}`);
+  return found;
+}
+
+// 依赖项与更新目标用得到的两个真实工程版本（Fabric API 已装在实例里，Cloth Config 尚未装）。
+const FABRIC_API_INSTALLED: ModVersionInfo = {
+  version_id: "kJHFSCkq",
+  project_id: FABRIC_API_ID,
+  platform: "modrinth",
+  name: "[1.21.1] Fabric API 0.115.0+1.21.1",
+  version_number: "0.115.0+1.21.1",
+  release_channel: "release",
+  game_versions: ["1.21.1"],
+  loaders: ["fabric"],
+  file_name: "fabric-api-0.115.0+1.21.1.jar",
+  file_size: 2244608,
+  sha1: "b0d8e51947fca3260cd7f19e8a5b6142cd03f7e9",
+  date_published: "2025-08-30T18:22:04Z",
+  dependencies: [],
+};
+
+const FABRIC_API_LATEST: ModVersionInfo = {
+  version_id: "P9pTU6Vs",
+  project_id: FABRIC_API_ID,
+  platform: "modrinth",
+  name: "[1.21.1] Fabric API 0.119.2+1.21.1",
+  version_number: "0.119.2+1.21.1",
+  release_channel: "release",
+  game_versions: ["1.21.1"],
+  loaders: ["fabric"],
+  file_name: "fabric-api-0.119.2+1.21.1.jar",
+  file_size: 2310144,
+  sha1: "1c73ea90b5f8d24671ae0c3948b21d5f60e7ab42",
+  date_published: "2026-06-18T09:41:02Z",
+  dependencies: [],
+};
+
+const CLOTH_CONFIG_LATEST: ModVersionInfo = {
+  version_id: "sQ2fVbXm",
+  project_id: CLOTH_CONFIG_ID,
+  platform: "modrinth",
+  name: "v15.0.140 - fabric - 1.21.1",
+  version_number: "15.0.140+fabric",
+  release_channel: "release",
+  game_versions: ["1.21.1"],
+  loaders: ["fabric"],
+  file_name: "cloth-config-15.0.140-fabric.jar",
+  file_size: 1092310,
+  sha1: "4e9d1b7350ca82f6d0417be95c2a83f1607dbb2c",
+  date_published: "2026-05-30T22:15:37Z",
+  dependencies: [{ project_id: FABRIC_API_ID, version_id: null, kind: "required" }],
+};
+
+// 落位矩阵按三档手工编排（不是从 MOD_VERSION_SEEDS 机械推导的），目的是让落位层一次吃到
+// 完美匹配 / 可能可行 / 不兼容三种视觉状态。顺序即后端约定的排序：同档内按实例 id 字典序。
+function matchInstances(platform: PlatformId, projectId: string): InstanceMatch[] {
+  const versions = modVersions(platform, projectId);
+  const loaderMismatch = { kind: "mismatch", reason: "需要 Fabric 或 NeoForge，该实例装的是 Forge" } as const;
+  return [
+    {
+      version_id: "1.21.1-Fabric",
+      mc_version: "1.21.1",
+      loaders: ["fabric"],
+      compatibility: { kind: "match" },
+      best_version: versionByNumber(versions, "mc1.21.1-0.6.5"),
+      // 与 MODS / 卷宗种子对得上：这个实例里躺着 0.6.0，界面该把「安装」改成「更新」。
+      already_installed: "sodium-fabric-0.6.0.jar",
+    },
+    {
+      version_id: "1.21.4",
+      mc_version: "1.21.4",
+      loaders: [],
+      compatibility: { kind: "unknown" },
+      best_version: versionByNumber(versions, "0.6.9"),
+      already_installed: null,
+    },
+    {
+      version_id: "1.20.1-Forge_47.4.20",
+      mc_version: "1.20.1",
+      loaders: ["forge"],
+      compatibility: loaderMismatch,
+      best_version: null,
+      already_installed: null,
+    },
+    {
+      version_id: "World of Kivotos 2.0 beta",
+      mc_version: "1.20.1",
+      loaders: ["forge"],
+      compatibility: loaderMismatch,
+      best_version: null,
+      already_installed: null,
+    },
+    {
+      version_id: "测试服",
+      mc_version: "1.20.1",
+      loaders: ["forge"],
+      compatibility: loaderMismatch,
+      best_version: null,
+      already_installed: null,
+    },
+  ];
+}
+
+function planInstall(platform: PlatformId, projectId: string, modVersionId: string): InstallPlan {
+  const versions = modVersions(platform, projectId);
+  const main = versions.find((v) => v.version_id === modVersionId);
+  if (!main) {
+    throw new Error(`[mock] 版本表里没有 version_id=${modVersionId}，请先用 listModVersions 取合法 id`);
+  }
+  // 主项自己就是这两个前置库时不能再把自己列成依赖，否则计划里会出现「因自己需要自己」。
+  const deps = [
+    // Fabric API 已经躺在 mods/ 里，本次只做依赖确认不重复下载。
+    { version: FABRIC_API_INSTALLED, required_by: projectId, already_satisfied: true },
+    { version: CLOTH_CONFIG_LATEST, required_by: projectId, already_satisfied: false },
+  ].filter((d) => d.version.project_id !== projectId);
+
+  return {
+    items: [{ version: main, required_by: null, already_satisfied: false }, ...deps],
+    skipped: [
+      "Just Enough Items 是可选依赖（optional），未加入计划——只自动安装必需依赖。",
+      "Indium 没有匹配 MC 1.21.1 与 Fabric 的版本，已跳过；缺它可能导致部分光影功能失效。",
+    ],
+  };
+}
+
+// 卷宗种子只记 Aurora 自己装的两个文件；jei 是手动丢进 mods 的，得靠哈希反查才补得上身份。
+const LEDGER_SEED: LedgerEntry[] = [
+  {
+    file_name: "sodium-fabric-0.6.0.jar",
+    platform: "modrinth",
+    project_id: "AANobbMI",
+    version_id: "bmMEkJhK",
+    sha1: "8c41d0a7f36be92150ad7f2c48b1e6035da97f14",
+    installed_at: 1785801600,
+    installed_as_dependency_of: null,
+  },
+  {
+    file_name: "fabric-api-0.115.0.jar",
+    platform: "modrinth",
+    project_id: FABRIC_API_ID,
+    version_id: "kJHFSCkq",
+    sha1: "b0d8e51947fca3260cd7f19e8a5b6142cd03f7e9",
+    installed_at: 1785628800,
+    installed_as_dependency_of: "AANobbMI",
+  },
+];
+
+/** 哈希反查能认出来的存量 Mod：identify_installed_mods 调用后才会进卷宗。 */
+const IDENTIFIABLE_SEED: LedgerEntry[] = [
+  {
+    file_name: "jei-19.21.0.jar",
+    platform: "curseforge",
+    project_id: "238222",
+    version_id: "6104488",
+    sha1: "f5a2c81d0eb3479a6c15d8f207be34c9d016ea77",
+    installed_at: 1785628860,
+    installed_as_dependency_of: null,
+  },
+];
+
+// 历史种子（时间升序）：装 0.5.8 -> 升 0.5.11 -> 升 0.6.0 -> 升 Fabric API 又回滚。
+// 最终磁盘状态刻意与 MODS 完全一致（sodium 0.6.0 / fabric-api 0.115.0 / jei 19.21.0），
+// 免得历史页和 Mod 列表页互相打脸。
+const HISTORY_SEED: HistoryEvent[] = [
+  {
+    kind: "install",
+    id: "1785628800-1",
+    at: 1785628800,
+    files: ["sodium-fabric-0.5.8.jar", "fabric-api-0.115.0.jar"],
+  },
+  // 同一秒内的第二条：序号递增就是后端约定的 id 生成规则。
+  { kind: "install", id: "1785628800-2", at: 1785628800, files: ["jei-19.21.0.jar"] },
+  {
+    kind: "update",
+    id: "1785715200-1",
+    at: 1785715200,
+    file_name: "sodium-fabric-0.5.11.jar",
+    old_file: "sodium-fabric-0.5.8.jar",
+    from_version: "mc1.20.1-0.5.8",
+    to_version: "mc1.20.1-0.5.11",
+  },
+  {
+    kind: "update",
+    id: "1785801600-1",
+    at: 1785801600,
+    file_name: "sodium-fabric-0.6.0.jar",
+    old_file: "sodium-fabric-0.5.11.jar",
+    from_version: "mc1.20.1-0.5.11",
+    to_version: "mc1.21.1-0.6.0",
+  },
+  {
+    kind: "update",
+    id: "1785931200-1",
+    at: 1785931200,
+    file_name: "fabric-api-0.119.2.jar",
+    old_file: "fabric-api-0.115.0.jar",
+    from_version: "0.115.0+1.21.1",
+    to_version: "0.119.2+1.21.1",
+  },
+  { kind: "rollback", id: "1785945600-1", at: 1785945600, reverted_event: "1785931200-1" },
+];
+
+/** 事件 id -> 该次更新残留的 `.old` 备份字节数。没进表的更新事件就是备份已不在磁盘上。 */
+const BACKUP_SEED: [string, number][] = [["1785801600-1", 1284096]];
+
+/** 每个实例一份可变状态：回滚要能被再次查到，哈希反查补身份只该生效一次。按实例分桶避免串味。 */
+interface InstanceModState {
+  events: HistoryEvent[];
+  backups: Map<string, number>;
+  ledger: LedgerEntry[];
+}
+
+const INSTANCE_MOD_STATE = new Map<string, InstanceModState>();
+
+function modStateOf(versionId: string): InstanceModState {
+  const cached = INSTANCE_MOD_STATE.get(versionId);
+  if (cached) return cached;
+  const fresh: InstanceModState = {
+    events: [...HISTORY_SEED],
+    backups: new Map(BACKUP_SEED),
+    ledger: [...LEDGER_SEED],
+  };
+  INSTANCE_MOD_STATE.set(versionId, fresh);
+  return fresh;
+}
+
+/** 返回不可回滚的中文原因；返回 null 表示可以回滚。检查与执行共用同一份判据，避免两处规则走偏。 */
+function rollbackBlocker(state: InstanceModState, event: HistoryEvent): string | null {
+  if (event.kind !== "update") return "只有更新事件可以回滚";
+  const alreadyReverted = state.events.some(
+    (e) => e.kind === "rollback" && e.reverted_event === event.id,
+  );
+  if (alreadyReverted) return "该次更新已经回滚过";
+  if (!state.backups.has(event.id)) {
+    return `备份文件 ${event.old_file}.old 已不在 mods 目录（可能已被清理）`;
+  }
+  return null;
+}
+
+function rollbackChecks(versionId: string): RollbackCheck[] {
+  const state = modStateOf(versionId);
+  return state.events.map((event) => {
+    const blocker = rollbackBlocker(state, event);
+    return { event_id: event.id, can_rollback: blocker === null, reason: blocker };
+  });
+}
+
+function rollback(versionId: string, eventId: string): void {
+  const state = modStateOf(versionId);
+  const target = state.events.find((e) => e.id === eventId);
+  if (!target) throw new Error(`[mock] 历史里没有事件 ${eventId}`);
+  const blocker = rollbackBlocker(state, target);
+  if (blocker) throw new Error(blocker);
+  const at = Math.floor(Date.now() / 1000);
+  const seq = state.events.filter((e) => e.at === at).length + 1;
+  state.events.push({ kind: "rollback", id: `${at}-${seq}`, at, reverted_event: eventId });
+  // 回滚把 .old 改回正式文件，备份随之消失——backup_size 也就跟着掉下去。
+  state.backups.delete(eventId);
+}
+
+function checkUpdates(): UpdateCandidate[] {
+  const versions = modVersions("modrinth", "AANobbMI");
+  return [
+    {
+      file_name: "sodium-fabric-0.6.0.jar",
+      current_version_id: "bmMEkJhK",
+      latest: versionByNumber(versions, "mc1.21.1-0.6.5"),
+    },
+    {
+      file_name: "fabric-api-0.115.0.jar",
+      current_version_id: "kJHFSCkq",
+      latest: FABRIC_API_LATEST,
+    },
+  ];
+}
+
+// 崩溃规则表：与 aurora-launch/src/crash.rs 的规则同源（取其中五条高频规则），同样按小写子串命中。
+// mock 也做真判定，是为了让「日志里没有已知模式」这条空态分支在浏览器里也能被真实触发。
+const CRASH_RULES: { patterns: string[]; diagnosis: Omit<CrashDiagnosis, "matched"> }[] = [
+  {
+    patterns: ["unsupportedclassversionerror", "class file version"],
+    diagnosis: {
+      category: "java_version_mismatch",
+      summary: "Java 版本与游戏或 Mod 不匹配",
+      advice:
+        "改用目标版本要求的 Java：较新的 Minecraft 需要 Java 17 或 21，1.16 及更早需要 Java 8。可在设置中切换，或让 Aurora 自动下载匹配的运行时。",
+      detail: "61.0",
+    },
+  },
+  {
+    patterns: ["outofmemoryerror", "java heap space", "could not reserve enough space for object heap"],
+    diagnosis: {
+      category: "out_of_memory",
+      summary: "内存不足",
+      advice:
+        "调高最大内存（-Xmx），减少同时加载的 Mod 与高清材质；32 位 Java 无法分配大内存，请改用 64 位 Java。",
+      detail: null,
+    },
+  },
+  {
+    patterns: ["incompatible mod set", "which is missing", "requires version"],
+    diagnosis: {
+      category: "missing_dependency",
+      summary: "缺少前置 Mod 或依赖版本不满足",
+      advice: "根据日志补齐缺失的前置 Mod（如 Fabric API），或把相关 Mod 调整到彼此兼容的版本。",
+      detail: "sodium",
+    },
+  },
+  {
+    patterns: ["mixin apply failed", "error applying mixin"],
+    diagnosis: {
+      category: "mixin_failure",
+      summary: "Mixin 注入失败（通常是 Mod 冲突或与游戏版本不兼容）",
+      advice: "定位日志中报错的 Mod 并更新或移除；常见于 Mod 与当前 Minecraft 版本不匹配。",
+      detail: "mixins.sodium.json:MixinLevelRenderer",
+    },
+  },
+  {
+    patterns: ["duplicatemodsfoundexception", "found a duplicate mod"],
+    diagnosis: {
+      category: "duplicate_mod",
+      summary: "存在重复安装的 Mod",
+      advice: "删除 mods 目录下重复的同一 Mod（只保留一个版本）。",
+      detail: null,
+    },
+  },
+];
+
+function diagnose(logText: string): CrashDiagnosis[] {
+  const lines = logText.split(/\r?\n/);
+  const hits: CrashDiagnosis[] = [];
+  for (const rule of CRASH_RULES) {
+    const line = lines.find((l) => rule.patterns.some((p) => l.toLowerCase().includes(p)));
+    if (line) hits.push({ ...rule.diagnosis, matched: line.trim().slice(0, 200) });
+  }
+  return hits;
+}
+
+// 最近一次崩溃的归档日志片段：故意同时命中「缺前置」与「Mixin 注入失败」两条规则。
+const LAST_CRASH_LOG = [
+  "[19:42:07] [main/INFO]: Loading Minecraft 1.21.1 with Fabric Loader 0.16.5",
+  "[19:42:09] [main/INFO]: Loading 84 mods",
+  "[19:42:11] [main/ERROR]: Incompatible mod set! Mod indium requires version 0.6.5 or later of sodium, which is missing!",
+  "[19:42:11] [main/ERROR]: Mixin apply failed mixins.sodium.json:MixinLevelRenderer -> net.minecraft.class_761",
+  "[19:42:12] [main/ERROR]: Game crashed during startup",
+].join("\n");
+
+function lastCrash(versionId: string): CrashReport {
+  return {
+    diagnoses: diagnose(LAST_CRASH_LOG),
+    // mod id 与卷宗 join：sodium 对得上文件名，indium 没装过所以只报 id。
+    suspects: [
+      { mod_id: "sodium", file_name: "sodium-fabric-0.6.0.jar" },
+      { mod_id: "indium", file_name: null },
+    ],
+    log_path: `${CONFIG.game_dir}\\versions\\${versionId}\\.aurora\\logs\\1785945600.log`,
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>): Promise<T> {
   await delay(180);
@@ -225,6 +768,65 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     const id = _args?.versionId as string;
     VERSION_SETTINGS.set(id, (_args?.settings as Record<string, unknown>) ?? {});
     return resolveVersionSettings(id) as T;
+  }
+
+  // Mod 生态这批命令要么读入参、要么改内存态，全部走短路分支，一条都不能进 table。
+  if (cmd === "list_mod_versions") {
+    return modVersions(_args?.platform as PlatformId, _args?.projectId as string) as T;
+  }
+  if (cmd === "match_instances") {
+    return matchInstances(_args?.platform as PlatformId, _args?.projectId as string) as T;
+  }
+  if (cmd === "plan_install") {
+    return planInstall(
+      _args?.platform as PlatformId,
+      _args?.projectId as string,
+      _args?.modVersionId as string,
+    ) as T;
+  }
+  if (cmd === "identify_installed_mods") {
+    const state = modStateOf(_args?.versionId as string);
+    const known = new Set(state.ledger.map((e) => e.file_name));
+    const found = IDENTIFIABLE_SEED.filter((e) => !known.has(e.file_name));
+    state.ledger.push(...found);
+    // 第二次调用返回 0：能反查的都补完了，剩下的是本地 Mod，本就没有来源可查。
+    return found.length as T;
+  }
+  if (cmd === "check_updates") {
+    return checkUpdates() as T;
+  }
+  if (cmd === "list_history") {
+    const history: History = { events: modStateOf(_args?.versionId as string).events };
+    return history as T;
+  }
+  if (cmd === "rollback_checks") {
+    return rollbackChecks(_args?.versionId as string) as T;
+  }
+  if (cmd === "rollback") {
+    rollback(_args?.versionId as string, _args?.eventId as string);
+    return undefined as T;
+  }
+  if (cmd === "backup_size") {
+    const state = modStateOf(_args?.versionId as string);
+    let total = 0;
+    for (const bytes of state.backups.values()) total += bytes;
+    return total as T;
+  }
+  if (cmd === "diagnose_crash") {
+    // 临时粘贴的日志没有归档文件，log_path 就该是 null，别造一个打不开的路径出来。
+    const report: CrashReport = {
+      diagnoses: diagnose(_args?.logText as string),
+      suspects: [],
+      log_path: null,
+    };
+    return report as T;
+  }
+  if (cmd === "last_crash") {
+    return lastCrash(_args?.versionId as string) as T;
+  }
+  if (cmd === "list_ledger") {
+    const ledger: Ledger = { entries: modStateOf(_args?.versionId as string).ledger };
+    return ledger as T;
   }
 
   const table: Record<string, unknown> = {
