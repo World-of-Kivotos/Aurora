@@ -8,6 +8,15 @@ import { AnimatePresence, motion } from "framer-motion";
 import { springs } from "../lib/motion";
 import { WinCloseIcon } from "./icons";
 
+// 宽度档位：md 是历史默认（表单类窄弹窗），lg/xl 供矩阵、列表这类需要横向铺开的内容用。
+type ModalSize = "md" | "lg" | "xl";
+
+const sizeClass: Record<ModalSize, string> = {
+  md: "max-w-lg",
+  lg: "max-w-3xl",
+  xl: "max-w-5xl",
+};
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -15,9 +24,18 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   lockScroll?: boolean;
+  size?: ModalSize;
 }
 
-export function Modal({ open, onClose, title, children, footer, lockScroll = true }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  lockScroll = true,
+  size = "md",
+}: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const prevFocus = useRef<HTMLElement | null>(null);
 
@@ -67,7 +85,7 @@ export function Modal({ open, onClose, title, children, footer, lockScroll = tru
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={springs.settle}
-            className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-[3px] border border-ink/12 bg-paper focus:outline-none"
+            className={`relative z-10 flex max-h-[85vh] w-full ${sizeClass[size]} flex-col rounded-[3px] border border-ink/12 bg-paper focus:outline-none`}
           >
             {title && (
               <header className="flex items-center justify-between gap-4 border-b border-ink/12 px-6 py-4">
