@@ -67,6 +67,21 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           "构建版本 $v"
 
+      - name: 发版脚本测试
+        run: node --test "scripts/*.test.mjs"
+
+      # 文案缺失该在二十秒内失败，而不是编译十几分钟之后才发现没得发。
+      # 频道按分支推导：main 与 hotfix/* 取稳定版文案，其余取开发版。
+      - name: 解析发行说明
+        id: notes
+        shell: pwsh
+        run: |
+          node scripts/release-notes.mjs emit "${{ github.ref_name }}" "$env:RUNNER_TEMP/notes.md"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $info = node scripts/release-notes.mjs resolve "${{ github.ref_name }}" | ConvertFrom-Json
+          "channel=$($info.channel)" >> $env:GITHUB_OUTPUT
+          "采用 $($info.file)（$($info.channel) 频道）"
+
       - name: 类型检查
         working-directory: app
         run: pnpm exec tsc --noEmit
@@ -138,9 +153,12 @@ jobs:
           $version = "${{ steps.meta.outputs.version }}"
           $exe = Get-ChildItem $dir -Filter *.exe | Select-Object -First 1
           $sig = Get-Content (Join-Path $dir "$($exe.Name).sig") -Raw
+          # notes 会原样显示在用户的更新弹窗里，取的就是 docs/releases 下那份文案。
+          # -Encoding utf8 不能省：文案是中文，读错编码就是一屏乱码发到所有用户眼前。
+          $notes = (Get-Content "$env:RUNNER_TEMP/notes.md" -Raw -Encoding utf8).TrimEnd()
           $manifest = [ordered]@{
             version   = $version
-            notes     = "Aurora $version"
+            notes     = $notes
             pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
@@ -155,13 +173,20 @@ jobs:
           "已生成 $out"
           Get-Content $out
 
+      # 文案一并收进产物：发 release 时直接拿它当正文，不用再翻一遍 docs。
+      - name: 收拢发行说明到产物目录
+        shell: pwsh
+        run: Copy-Item "$env:RUNNER_TEMP/notes.md" (Join-Path "${{ steps.collect.outputs.dir }}" "release-notes.md")
+
+      # 名字带上频道：稳定版与开发版的包外观完全一样，混起来分不清。
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: Aurora-${{ steps.meta.outputs.version }}-windows-x64-nsis
+          name: Aurora-${{ steps.meta.outputs.version }}-${{ steps.notes.outputs.channel }}-windows-x64-nsis
           path: |
             ${{ steps.collect.outputs.dir }}/*.exe
             ${{ steps.collect.outputs.dir }}/*.sig
             ${{ steps.collect.outputs.dir }}/latest.json
+            ${{ steps.collect.outputs.dir }}/release-notes.md
           if-no-files-found: error
           retention-days: 14

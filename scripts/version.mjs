@@ -8,29 +8,14 @@
 //   node scripts/version.mjs sync    以 tauri.conf.json 为准改写另外两处
 //   node scripts/version.mjs set 1.2.3   先改 tauri.conf.json 再同步
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { repoRoot, TAURI_CONF, readText as read, tauriVersion as sourceVersion } from "./shared.mjs";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const TAURI_CONF = join(repoRoot, "app", "src-tauri", "tauri.conf.json");
 const PACKAGE_JSON = join(repoRoot, "app", "package.json");
 const CARGO_TOML = join(repoRoot, "app", "src-tauri", "Cargo.toml");
 
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-
-// 剥掉 BOM 再交给 JSON.parse：Windows 上用 PowerShell 的 Set-Content 或某些编辑器
-// 改这些文件会留下 BOM，JSON.parse 会当场炸在第一个字符上。
-const read = (p) => readFileSync(p, "utf8").replace(/^﻿/, "");
-
-/** 读唯一事实来源。 */
-function sourceVersion() {
-  const conf = JSON.parse(read(TAURI_CONF));
-  if (typeof conf.version !== "string") {
-    throw new Error("tauri.conf.json 缺少 version 字段");
-  }
-  return conf.version;
-}
 
 /** Cargo.toml 的包版本：只认 [package] 段里第一个顶格 version，不碰依赖的版本号。 */
 function cargoVersion(text) {
