@@ -88,9 +88,17 @@ impl Aurora {
         &self.game_dir
     }
 
-    /// 数据目录（`%LOCALAPPDATA%\Aurora`）。
+    /// 数据目录（便携模式下即 exe 所在目录，否则 `%LOCALAPPDATA%\Aurora`）。
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// 配置文件是否已经落过盘。
+    ///
+    /// 用来判定「这是不是第一次启动」：`ConfigStore::load` 在文件缺失时返回默认配置而不创建文件，
+    /// 所以只要没人调用过 `save_config`，它就一直不存在。初次设定走完保存一次，此后不再出现。
+    pub fn config_saved(&self) -> bool {
+        self.config_path.is_file()
     }
 
     /// 覆盖游戏目录（CLI `--game-dir`）。

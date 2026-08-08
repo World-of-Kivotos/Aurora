@@ -1,16 +1,43 @@
 // 路由与外壳装配。用 HashRouter：Tauri 生产环境从静态文件加载，hash 路由不依赖服务端处理深链接。
 // 加新页 = 在 AppShell 子路由下加一条 <Route>，并在 Sidebar 的 TOP/BOTTOM 里加对应导航项。
+//
+// 首次启动先过初次设定：配置还没落过盘时整个路由都不挂载，避免主页先扫一遍空目录、
+// 用户刚设完目录又要手动刷新。设定完成把 phase 推到 ready，路由这才装配。
 
+import { useCallback, useEffect, useState } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
+import { FirstRunWizard } from "./components/FirstRunWizard";
 import { Home } from "./pages/Home";
 import { Account } from "./pages/Account";
 import { Versions } from "./pages/Versions";
 import { InstanceDetail } from "./pages/InstanceDetail";
 import { Download } from "./pages/Download";
 import { Settings } from "./pages/Settings";
+import { isFirstRun } from "./lib/ipc";
+
+/** 启动闸门：探测中什么都不画，免得白屏一闪之后又跳向导。 */
+type Phase = "probing" | "first-run" | "ready";
 
 export default function App() {
+  const [phase, setPhase] = useState<Phase>("probing");
+
+  const probe = useCallback(async () => {
+    try {
+      setPhase((await isFirstRun()) ? "first-run" : "ready");
+    } catch {
+      // 探测失败不该把人挡在门外：直接进主界面，配置真有问题会在各页面以错误块呈现。
+      setPhase("ready");
+    }
+  }, []);
+
+  useEffect(() => {
+    void probe();
+  }, [probe]);
+
+  if (phase === "probing") return null;
+  if (phase === "first-run") return <FirstRunWizard onDone={() => setPhase("ready")} />;
+
   return (
     <HashRouter>
       <Routes>

@@ -564,3 +564,45 @@ export const lastCrash = (versionId: string): Promise<CrashReport | null> =>
 
 export const listLedger = (versionId: string): Promise<Ledger> =>
   invoke<Ledger>("list_ledger", { versionId });
+
+// ---- 游戏目录与初次设定 ----
+
+/** 一条带名字的目录记录。名字给人看，路径才是身份。 */
+export interface NamedDirectory {
+  name: string;
+  path: string;
+}
+
+/** 已知游戏目录，含当前是否可达——盘没挂时记录仍在，只是 available 为 false。 */
+export interface GameDirectoryEntry {
+  name: string;
+  path: string;
+  /** 是否为当前正在使用的目录（安装与启动都落在它里面）。 */
+  is_current: boolean;
+  /** 该目录此刻是否真实存在。 */
+  available: boolean;
+}
+
+/** 配置文件是否还没落过盘；为真表示这是第一次启动，该走初次设定。 */
+export const isFirstRun = (): Promise<boolean> => invoke<boolean>("is_first_run");
+
+export const listGameDirectories = (): Promise<GameDirectoryEntry[]> =>
+  invoke<GameDirectoryEntry[]>("list_game_directories");
+
+/** 探测机器上尚未记录的其它 .minecraft（官方启动器、PCL2 等）；只报告，不写入配置。 */
+export const discoverGameDirectories = (): Promise<NamedDirectory[]> =>
+  invoke<NamedDirectory[]>("discover_game_directories");
+
+export const addGameDirectory = (name: string, path: string): Promise<void> =>
+  invoke("add_game_directory", { name, path });
+
+export const removeGameDirectory = (path: string): Promise<boolean> =>
+  invoke<boolean>("remove_game_directory", { path });
+
+/** 切换当前游戏目录；原当前目录会自动转入「其它文件夹」，不会丢失。 */
+export const switchGameDirectory = (path: string, name: string): Promise<void> =>
+  invoke("switch_game_directory", { path, name });
+
+/** 走完初次设定：定下游戏目录、收下选中的其它文件夹，并把配置落盘。 */
+export const completeFirstRun = (gameDir: string, extras: NamedDirectory[]): Promise<void> =>
+  invoke("complete_first_run", { gameDir, extras });

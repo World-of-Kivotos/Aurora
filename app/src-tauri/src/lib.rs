@@ -20,9 +20,11 @@ use aurora_core::{
     DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, History, InstallPlan,
     InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
     LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemorySettings, ModLoader,
-    ModVersionInfo, Platform, ResolvedIsolation, ResourceType, RollbackCheck, SearchHit,
-    SearchQuery, SortField, UpdateCandidate, VersionManifest, VersionScan, VersionSettings,
+    ModVersionInfo, NamedDirectory, Platform, ResolvedIsolation, ResourceType, RollbackCheck,
+    SearchHit, SearchQuery, SortField, UpdateCandidate, VersionManifest, VersionScan,
+    VersionSettings,
 };
+use aurora_core::folders::GameDirectoryEntry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex, RwLock};
@@ -1189,6 +1191,95 @@ async fn set_game_directory(path: String, state: State<'_, RwLock<Aurora>>) -> R
     Ok(())
 }
 
+/// 是否为首次启动（配置文件还没落过盘）。前端据此决定要不要走初次设定。
+#[tauri::command]
+async fn is_first_run(state: State<'_, RwLock<Aurora>>) -> Result<bool, String> {
+    let aurora = state.read().await;
+    Ok(!aurora.config_saved())
+}
+
+/// 列出全部已知游戏目录（当前 + 其它文件夹），含各自当前是否可达。
+#[tauri::command]
+async fn list_game_directories(
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<Vec<GameDirectoryEntry>, String> {
+    let aurora = state.read().await;
+    Ok(aurora.game_directories())
+}
+
+/// 探测机器上尚未记录的其它 `.minecraft`（官方启动器、PCL2 等），只报告不写入。
+#[tauri::command]
+async fn discover_game_directories(
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<Vec<NamedDirectory>, String> {
+    let aurora = state.read().await;
+    Ok(aurora.discover_game_directories())
+}
+
+/// 记下一个「其它文件夹」并落盘。同路径已存在时只更新名字。
+#[tauri::command]
+async fn add_game_directory(
+    name: String,
+    path: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<(), String> {
+    let mut aurora = state.write().await;
+    aurora.add_game_directory(name, PathBuf::from(path));
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 移除一个「其它文件夹」记录（只动配置，不碰磁盘上的文件）。
+#[tauri::command]
+async fn remove_game_directory(
+    path: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<bool, String> {
+    let mut aurora = state.write().await;
+    let removed = aurora.remove_game_directory(&PathBuf::from(path));
+    if removed {
+        aurora.save_config().await.map_err(|e| e.to_string())?;
+    }
+    Ok(removed)
+}
+
+/// 把某个目录切为当前游戏目录，原当前目录自动转入「其它文件夹」。
+#[tauri::command]
+async fn switch_game_directory(
+    path: String,
+    name: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<(), String> {
+    let mut aurora = state.write().await;
+    aurora.switch_game_directory(PathBuf::from(path), name);
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 走完初次设定：确定游戏目录、收下选中的其它文件夹，然后把配置落盘。
+///
+/// 落盘这一下同时也是「不再是首次启动」的标记，所以必须在这里做完整一次保存，
+/// 而不是等用户之后碰巧改了别的设置才写。
+#[tauri::command]
+async fn complete_first_run(
+    game_dir: String,
+    extras: Vec<NamedDirectory>,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<(), String> {
+    let mut aurora = state.write().await;
+    let target = PathBuf::from(game_dir);
+    // 目录可能还不存在（用户选了个新位置）：先建出来，免得首页扫描直接报错。
+    tokio::fs::create_dir_all(&target)
+        .await
+        .map_err(|e| format!("创建游戏目录失败：{e}"))?;
+    aurora.set_game_directory(target);
+    for extra in extras {
+        aurora.add_game_directory(extra.name, extra.path);
+    }
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 聚合搜索 Modrinth + CurseForge。前端传字符串枚举，命令内构造 [`SearchQuery`]。
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -1588,6 +1679,13 @@ pub fn run() {
             set_mod_enabled,
             get_version_settings,
             set_version_settings,
+            is_first_run,
+            list_game_directories,
+            discover_game_directories,
+            add_game_directory,
+            remove_game_directory,
+            switch_game_directory,
+            complete_first_run,
             list_mod_versions,
             match_instances,
             plan_install,

@@ -196,6 +196,52 @@ const MODS = [
   { path: "", file_name: "jei-19.21.0.jar", enabled: false, metadata: { mod_id: "jei", name: "Just Enough Items", version: "19.21.0", description: null, authors: ["mezz"], loader: "fabric", format: "fabric.mod.json" } },
 ];
 
+// 游戏目录：mock 内存态。默认不当作首次启动——每次热重载都弹一次向导就没法干别的活。
+// 要看初次设定，在地址里带上 ?firstRun=1，或在控制台
+// localStorage.setItem("aurora.mock.firstRun", "1") 之后刷新。
+const FIRST_RUN = {
+  pending:
+    typeof window !== "undefined" &&
+    (window.location.href.includes("firstRun=1") ||
+      window.localStorage?.getItem("aurora.mock.firstRun") === "1"),
+};
+
+/** 已收下的「其它文件夹」。 */
+const EXTRA_DIRS: { name: string; path: string }[] = [
+  { name: "官方启动器", path: "C:\\Users\\Xiaoxiao\\AppData\\Roaming\\.minecraft" },
+];
+
+/** 探测得到的候选：故意留一条尚未收下的，好让初次设定的推荐列表非空。 */
+const DISCOVERABLE: { name: string; path: string }[] = [
+  { name: "官方启动器", path: "C:\\Users\\Xiaoxiao\\AppData\\Roaming\\.minecraft" },
+  { name: "PCL2", path: "E:\\Plain Craft Launcher 2\\.minecraft" },
+  { name: "HMCL", path: "D:\\HMCL\\.minecraft" },
+];
+
+/** 与后端同口径的路径比较：Windows 不分大小写，且抹平斜杠与结尾分隔符。 */
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/** 当前目录在前，其余按记录顺序；mock 里除了一条故意设成不可达，其余都算存在。 */
+function listGameDirs() {
+  const current = {
+    name: "当前文件夹",
+    path: CONFIG.game_dir,
+    is_current: true,
+    available: true,
+  };
+  const others = EXTRA_DIRS.filter((d) => !samePath(d.path, CONFIG.game_dir)).map((d) => ({
+    name: d.name,
+    path: d.path,
+    is_current: false,
+    // D 盘那条当作没挂，好让界面上「不可达」这一态在浏览器里也能被看到。
+    available: !d.path.startsWith("D:\\"),
+  }));
+  return [current, ...others];
+}
+
 // 版本级设置：mock 内存态，写进去能读回来，够阶段二的实例详情页离线开发。
 const VERSION_SETTINGS = new Map<string, Record<string, unknown>>();
 
@@ -761,6 +807,53 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
 
   // 带副作用或需读写内存态的命令必须在 table 之前短路：下面那张 table 的每个值都在构造时求值，
   // 把这类命令写进 table 会让任意一次 invoke 都触发一遍它们的副作用。
+  if (cmd === "is_first_run") {
+    return FIRST_RUN.pending as T;
+  }
+  if (cmd === "list_game_directories") {
+    return listGameDirs() as T;
+  }
+  if (cmd === "discover_game_directories") {
+    // 已经收下的不再重复推荐，与后端一致。
+    return DISCOVERABLE.filter(
+      (d) => !EXTRA_DIRS.some((e) => samePath(e.path, d.path)),
+    ) as T;
+  }
+  if (cmd === "add_game_directory") {
+    const path = _args?.path as string;
+    const name = _args?.name as string;
+    const hit = EXTRA_DIRS.find((d) => samePath(d.path, path));
+    if (hit) hit.name = name;
+    else EXTRA_DIRS.push({ name, path });
+    return undefined as T;
+  }
+  if (cmd === "remove_game_directory") {
+    const path = _args?.path as string;
+    const before = EXTRA_DIRS.length;
+    const kept = EXTRA_DIRS.filter((d) => !samePath(d.path, path));
+    EXTRA_DIRS.length = 0;
+    EXTRA_DIRS.push(...kept);
+    return (EXTRA_DIRS.length !== before) as T;
+  }
+  if (cmd === "switch_game_directory") {
+    const path = _args?.path as string;
+    if (!samePath(path, CONFIG.game_dir)) {
+      const previous = CONFIG.game_dir;
+      const kept = EXTRA_DIRS.filter((d) => !samePath(d.path, path));
+      EXTRA_DIRS.length = 0;
+      EXTRA_DIRS.push(...kept, { name: "上一个目录", path: previous });
+      CONFIG.game_dir = path;
+    }
+    return undefined as T;
+  }
+  if (cmd === "complete_first_run") {
+    CONFIG.game_dir = _args?.gameDir as string;
+    for (const extra of (_args?.extras as { name: string; path: string }[]) ?? []) {
+      if (!EXTRA_DIRS.some((d) => samePath(d.path, extra.path))) EXTRA_DIRS.push(extra);
+    }
+    FIRST_RUN.pending = false;
+    return undefined as T;
+  }
   if (cmd === "get_version_settings") {
     return resolveVersionSettings(_args?.versionId as string) as T;
   }

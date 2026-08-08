@@ -2,7 +2,7 @@
 // 保存策略：Select/Toggle 即时保存（乐观更新，失败回滚 + toast）；数字输入 blur/Enter 提交；
 // 游戏目录与 client_id 走显性按钮。错误一律 toast(String(e),"error")，不吞不掩盖。
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
@@ -15,7 +15,12 @@ import { useToast } from "../components/Toast";
 import { useMotionPref } from "../lib/motion-pref";
 import { pageItem, springs } from "../lib/motion";
 import {
+  addGameDirectory,
+  discoverGameDirectories,
   getConfig,
+  listGameDirectories,
+  removeGameDirectory,
+  switchGameDirectory,
   updateConfig,
   setGameDirectory,
   detectJava,
@@ -24,8 +29,10 @@ import {
   type ConfigDto,
   type ConfigPatch,
   type DownloadSourcePolicy,
+  type GameDirectoryEntry,
   type IsolationPolicy,
   type JavaInstallationDto,
+  type NamedDirectory,
 } from "../lib/ipc";
 
 const inputCls =
@@ -149,6 +156,11 @@ export function Settings() {
   const { reduceMotion, setReduceMotion } = useMotionPref();
 
   const [tab, setTab] = useState<SettingsTab>("launcher");
+
+  // ---- 游戏目录列表 ----
+  const [dirs, setDirs] = useState<GameDirectoryEntry[]>([]);
+  const [discovered, setDiscovered] = useState<NamedDirectory[]>([]);
+  const [dirsBusy, setDirsBusy] = useState(false);
 
   // ---- 配置区 ----
   const [config, setConfig] = useState<ConfigDto | null>(null);
@@ -296,10 +308,71 @@ export function Settings() {
       await setGameDirectory(path);
       toast("游戏目录已更新", "success");
       await loadConfig(true); // 目录变更可能连带影响 data_dir，拉回真实值
+      await loadDirs();
     } catch (e) {
       toast(String(e), "error");
     } finally {
       setSavingGameDir(false);
+    }
+  };
+
+  // 列表与探测一起取：两者都不慢，分开取会让「添加」之后的两块出现短暂不一致。
+  const loadDirs = useCallback(async () => {
+    try {
+      const [listed, found] = await Promise.all([
+        listGameDirectories(),
+        discoverGameDirectories(),
+      ]);
+      setDirs(listed);
+      setDiscovered(found);
+    } catch (e) {
+      // 目录列表取不到不该顶掉整个设置页，用 toast 报出来即可。
+      toast(String(e), "error");
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    void loadDirs();
+  }, [loadDirs]);
+
+  const adoptDir = async (name: string, path: string) => {
+    setDirsBusy(true);
+    try {
+      await addGameDirectory(name, path);
+      await loadDirs();
+      toast(`已添加 ${name}`, "success");
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setDirsBusy(false);
+    }
+  };
+
+  const removeDir = async (path: string) => {
+    setDirsBusy(true);
+    try {
+      await removeGameDirectory(path);
+      await loadDirs();
+      toast("已移除记录，磁盘文件未改动", "success");
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setDirsBusy(false);
+    }
+  };
+
+  const switchDir = async (path: string, name: string) => {
+    setDirsBusy(true);
+    try {
+      await switchGameDirectory(path, name);
+      // 当前目录换了，配置与列表都要重取；输入框也得跟上，否则还显示旧路径。
+      await loadConfig(true);
+      await loadDirs();
+      toast(`已切换到 ${name}`, "success");
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setDirsBusy(false);
     }
   };
 
@@ -536,6 +609,108 @@ export function Settings() {
                 />
               </div>
             </div>
+            <div className="border-b border-ink/9 py-[18px]">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-[15px] font-bold">文件夹列表</div>
+                  <div className="mt-1 text-[12.5px] text-ink/60">
+                    可以并存多个 .minecraft，点「切换」把某个设为当前；移除只删记录，不动磁盘文件
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  className="shrink-0"
+                  icon={<RefreshIcon size={15} />}
+                  onClick={() => void loadDirs()}
+                  disabled={dirsBusy}
+                >
+                  重新探测
+                </Button>
+              </div>
+
+              <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0">
+                {dirs.map((d) => (
+                  <li
+                    key={d.path}
+                    className="flex items-center gap-3 rounded-[3px] border border-ink/10 bg-paper px-3 py-2.5"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-[13.5px] font-bold">{d.name}</span>
+                        {d.is_current && (
+                          <span className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
+                            当前
+                          </span>
+                        )}
+                        {!d.available && (
+                          <span
+                            title="这个位置现在访问不到（盘没挂或已被删除），记录仍然保留"
+                            className="shrink-0 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/45"
+                          >
+                            不可达
+                          </span>
+                        )}
+                      </span>
+                      <span
+                        className={`mt-0.5 block truncate font-mono text-[11px] ${
+                          d.available ? "text-ink/45" : "text-ink/30"
+                        }`}
+                      >
+                        {d.path}
+                      </span>
+                    </span>
+                    {!d.is_current && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void switchDir(d.path, d.name)}
+                          disabled={dirsBusy || !d.available}
+                          title={d.available ? undefined : "位置访问不到，无法切过去"}
+                          className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          切换
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeDir(d.path)}
+                          disabled={dirsBusy}
+                          className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/40 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          移除
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+
+              {discovered.length > 0 && (
+                <div className="mt-3 rounded-[3px] border border-ink/10 bg-paper-sink px-3 py-2.5">
+                  <div className="text-[12px] font-bold text-ink/55">发现未记录的文件夹</div>
+                  <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
+                    {discovered.map((d) => (
+                      <li key={d.path} className="flex items-center gap-3">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12.5px] font-bold">{d.name}</span>
+                          <span className="block truncate font-mono text-[11px] text-ink/45">
+                            {d.path}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void adoptDir(d.name, d.path)}
+                          disabled={dirsBusy}
+                          className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          添加
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
             <div className="py-[18px] last:pb-0">
               <div className="text-[12.5px] text-ink/45">数据目录</div>
               <div className="mt-1 font-mono text-[12px] break-all text-ink/55">{config.data_dir}</div>
