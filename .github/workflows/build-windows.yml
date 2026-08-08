@@ -1,0 +1,107 @@
+# 手动触发的 Windows x64 安装包构建。
+#
+# 刻意不挂 push/tag 触发：现阶段 dev 分支提交频繁，每次都跑一遍 Rust 全量编译既慢又没人看。
+# 需要装机验证时到 Actions 页面点一次 Run workflow，选分支即可。
+name: 构建 Windows 安装包
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 构建配置（debug 快但体积大，仅用于验证流程本身）
+        type: choice
+        options: [release, debug]
+        default: release
+
+# 只保留同一分支上最后一次手动触发：连点两下不该同时跑两份全量编译。
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      # Rust 依赖量大，冷编译十几分钟；缓存按 Cargo.lock 走，锁没变就直接命中。
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: 安装前端依赖
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      # 版本号有三处，唯一事实来源是 tauri.conf.json。放在构建前跑：
+      # 装出一个版本号自相矛盾的包，比构建失败更难查。
+      - name: 校验版本号一致
+        run: node scripts/version.mjs check
+
+      - name: 读取版本号
+        id: meta
+        shell: pwsh
+        run: |
+          $v = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "构建版本 $v"
+
+      - name: 类型检查
+        working-directory: app
+        run: pnpm exec tsc --noEmit
+
+      - name: Rust 测试
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: 构建 NSIS 安装包
+        working-directory: app
+        run: pnpm tauri build --bundles nsis ${{ inputs.profile == 'debug' && '--debug' || '' }}
+
+      # 产物路径随 profile 变（release / debug），两处都收，谁在就传谁。
+      - name: 收集产物
+        id: collect
+        shell: pwsh
+        run: |
+          $dirs = @(
+            "target/release/bundle/nsis",
+            "target/debug/bundle/nsis"
+          )
+          $found = $dirs | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $found) {
+            Write-Error "没找到 NSIS 产物目录，构建可能没生成安装包"
+            exit 1
+          }
+          Get-ChildItem $found -Filter *.exe | ForEach-Object { "产物 $($_.Name) $([math]::Round($_.Length/1MB,1)) MB" }
+          "dir=$found" >> $env:GITHUB_OUTPUT
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aurora-${{ steps.meta.outputs.version }}-windows-x64-nsis
+          path: ${{ steps.collect.outputs.dir }}/*.exe
+          if-no-files-found: error
+          retention-days: 14
