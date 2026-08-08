@@ -10,10 +10,10 @@ import { Button } from "../components/Button";
 import { Toggle } from "../components/Toggle";
 import { Select } from "../components/Select";
 import { EmptyState } from "../components/EmptyState";
-import { PackageIcon, AlertIcon, RefreshIcon } from "../components/icons";
+import { PackageIcon, AlertIcon, CubeIcon, RefreshIcon, SaveIcon, SparkleIcon } from "../components/icons";
 import { useToast } from "../components/Toast";
 import { useMotionPref } from "../lib/motion-pref";
-import { pageItem } from "../lib/motion";
+import { pageItem, springs } from "../lib/motion";
 import {
   getConfig,
   updateConfig,
@@ -31,6 +31,63 @@ import {
 const inputCls =
   "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/35 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
+/**
+ * 带内嵌提交按钮的输入框：按钮压在输入框右侧内部，不再与输入框并排。
+ *
+ * 并排的写法在窄栏里会把按钮挤到只剩一个字宽，中文于是竖排成两行。内嵌之后按钮宽度由自身内容
+ * 决定、绝不被压缩，输入框用右内边距给它让位。
+ */
+function InputWithAction({
+  label,
+  value,
+  placeholder,
+  onChange,
+  onSubmit,
+  actionLabel,
+  pendingLabel,
+  pending,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  actionLabel: string;
+  pendingLabel: string;
+  pending: boolean;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        aria-label={label}
+        placeholder={placeholder}
+        className={`${inputCls} pr-[104px]`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onSubmit();
+        }}
+      />
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={pending}
+        className={[
+          "absolute top-1 right-1 bottom-1 inline-flex shrink-0 cursor-pointer items-center gap-1.5",
+          "rounded-[2px] px-3 text-[13px] font-bold whitespace-nowrap",
+          "bg-ink/[0.07] text-ink/70 transition-colors hover:bg-ink hover:text-paper-on",
+          "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
+          "disabled:pointer-events-none disabled:opacity-45",
+        ].join(" ")}
+      >
+        <SaveIcon size={14} />
+        {pending ? pendingLabel : actionLabel}
+      </button>
+    </div>
+  );
+}
+
 const DOWNLOAD_SOURCE_OPTIONS: { value: DownloadSourcePolicy; label: string }[] = [
   { value: "auto", label: "自动（按网络择优）" },
   { value: "official_first", label: "官方源优先" },
@@ -43,6 +100,18 @@ const ISOLATION_OPTIONS: { value: IsolationPolicy; label: string }[] = [
   { value: "non_release_only", label: "仅非正式版本" },
   { value: "mod_loaders_and_non_release", label: "Mod 加载器与非正式版本" },
   { value: "all", label: "全部版本隔离" },
+];
+
+type SettingsTab = "launcher" | "game";
+
+/**
+ * 一级分区。划分依据是「这条设置改的是谁的行为」：
+ * 启动器 tab 管启动器自己（下哪里、放哪里、怎么登录、界面动效），
+ * 游戏 tab 管被启动的那个游戏（吃多少内存、文件隔不隔离、用哪个 Java）。
+ */
+const TABS: { key: SettingsTab; label: string; icon: typeof SparkleIcon; subtitle: string }[] = [
+  { key: "launcher", label: "启动器", icon: SparkleIcon, subtitle: "下载源、目录与登录凭据" },
+  { key: "game", label: "游戏", icon: CubeIcon, subtitle: "内存、版本隔离与 Java 运行时" },
 ];
 
 const JAVA_SOURCE_LABEL: Record<JavaInstallationDto["source"], string> = {
@@ -78,6 +147,8 @@ function Row({ title, desc, control }: { title: string; desc: string; control: R
 export function Settings() {
   const { toast } = useToast();
   const { reduceMotion, setReduceMotion } = useMotionPref();
+
+  const [tab, setTab] = useState<SettingsTab>("launcher");
 
   // ---- 配置区 ----
   const [config, setConfig] = useState<ConfigDto | null>(null);
@@ -271,10 +342,43 @@ export function Settings() {
     }
   };
 
+  const activeTab = TABS.find((t) => t.key === tab)!;
+
   return (
     <>
       <motion.div variants={pageItem}>
-        <PageHeader title="设置" subtitle="下载源、内存与目录" />
+        <PageHeader title="设置" subtitle={activeTab.subtitle} />
+      </motion.div>
+
+      {/* 一级分区：启动器自身的行为 vs 影响游戏运行的设置。与下载页同一套 tab 语言。 */}
+      <motion.div variants={pageItem} className="mb-6 flex gap-1 border-b border-ink/10">
+        {TABS.map((t) => {
+          const on = t.key === tab;
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              aria-current={on ? "page" : undefined}
+              className={[
+                "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                on ? "font-extrabold text-ink" : "font-semibold text-ink/40 hover:text-ink/70",
+              ].join(" ")}
+            >
+              <Icon size={16} />
+              {t.label}
+              {on && (
+                <motion.span
+                  layoutId="settings-tab-underline"
+                  className="absolute inset-x-0 -bottom-px h-[2px] bg-accent"
+                  transition={springs.tap}
+                />
+              )}
+            </button>
+          );
+        })}
       </motion.div>
 
       {configLoading && (
@@ -308,6 +412,7 @@ export function Settings() {
 
       {config && (
         <>
+          {tab === "launcher" && (
           <Section title="下载与更新">
             <Row
               title="下载源策略"
@@ -356,19 +461,10 @@ export function Settings() {
                 />
               }
             />
-            <Row
-              title="自动下载 Java"
-              desc="启动缺少匹配运行时时自动获取对应 JRE"
-              control={
-                <Toggle
-                  ariaLabel="自动下载 Java"
-                  checked={config.auto_download_java}
-                  onChange={(v) => void save({ autoDownloadJava: v }, (c) => ({ ...c, auto_download_java: v }))}
-                />
-              }
-            />
           </Section>
+          )}
 
+          {tab === "game" && (
           <Section title="运行时">
             <Row
               title="内存分配（MB）"
@@ -421,25 +517,23 @@ export function Settings() {
               }
             />
           </Section>
+          )}
 
+          {tab === "launcher" && (
           <Section title="目录">
             <div className="border-b border-ink/9 py-[18px] first:pt-0">
               <div className="text-[15px] font-bold">游戏目录</div>
               <div className="mt-1 text-[12.5px] text-ink/60">.minecraft 所在位置，变更后需重新扫描版本</div>
-              <div className="mt-3 flex items-center gap-2.5">
-                <input
-                  type="text"
-                  aria-label="游戏目录"
-                  className={inputCls}
+              <div className="mt-3">
+                <InputWithAction
+                  label="游戏目录"
                   value={gameDirInput}
-                  onChange={(e) => setGameDirInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void applyGameDir();
-                  }}
+                  onChange={setGameDirInput}
+                  onSubmit={() => void applyGameDir()}
+                  actionLabel="应用"
+                  pendingLabel="应用中"
+                  pending={savingGameDir}
                 />
-                <Button variant="secondary" onClick={() => void applyGameDir()} disabled={savingGameDir}>
-                  {savingGameDir ? "应用中…" : "应用"}
-                </Button>
               </div>
             </div>
             <div className="py-[18px] last:pb-0">
@@ -447,7 +541,9 @@ export function Settings() {
               <div className="mt-1 font-mono text-[12px] break-all text-ink/55">{config.data_dir}</div>
             </div>
           </Section>
+          )}
 
+          {tab === "launcher" && (
           <Section title="账户凭据">
             <div className="py-[18px] first:pt-0 last:pb-0">
               <div className="flex items-center justify-between gap-4">
@@ -464,29 +560,40 @@ export function Settings() {
               <div className="mt-1 text-[12.5px] text-ink/60">
                 自定义 Azure 应用的 client_id，用于微软正版登录；出于安全不回显已保存的值
               </div>
-              <div className="mt-3 flex items-center gap-2.5">
-                <input
-                  type="text"
-                  aria-label="微软 client_id"
+              <div className="mt-3">
+                <InputWithAction
+                  label="微软 client_id"
                   placeholder={config.has_client_id ? "输入以覆盖现有 client_id" : "输入 client_id"}
-                  className={inputCls}
                   value={clientIdInput}
-                  onChange={(e) => setClientIdInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void applyClientId();
-                  }}
+                  onChange={setClientIdInput}
+                  onSubmit={() => void applyClientId()}
+                  actionLabel="保存"
+                  pendingLabel="保存中"
+                  pending={savingClientId}
                 />
-                <Button variant="secondary" onClick={() => void applyClientId()} disabled={savingClientId}>
-                  {savingClientId ? "保存中…" : "保存"}
-                </Button>
               </div>
             </div>
           </Section>
+          )}
         </>
       )}
 
+      {tab === "game" && (
       <Section title="Java 运行时">
-        <div className="border-b border-ink/9 pb-[18px]">
+        {config && (
+          <Row
+            title="自动下载 Java"
+            desc="启动缺少匹配运行时时自动获取对应 JRE"
+            control={
+              <Toggle
+                ariaLabel="自动下载 Java"
+                checked={config.auto_download_java}
+                onChange={(v) => void save({ autoDownloadJava: v }, (c) => ({ ...c, auto_download_java: v }))}
+              />
+            }
+          />
+        )}
+        <div className="border-b border-ink/9 py-[18px]">
           <div className="mb-3 flex items-center justify-between gap-4">
             <div className="text-[15px] font-bold">本机检测</div>
             <Button
@@ -565,16 +672,19 @@ export function Settings() {
           )}
         </div>
       </Section>
+      )}
 
-      <Section title="无障碍">
-        <Row
-          title="减少动态效果"
-          desc="降低或关闭界面动画（防晕动 / 低性能设备）"
-          control={
-            <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
-          }
-        />
-      </Section>
+      {tab === "launcher" && (
+        <Section title="界面">
+          <Row
+            title="减少动态效果"
+            desc="降低或关闭界面动画（防晕动 / 低性能设备）"
+            control={
+              <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
+            }
+          />
+        </Section>
+      )}
     </>
   );
 }

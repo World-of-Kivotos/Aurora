@@ -143,6 +143,15 @@ export const SunIcon = (p: IconProps) => (
   </Base>
 );
 
+// 存盘：软盘轮廓。用于「输入了值，点它落盘」这类显性保存动作。
+export const SaveIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h10L20 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" />
+    <path d="M8 4v5h7V4" />
+    <path d="M7.5 20v-6h9v6" />
+  </Base>
+);
+
 // 游戏版本：立方体网格，代表 MC 本体。
 export const CubeIcon = (p: IconProps) => (
   <Base {...p}>
