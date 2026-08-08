@@ -77,9 +77,33 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # 签名私钥只存在于仓库 secret 里，本机与仓库都不该有。
+      # 注意：tauri.conf.json 里配了 pubkey 之后，缺私钥不是「产出不带签名的包」而是直接构建失败
+      # （Tauri 会报 "A public key has been found, but no private key"）。
+      # 所以 PRIVATE_KEY 是这条流水线的硬依赖，本地 tauri build 也需要设同名环境变量；
+      # 只是开发时跑 tauri dev 不打包，不受影响。
+      #
+      # PRIVATE_KEY_PASSWORD 没配也没关系：Actions 会把缺失的 secret 展开成空串，环境变量仍然存在，
+      # Tauri 拿到空密码即按「未加密私钥」处理。反之若环境变量整个不存在，Tauri 会转去交互式问密码，
+      # 在无人值守的 runner 上就是永久挂起——所以这一行不能删。
       - name: 构建 NSIS 安装包
         working-directory: app
-        run: pnpm tauri build --bundles nsis ${{ inputs.profile == 'debug' && '--debug' || '' }}
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          pnpm tauri build --bundles nsis ${{ inputs.profile == 'debug' && '--debug' || '' }} 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/build.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+          # 私钥与 pubkey 对不上时 Tauri 只给一句 Warn 就照常出包，装到用户机上才在校验签名时失败。
+          # CI 必须把这种包拦在这里——发出去再撤远比构建挂掉贵。
+          if (Select-String -Path "$env:RUNNER_TEMP/build.log" -Pattern 'does not match the public key' -Quiet) {
+            Write-Host "::error::PRIVATE_KEY 与 tauri.conf.json 的 pubkey 不是同一对密钥，产出的包在客户端会被拒绝"
+            exit 1
+          }
 
       # 产物路径随 profile 变（release / debug），两处都收，谁在就传谁。
       - name: 收集产物
@@ -96,12 +120,48 @@ jobs:
             exit 1
           }
           Get-ChildItem $found -Filter *.exe | ForEach-Object { "产物 $($_.Name) $([math]::Round($_.Length/1MB,1)) MB" }
+          # 缺私钥时上一步就已经失败了，走到这里没有 .sig 说明 createUpdaterArtifacts 配置出了问题，
+          # 与其产出一个装不上更新的包，不如当场失败。
+          $sig = Get-ChildItem $found -Filter *.sig -ErrorAction SilentlyContinue
+          if (-not $sig) {
+            Write-Error "构建成功但没有 .sig 签名文件，此包无法用于自更新"
+            exit 1
+          }
+          "已签名：$($sig.Name)"
           "dir=$found" >> $env:GITHUB_OUTPUT
+
+      # 自更新的清单。端点固定指向 latest release 的这个文件名，所以名字不能改。
+      - name: 生成 latest.json
+        shell: pwsh
+        run: |
+          $dir = "${{ steps.collect.outputs.dir }}"
+          $version = "${{ steps.meta.outputs.version }}"
+          $exe = Get-ChildItem $dir -Filter *.exe | Select-Object -First 1
+          $sig = Get-Content (Join-Path $dir "$($exe.Name).sig") -Raw
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = "Aurora $version"
+            pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $sig.Trim()
+                # 指向 release 资产；发 release 时安装包必须以同名上传，否则更新会 404。
+                url = "https://github.com/${{ github.repository }}/releases/download/v$version/$($exe.Name)"
+              }
+            }
+          }
+          $out = Join-Path $dir "latest.json"
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content $out -Encoding utf8
+          "已生成 $out"
+          Get-Content $out
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
           name: Aurora-${{ steps.meta.outputs.version }}-windows-x64-nsis
-          path: ${{ steps.collect.outputs.dir }}/*.exe
+          path: |
+            ${{ steps.collect.outputs.dir }}/*.exe
+            ${{ steps.collect.outputs.dir }}/*.sig
+            ${{ steps.collect.outputs.dir }}/latest.json
           if-no-files-found: error
           retention-days: 14

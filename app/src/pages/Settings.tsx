@@ -10,10 +10,19 @@ import { Button } from "../components/Button";
 import { Toggle } from "../components/Toggle";
 import { Select } from "../components/Select";
 import { EmptyState } from "../components/EmptyState";
-import { PackageIcon, AlertIcon, CubeIcon, RefreshIcon, SaveIcon, SparkleIcon } from "../components/icons";
+import {
+  PackageIcon,
+  AlertIcon,
+  CubeIcon,
+  DownloadIcon,
+  RefreshIcon,
+  SaveIcon,
+  SparkleIcon,
+} from "../components/icons";
 import { useToast } from "../components/Toast";
 import { useMotionPref } from "../lib/motion-pref";
 import { pageItem, springs } from "../lib/motion";
+import { checkUpdate, installUpdate, type UpdateStatus } from "../lib/updater";
 import {
   addGameDirectory,
   discoverGameDirectories,
@@ -156,6 +165,12 @@ export function Settings() {
   const { reduceMotion, setReduceMotion } = useMotionPref();
 
   const [tab, setTab] = useState<SettingsTab>("launcher");
+
+  // ---- 启动器更新 ----
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState("");
 
   // ---- 游戏目录列表 ----
   const [dirs, setDirs] = useState<GameDirectoryEntry[]>([]);
@@ -360,6 +375,54 @@ export function Settings() {
       setDirsBusy(false);
     }
   };
+
+  const doCheckUpdate = async () => {
+    setChecking(true);
+    try {
+      setUpdate(await checkUpdate());
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const doInstallUpdate = async () => {
+    setUpdating(true);
+    setUpdateProgress("正在下载…");
+    try {
+      await installUpdate((downloaded, total) => {
+        const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+        // 服务端没给 Content-Length 时只报已下载量，不编一个假的百分比。
+        setUpdateProgress(
+          total === null
+            ? `已下载 ${mb(downloaded)} MB`
+            : `已下载 ${mb(downloaded)} / ${mb(total)} MB`,
+        );
+      });
+      // 走到这里通常已经在重启了，留一句兜底文案应对重启被系统拦下的情形。
+      setUpdateProgress("安装完成，正在重启…");
+    } catch (e) {
+      toast(String(e), "error");
+      setUpdating(false);
+      setUpdateProgress("");
+    }
+  };
+
+  /** 更新区那一行说明文字：不同状态各说各的，不含糊成一句「点按钮试试」。 */
+  const updateHint = (() => {
+    if (checking) return "正在向更新服务器询问…";
+    switch (update?.kind) {
+      case "unsupported":
+        return "浏览器预览模式下不支持更新，请在安装后的启动器里检查";
+      case "up-to-date":
+        return "已是最新版本";
+      case "available":
+        return `有新版本 ${update.version}${update.date ? `，发布于 ${update.date.slice(0, 10)}` : ""}`;
+      case "error":
+        return `检查失败：${update.message}`;
+      default:
+        return "检查是否有新版本可用";
+    }
+  })();
 
   const switchDir = async (path: string, name: string) => {
     setDirsBusy(true);
@@ -858,6 +921,52 @@ export function Settings() {
               <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
             }
           />
+        </Section>
+      )}
+
+      {tab === "launcher" && (
+        <Section title="关于">
+          <div className="py-[18px] first:pt-0 last:pb-0">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-[15px] font-bold">启动器更新</div>
+                <div className="mt-1 text-[12.5px] text-ink/60">{updateHint}</div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2.5">
+                {update?.kind === "available" ? (
+                  <Button
+                    variant="primary"
+                    icon={<DownloadIcon size={16} />}
+                    onClick={() => void doInstallUpdate()}
+                    disabled={updating}
+                  >
+                    {updating ? "更新中" : `更新到 ${update.version}`}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    icon={<RefreshIcon size={16} />}
+                    onClick={() => void doCheckUpdate()}
+                    disabled={checking || update?.kind === "unsupported"}
+                  >
+                    {checking ? "检查中" : "检查更新"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {update?.kind === "available" && update.notes && (
+              <p className="mt-3 mb-0 rounded-[3px] bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/70">
+                {update.notes}
+              </p>
+            )}
+
+            {updating && (
+              <p className="mt-2.5 font-mono text-[12px] text-ink/60 tabular-nums">
+                {updateProgress}
+              </p>
+            )}
+          </div>
         </Section>
       )}
     </>

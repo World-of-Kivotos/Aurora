@@ -1646,6 +1646,10 @@ async fn list_ledger(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // 自更新与「装完重启」。签名校验由插件按 tauri.conf.json 里的 pubkey 做，
+        // 私钥只存在于 CI 的 secret 里，本机与仓库都不该有。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Aurora::load() 是异步，而 setup 是同步闭包；用 Tauri 运行时 block_on 构造后放进 state。
             // 构造失败（配置损坏等）直接冒泡终止启动，避免带着半初始化的门面继续跑。

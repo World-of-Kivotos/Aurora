@@ -33,6 +33,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4N0VFRTI3REExMjM0OTYKUldTV05CTGFKKzUrMlBHOUgxY3JoTTU4ZzZrYkZYTW91L0xLMlV4Nnh1anYyakkvMTVGcS8wRHcK",
+      "endpoints": [
+        "https://github.com/World-of-Kivotos/Aurora/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

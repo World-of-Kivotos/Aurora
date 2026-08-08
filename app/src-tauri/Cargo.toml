@@ -25,3 +25,8 @@ aurora-core = { path = "../../crates/aurora-core" }
 # managed state 用 tokio::sync::Mutex（Aurora 兼有 &self async 与 &mut self 方法）；
 # 事件转发用 mpsc + spawn，故需 rt-multi-thread/macros/sync。
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+# 自更新：检查 / 下载 / 安装新版本，安装包由 CI 用私钥签名，客户端以内置公钥校验。
+# 官方示例把它挂在 cfg(desktop) 下，这里不必——Aurora 只出桌面端。
+tauri-plugin-updater = "2"
+# 更新装完要重启进程才能生效，重启走 process 插件。
+tauri-plugin-process = "2"
