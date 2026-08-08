@@ -2,21 +2,24 @@
 //!
 //! 用 `java.exe`（而非 `javaw.exe`，规避已知的输出重定向 Bug）启动，把 Java bin 目录塞进子进程 PATH 头部
 //! （某些 natives 靠系统查找同目录 DLL），并把 stdout/stderr 逐行捕获：一路投递给上层的实时消费者
-//! （用于日志窗口/加载进度估算），一路进一个固定容量的环形缓冲，供进程退出后的崩溃分析取用最后若干行。
+//! （用于日志窗口/加载进度估算），一路进一个固定容量的环形缓冲，供进程退出后的崩溃分析取用最后若干行，
+//! 一路写进 [`crate::logfile`] 的会话归档，供进程结束很久之后回看现场。
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::command::LaunchCommand;
 use crate::error::{LaunchError, Result};
+use crate::logfile::{LogArchiver, session_log_path};
 
 /// 崩溃分析缓存的最近日志行数（对齐 PCL 的 500 行）。
 pub const RECENT_LINE_CAPACITY: usize = 500;
@@ -57,6 +60,10 @@ pub struct GameSession {
     readers: Vec<JoinHandle<()>>,
     /// kill 过即置位，随后由 [`GameSession::wait`] 带进 [`ExitReport`]。
     terminated_by_launcher: bool,
+    /// 本次会话的日志归档写入器；两个读取任务共享，归档打不开时为 `None`。
+    archive: Option<Arc<AsyncMutex<LogArchiver>>>,
+    /// 归档文件路径（归档打不开时为 `None`），供上层提供「打开日志」。
+    archive_path: Option<PathBuf>,
 }
 
 impl GameSession {
@@ -68,6 +75,11 @@ impl GameSession {
     /// 当前缓存的最近输出行快照。
     pub fn recent_lines(&self) -> Vec<String> {
         recent_snapshot(&self.recent)
+    }
+
+    /// 本次会话的日志归档文件路径；归档未能建立时为 `None`。
+    pub fn archive_path(&self) -> Option<&Path> {
+        self.archive_path.as_deref()
     }
 
     /// 强制结束进程（对应「取消启动」/「结束游戏」）。
@@ -89,6 +101,13 @@ impl GameSession {
                 tracing::debug!(error = %err, "日志读取任务异常结束");
             }
         }
+        // 读取任务已全部结束，此处是把归档尾巴落盘的确定性时机。归档失败不得吞掉退出报告
+        // （退出码与崩溃现场才是本函数的主产物），故只记警告。
+        if let Some(archive) = &self.archive
+            && let Err(err) = archive.lock().await.flush().await
+        {
+            tracing::warn!(error = %err, "游戏日志归档收尾 flush 失败");
+        }
         Ok(ExitReport {
             code: status.code(),
             success: status.success(),
@@ -99,6 +118,9 @@ impl GameSession {
 }
 
 /// 启动游戏进程。`log_tx` 为可选的实时日志接收端（每行输出投递一条 [`LogLine`]）。
+///
+/// 输出同时归档到 `<工作目录>/.aurora/logs/<启动时刻>.log`（路径见 [`GameSession::archive_path`]）；
+/// 归档独立于 `log_tx`，前端不订阅日志也照样留下现场。
 pub fn spawn(command: &LaunchCommand, log_tx: Option<mpsc::Sender<LogLine>>) -> Result<GameSession> {
     let mut cmd = Command::new(&command.program);
     cmd.args(&command.args);
@@ -117,13 +139,40 @@ pub fn spawn(command: &LaunchCommand, log_tx: Option<mpsc::Sender<LogLine>>) -> 
         source,
     })?;
 
+    // 归档是辅助设施：磁盘满、目录只读之类的问题不该让玩家启动不了游戏，因此开不出归档时记一条警告
+    // 降级放行，而不是把整次启动判失败。
+    let archive_path = session_log_path(&command.working_dir, unix_now());
+    let archive = match LogArchiver::create_blocking(&archive_path) {
+        Ok(archiver) => Some(Arc::new(AsyncMutex::new(archiver))),
+        Err(err) => {
+            tracing::warn!(
+                path = %archive_path.display(),
+                error = %err,
+                "游戏日志归档创建失败，本次会话不归档"
+            );
+            None
+        }
+    };
+
     let recent = Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_LINE_CAPACITY)));
     let mut readers = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        readers.push(spawn_reader(stdout, LogStream::Stdout, recent.clone(), log_tx.clone()));
+        readers.push(spawn_reader(
+            stdout,
+            LogStream::Stdout,
+            recent.clone(),
+            log_tx.clone(),
+            archive.clone(),
+        ));
     }
     if let Some(stderr) = child.stderr.take() {
-        readers.push(spawn_reader(stderr, LogStream::Stderr, recent.clone(), log_tx));
+        readers.push(spawn_reader(
+            stderr,
+            LogStream::Stderr,
+            recent.clone(),
+            log_tx,
+            archive.clone(),
+        ));
     }
 
     Ok(GameSession {
@@ -131,6 +180,8 @@ pub fn spawn(command: &LaunchCommand, log_tx: Option<mpsc::Sender<LogLine>>) -> 
         recent,
         readers,
         terminated_by_launcher: false,
+        archive_path: archive.as_ref().map(|_| archive_path),
+        archive,
     })
 }
 
@@ -149,12 +200,13 @@ pub fn detect_crash(report: &ExitReport) -> bool {
     !matches!(report.code, Some(0))
 }
 
-/// 起一个逐行读取任务：写入环形缓冲，并（若有）投递给实时消费者。
+/// 起一个逐行读取任务：写入环形缓冲、写入会话归档，并（若有）投递给实时消费者。
 fn spawn_reader<R>(
     reader: R,
     stream: LogStream,
     recent: Arc<Mutex<VecDeque<String>>>,
     log_tx: Option<mpsc::Sender<LogLine>>,
+    archive: Option<Arc<AsyncMutex<LogArchiver>>>,
 ) -> JoinHandle<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -162,11 +214,30 @@ where
     tokio::spawn(async move {
         // 转发端可能中途被上层丢弃；此时停止转发但继续填充环形缓冲（崩溃分析仍需最后若干行）。
         let mut log_tx = log_tx;
+        // 归档写失败（磁盘满等）后本流不再重试：每行都撞同一个错只会刷屏，且日志已经不完整。
+        let mut archive = archive;
         let mut lines = BufReader::new(reader).lines();
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     push_recent(&recent, &line);
+                    // 先归档再转发：归档写的是原始行（不加流别前缀，否则崩溃诊断的正则会失配），
+                    // 而转发要把 line 移进 LogLine，顺序反过来就得多克隆一份字符串。
+                    let mut archive_failed = false;
+                    if let Some(handle) = archive.as_ref()
+                        && let Err(err) = handle.lock().await.write_line(&line).await
+                    {
+                        tracing::warn!(
+                            error = %err,
+                            ?stream,
+                            "游戏日志归档写入失败，本流停止归档"
+                        );
+                        archive_failed = true;
+                    }
+                    // handle 的借用到此结束，才能把 archive 置空。
+                    if archive_failed {
+                        archive = None;
+                    }
                     if let Some(tx) = &log_tx
                         && tx.send(LogLine { stream, text: line }).await.is_err()
                     {
@@ -200,6 +271,16 @@ fn recent_snapshot(recent: &Arc<Mutex<VecDeque<String>>>) -> Vec<String> {
         .iter()
         .cloned()
         .collect()
+}
+
+/// 当前 Unix 秒，用作归档文件名。
+///
+/// 系统时钟早于纪元时退化为 0（归档落到 `0.log`，照常可写可读），不为一个文件名去打断启动。
+fn unix_now() -> u64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(elapsed) => elapsed.as_secs(),
+        Err(_) => 0,
+    }
 }
 
 /// 把 `bin_dir` 拼到现有 PATH 头部。
@@ -318,16 +399,18 @@ mod tests {
     }
 
     // 真实 spawn 冒烟：Windows 上用 cmd 打印一行并以指定码退出，验证捕获与退出码回报。
+    // 工作目录用临时目录而非系统 temp——spawn 现在会在工作目录下建 .aurora/logs/，不该污染 %TEMP% 根。
     #[cfg(windows)]
     #[tokio::test]
     async fn spawn_captures_output_and_exit_code() {
+        let tmp = tempfile::tempdir().unwrap();
         let command = LaunchCommand {
             program: std::path::PathBuf::from("cmd"),
             args: vec![
                 "/C".to_owned(),
                 "echo AURORA_HELLO & exit 3".to_owned(),
             ],
-            working_dir: std::env::temp_dir(),
+            working_dir: tmp.path().to_path_buf(),
         };
         let (tx, mut rx) = mpsc::channel(16);
         let session = spawn(&command, Some(tx)).unwrap();
@@ -347,5 +430,41 @@ mod tests {
             streamed.push(line.text);
         }
         assert!(streamed.iter().any(|l| l.contains("AURORA_HELLO")));
+    }
+
+    /// 同一行既进实时通道也进归档文件；wait 返回时归档已落盘可直接读。
+    /// 删掉 spawn_reader 里的归档写入，本测试即挂。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn spawn_archives_every_line_to_the_session_log() {
+        let tmp = tempfile::tempdir().unwrap();
+        let command = LaunchCommand {
+            program: std::path::PathBuf::from("cmd"),
+            args: vec![
+                "/C".to_owned(),
+                "echo AURORA_ARCHIVED & echo AURORA_SECOND".to_owned(),
+            ],
+            working_dir: tmp.path().to_path_buf(),
+        };
+        let session = spawn(&command, None).unwrap();
+        let archive_path = session
+            .archive_path()
+            .expect("可写工作目录下归档必须建立")
+            .to_path_buf();
+        assert_eq!(archive_path.parent().unwrap(), crate::logfile::log_dir(tmp.path()));
+
+        let report = session.wait().await.unwrap();
+        assert_eq!(report.code, Some(0));
+
+        let archived = tokio::fs::read_to_string(&archive_path).await.unwrap();
+        let lines: Vec<&str> = archived.lines().map(|l| l.trim()).collect();
+        assert!(
+            lines.contains(&"AURORA_ARCHIVED") && lines.contains(&"AURORA_SECOND"),
+            "归档应逐行含两行输出，实得 {lines:?}"
+        );
+
+        // 归档目录里只有这一份会话日志。
+        let logs = crate::logfile::list_archived_logs(tmp.path()).await.unwrap();
+        assert_eq!(logs, vec![archive_path]);
     }
 }

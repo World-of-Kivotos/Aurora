@@ -193,6 +193,54 @@ pub fn has_crash_marker(log: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
+/// 从日志里提取被点名的 mod id，按首次出现位置排序并去重，一律转小写便于与卷宗按文件名 join。
+///
+/// 提取正则复用 [`RULES`] 里「缺少前置」「重复 Mod」两条已有规则的 `extract`（它们捕获的正是 mod id），
+/// 另补两条崩溃日志点名 Mod 的通用写法：Fabric/Quilt 依赖报错的 `Mod 'Sodium' (sodium) 0.5.3`（括号内
+/// 才是 id），以及 mixin 报错尾部的 `from mod sodium`。mixin 规则自带的正则捕获的是 `*.mixins.json`
+/// 配置文件名而非 mod id，故不在复用之列。
+pub fn extract_mod_ids(log: &str) -> Vec<String> {
+    // 「重复 Mod」正则遇上 "Duplicate mods found: ..." 这类措辞时会把后面的普通英文词当 id 捕出来。
+    // 指着一个不存在的 Mod 让玩家去删，比少报一条线索糟糕得多，故把这几个词挡掉。
+    const NON_MOD_TOKENS: &[&str] = &["found", "version", "missing", "loaded", "installed"];
+    const EXTRA_PATTERNS: &[&str] = &[
+        r"(?i)\bmod '[^']+' \(([a-z0-9_\-]+)\)",
+        r"(?i)\bfrom mod ([a-z0-9_\-]+)",
+    ];
+
+    let reused = RULES
+        .iter()
+        .filter(|rule| {
+            matches!(
+                rule.category,
+                CrashCategory::MissingDependency | CrashCategory::DuplicateMod
+            )
+        })
+        .filter_map(|rule| rule.extract);
+
+    let mut hits: Vec<(usize, String)> = Vec::new();
+    for pattern in reused.chain(EXTRA_PATTERNS.iter().copied()) {
+        let re = Regex::new(pattern).expect("内置 mod id 提取正则必须可编译");
+        for caps in re.captures_iter(log) {
+            let group = caps.get(1).expect("提取正则的第 1 组是必选捕获组");
+            let id = group.as_str().trim().to_ascii_lowercase();
+            if id.is_empty() || NON_MOD_TOKENS.contains(&id.as_str()) {
+                continue;
+            }
+            hits.push((group.start(), id));
+        }
+    }
+
+    hits.sort_by_key(|(at, _)| *at);
+    let mut out: Vec<String> = Vec::new();
+    for (_, id) in hits {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
 /// 找到首个（原文）含该小写子串的日志行，裁剪长度后返回。
 fn matching_line(log: &str, lower_pattern: &str) -> Option<String> {
     log.lines()
@@ -334,5 +382,28 @@ mod tests {
     #[test]
     fn clean_log_yields_no_diagnosis() {
         assert!(primary_cause("[main] Setting user: Steve\n[main] Backend library: LWJGL 3.3.3").is_none());
+    }
+
+    #[test]
+    fn extract_mod_ids_orders_by_first_appearance_and_dedups() {
+        let log = "Exception in thread \"main\" java.lang.RuntimeException: Mod resolution failed\n\
+             \t - Mod 'Sodium' (sodium) 0.5.3 requires version 0.90.0 or later of fabric-api, which is missing!\n\
+             [Sodium] Mixin apply failed sodium.mixins.json:features.MixinChunk from mod sodium";
+        // sodium 在 fabric-api 之前出现，且出现两次只报一次；捕获的是括号里的 id 而不是引号里的显示名。
+        assert_eq!(
+            extract_mod_ids(log),
+            vec!["sodium".to_owned(), "fabric-api".to_owned()]
+        );
+
+        // 复用「重复 Mod」规则的正则：捕出 mod id。
+        assert_eq!(
+            extract_mod_ids("FormattedException: Found a duplicate mod jei with version 11.6.0"),
+            vec!["jei".to_owned()]
+        );
+        // 同一条正则在这种措辞下会捕到 "found"，必须被挡掉而不是当成 mod id 报出去。
+        assert!(extract_mod_ids("Duplicate mods found: see log for details").is_empty());
+
+        // 正常日志不点名任何 Mod。
+        assert!(extract_mod_ids("[main/INFO]: Setting user: Steve").is_empty());
     }
 }
