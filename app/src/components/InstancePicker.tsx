@@ -26,11 +26,16 @@ import {
   matchInstances,
   type Compatibility,
   type InstanceMatch,
+  type ModLoader,
   type ModVersionInfo,
   type PlatformId,
   type ReleaseChannel,
   type VersionSettingsDto,
 } from "../lib/ipc";
+
+/// 平台认得的加载器名。实例侧探测到的加载器可能含 OptiFine 这类非 Mod 加载器，
+/// 作为过滤条件传给平台只会得到空结果，先按这张表滤一遍。
+const KNOWN_LOADERS: ModLoader[] = ["fabric", "quilt", "forge", "neoforge", "liteloader"];
 
 interface InstancePickerProps {
   open: boolean;
@@ -142,7 +147,8 @@ export function InstancePicker({
   const versionListId = useId();
   const listRef = useRef<HTMLDivElement>(null);
   // 版本列表按「每次打开只取一次」的语义控制，用 ref 而非 state，避免取数状态回流触发重复请求。
-  const versionsRequested = useRef(false);
+  // 记「上一次按什么条件取过版本列表」，条件没变就不重复请求。空串表示还没取过。
+  const versionsRequested = useRef("");
 
   const [matches, setMatches] = useState<InstanceMatch[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -155,6 +161,10 @@ export function InstancePicker({
   const [versions, setVersions] = useState<ModVersionInfo[] | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
+  // 版本列表默认只拉「配得上选中实例」的那些。一个热门 Mod 动辄上百个版本，
+  // 把跨加载器、跨 MC 版本的全摊出来，玩家要在一片「不匹配」里自己找那几条能用的。
+  // 需要强装或换版本时再切到全部。
+  const [showAllVersions, setShowAllVersions] = useState(false);
 
   const [settings, setSettings] = useState<Record<string, VersionSettingsDto>>({});
   const [settingsError, setSettingsError] = useState<Record<string, string>>({});
@@ -183,7 +193,7 @@ export function InstancePicker({
     setExpanded(false);
     setVersions(null);
     setVersionsError(null);
-    versionsRequested.current = false;
+    versionsRequested.current = "";
     void load();
   }, [open, load]);
 
@@ -206,22 +216,42 @@ export function InstancePicker({
   const selectedVersion = selected ? (chosen[selected.version_id] ?? selected.best_version) : null;
 
   const loadVersions = useCallback(async () => {
+    if (!selected) return;
     setVersionsLoading(true);
     setVersionsError(null);
     try {
-      setVersions(await listModVersions(platform, projectId));
+      // 只看兼容时，把选中实例的 MC 版本与加载器交给后端过滤；实例的加载器里可能混着
+      // OptiFine 这类非 Mod 加载器，先归一掉再传，否则过滤条件里带个平台不认识的名字。
+      const loaders = showAllVersions
+        ? []
+        : selected.loaders
+            .map((name) => name.toLowerCase())
+            .filter((name): name is ModLoader => KNOWN_LOADERS.includes(name as ModLoader));
+      const gameVersions = showAllVersions ? [] : [selected.mc_version];
+      setVersions(await listModVersions(platform, projectId, gameVersions, loaders));
     } catch (e) {
       setVersionsError(String(e));
     } finally {
       setVersionsLoading(false);
     }
-  }, [platform, projectId]);
+  }, [platform, projectId, selected, showAllVersions]);
 
+  // 过滤条件由「选中实例 + 是否只看兼容」共同决定，任一变化都要重取。
+  const versionsKey = selected ? `${selected.version_id}:${showAllVersions}` : "";
   const ensureVersions = useCallback(() => {
-    if (versionsRequested.current) return;
-    versionsRequested.current = true;
+    if (versionsRequested.current === versionsKey) return;
+    versionsRequested.current = versionsKey;
     void loadVersions();
-  }, [loadVersions]);
+  }, [loadVersions, versionsKey]);
+
+  // 展开状态下切实例或切开关，立刻按新条件重取，不让旧列表停在屏幕上冒充新结果。
+  useEffect(() => {
+    if (!expanded || !selected) return;
+    if (versionsRequested.current === versionsKey) return;
+    versionsRequested.current = versionsKey;
+    setVersions(null);
+    void loadVersions();
+  }, [expanded, selected, versionsKey, loadVersions]);
 
   // 该实例下没有任何兼容版本时必须自行指定，直接把列表摊开，省掉一次「点开才发现要选」。
   useEffect(() => {
@@ -297,7 +327,7 @@ export function InstancePicker({
   };
 
   const retryVersions = () => {
-    versionsRequested.current = false;
+    versionsRequested.current = "";
     ensureVersions();
   };
 
@@ -445,7 +475,7 @@ export function InstancePicker({
                     </h3>
                     <span className="text-[11px] text-ink/30">{g.note}</span>
                   </header>
-                  <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                  <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
                     {g.items.map((m) => {
                       const on = m.version_id === selectedId;
                       return (
@@ -456,7 +486,7 @@ export function InstancePicker({
                             aria-pressed={on}
                             onClick={() => selectInstance(m.version_id)}
                             className={[
-                              "flex w-full cursor-pointer flex-col items-start rounded-[3px] border px-3.5 py-3 text-left transition-colors",
+                              "flex w-full cursor-pointer flex-col items-start rounded-[3px] border px-3 py-2 text-left transition-colors",
                               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                               on
                                 ? "border-ink bg-ink text-paper-on"
@@ -464,7 +494,7 @@ export function InstancePicker({
                             ].join(" ")}
                           >
                             <span className="flex w-full items-center gap-2">
-                              <span className="min-w-0 truncate text-[15px] leading-tight font-extrabold">
+                              <span className="min-w-0 truncate text-[13.5px] leading-tight font-extrabold">
                                 {m.version_id}
                               </span>
                               {m.already_installed && (
@@ -480,7 +510,7 @@ export function InstancePicker({
                               )}
                             </span>
                             <span
-                              className={`mt-1 font-mono text-[11px] tabular-nums ${
+                              className={`mt-0.5 truncate font-mono text-[10.5px] tabular-nums ${
                                 on ? "text-paper-on/55" : "text-ink/45"
                               }`}
                             >
@@ -488,7 +518,7 @@ export function InstancePicker({
                             </span>
                             {m.compatibility.kind === "mismatch" && (
                               <span
-                                className={`mt-1.5 text-[12px] ${
+                                className={`mt-1 text-[11px] ${
                                   on ? "text-paper-on/70" : "text-danger/85"
                                 }`}
                               >
@@ -579,6 +609,15 @@ export function InstancePicker({
                     >
                       {expanded ? "收起版本列表" : "切换版本"}
                     </Button>
+                    {expanded && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllVersions((v) => !v)}
+                        className="cursor-pointer text-[11px] text-ink/45 underline-offset-2 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      >
+                        {showAllVersions ? "只看配得上的" : "显示全部版本"}
+                      </button>
+                    )}
                     {requiredDeps > 0 && (
                       <span className="text-[11px] text-ink/45">
                         {requiredDeps} 项必需依赖会随本次安装一并装入
@@ -618,7 +657,9 @@ export function InstancePicker({
                             </div>
                           ) : ranked.length === 0 ? (
                             <p className="m-0 text-[12px] text-ink/50">
-                              该工程在平台上没有可用版本。
+                              {showAllVersions
+                                ? "该工程在平台上没有可用版本。"
+                                : "没有配得上这个实例的版本。点上方「显示全部版本」可自行挑一个强装。"}
                             </p>
                           ) : (
                             <div

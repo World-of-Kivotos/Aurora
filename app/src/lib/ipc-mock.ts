@@ -772,7 +772,17 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
 
   // Mod 生态这批命令要么读入参、要么改内存态，全部走短路分支，一条都不能进 table。
   if (cmd === "list_mod_versions") {
-    return modVersions(_args?.platform as PlatformId, _args?.projectId as string) as T;
+    const all = modVersions(_args?.platform as PlatformId, _args?.projectId as string);
+    // 过滤口径与后端一致：两个条件都是「传空数组即不过滤」，非空则要求有交集。
+    // mock 不实现过滤的话，落位层的「只看配得上的」在浏览器里看不出任何差别。
+    const wantVersions = (_args?.gameVersions as string[]) ?? [];
+    const wantLoaders = (_args?.loaders as string[]) ?? [];
+    return all.filter((v) => {
+      const okVersion =
+        wantVersions.length === 0 || v.game_versions.some((g) => wantVersions.includes(g));
+      const okLoader = wantLoaders.length === 0 || v.loaders.some((l) => wantLoaders.includes(l));
+      return okVersion && okLoader;
+    }) as T;
   }
   if (cmd === "match_instances") {
     return matchInstances(_args?.platform as PlatformId, _args?.projectId as string) as T;
