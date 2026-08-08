@@ -10,13 +10,15 @@
 //!    转发任务把 [`CoreEvent`] 逐条 `emit` 成 Tauri 事件推给前端（见 `create_offline_account`）。
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use aurora_core::{
-    Account, AccountType, AggregateResult, Aurora, CoreEvent, DetectSource, DeviceCodeResponse,
-    DownloadSourcePolicy, GameSession, InstalledMod, IsolationOverride, IsolationPolicy,
-    JavaInstallation, JavaVersion, LaunchOptions, LoaderChoice, LogLine, LogStream, MemorySettings,
-    ModLoader, Platform, ResolvedIsolation, ResourceType, SearchHit, SearchQuery, SortField,
-    VersionManifest, VersionScan, VersionSettings,
+    detect_crash, Account, AccountType, AggregateResult, Aurora, CoreEvent, CrashReport,
+    DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, History, InstallPlan,
+    InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
+    LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemorySettings, ModLoader,
+    ModVersionInfo, Platform, ResolvedIsolation, ResourceType, RollbackCheck, SearchHit,
+    SearchQuery, SortField, UpdateCandidate, VersionManifest, VersionScan, VersionSettings,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -31,6 +33,12 @@ const DEVICE_CODE_EVENT: &str = "aurora://device-code";
 
 /// 游戏进程日志事件名。每行 stdout/stderr 输出经此推送给前端日志窗口。
 const GAME_LOG_EVENT: &str = "aurora://game-log";
+
+/// 游戏崩溃事件名。进程异常退出时由会话监控任务推送一份 [`CrashReport`]（诊断 + 可疑 Mod + 日志路径）。
+///
+/// 与 [`GAME_LOG_EVENT`] 分开：日志是流水，崩溃是一次性的结论，前端要据此弹提示条而不是刷列表。
+/// 玩家主动点「结束游戏」不会触发本事件（[`detect_crash`] 对启动器主动终止的会话短路）。
+const GAME_CRASH_EVENT: &str = "aurora://game-crash";
 
 // ===== 面向前端的瘦 DTO =====
 //
@@ -347,11 +355,22 @@ struct ModInstallOutcomeDto {
     platform: Platform,
 }
 
-/// 运行中的游戏会话槽：启动时把 [`GameSession`] 存入，`stop_game` 取出后 kill。
+/// 一次 kill 请求：附一条回执通道，让 `stop_game` 拿到 kill 的真实成败，而不是把请求发出去就报成功。
+type KillRequest = tokio::sync::oneshot::Sender<Result<(), String>>;
+
+/// 运行中游戏的 kill 句柄（会话监控任务的请求端）。
+type KillHandle = tokio::sync::mpsc::UnboundedSender<KillRequest>;
+
+/// 运行中的游戏槽：启动时存入 kill 句柄，`stop_game` 取用，进程结束后由监控任务自行摘除。
+///
+/// 为什么存句柄而不是 [`GameSession`] 本体：`GameSession::wait`（等进程退出、回收读取任务、flush 日志
+/// 归档，产出 `ExitReport`）消耗 self，而 `kill` 要 `&mut self`——同一个会话没法既留在槽里供 kill、
+/// 又交给某处去 wait。故会话在启动时就移交给一条监控任务独占，本槽只留一条请求通道。
 ///
 /// 与门面分列两个 managed state：门面是 `Mutex<Aurora>`，而会话生命周期独立于门面——启动后门面锁应
-/// 尽快释放以便其它命令继续读写配置，故会话不塞进门面而单列一个槽。
-struct RunningGame(Mutex<Option<GameSession>>);
+/// 尽快释放以便其它命令继续读写配置，故不塞进门面而单列一个槽。内层用 `Arc` 是为了让监控任务也能
+/// 持有同一个槽，进程退出时把自己的句柄摘掉。
+struct RunningGame(Arc<Mutex<Option<KillHandle>>>);
 
 // ===== 映射辅助 =====
 
@@ -551,6 +570,20 @@ fn search_result_dto(result: AggregateResult) -> SearchResultDto {
             })
             .collect(),
     }
+}
+
+// ---- 事件推送小工具 ----
+//
+// 安装/启动那套「mpsc 通道当 EventSink + 桥接任务」的范式只适用于收 [`EventSink`] 的门面方法。
+// Mod 治理那批方法（哈希反查、更新检查）在 core 里是一趟到底的批处理，签名不收 sink，也就没有中间进度
+// 可转发。故这里只在任务首尾各推一条阶段说明，让前端知道任务开始与结束——绝不编造并不存在的百分比。
+
+fn emit_stage(app: &AppHandle, message: String) {
+    let _ = app.emit(CORE_EVENT, CoreEventDto::Stage { message });
+}
+
+fn emit_warning(app: &AppHandle, message: String) {
+    let _ = app.emit(CORE_EVENT, CoreEventDto::Warning { message });
 }
 
 // ---- 账户库访问（凭据加密仅 Windows）----
@@ -892,15 +925,9 @@ async fn launch_game(
         }
     });
 
-    // 游戏进程逐行输出 -> game-log。该转发任务寿命随游戏进程：读取任务在进程退出、管道关闭后 drop 掉
-    // log 发送端，通道随之关闭、转发任务自然结束，故此处 spawn 后不 await（await 会阻塞到游戏退出）。
-    let (log_tx, mut log_rx) = tokio::sync::mpsc::channel::<LogLine>(256);
-    let log_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(line) = log_rx.recv().await {
-            let _ = log_app.emit(GAME_LOG_EVENT, GameLogDto::from(line));
-        }
-    });
+    // 游戏进程逐行输出 -> game-log。接收端交给会话监控任务，那里同时兼管 kill 与退出后的崩溃判定
+    // （通道关闭正是「进程输出已结束」的可靠信号，详见 [`spawn_game_monitor`]）。
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<LogLine>(256);
 
     let session = {
         let aurora = state.lock().await;
@@ -926,8 +953,20 @@ async fn launch_game(
     };
 
     let pid = session.id();
-    // 存入会话槽：直接覆盖旧值（若上一局未经 stop_game 结束，旧 GameSession 在此被 drop）。
-    *running.0.lock().await = Some(session);
+
+    // kill 句柄进槽、会话本体移交监控任务。直接覆盖旧值：上一局若已自行结束，其句柄早被自己摘掉；
+    // 若仍在跑，覆盖后旧句柄只是不再可达，旧监控任务照常把那一局收尾（不会丢日志与崩溃诊断）。
+    let (kill_tx, kill_rx) = tokio::sync::mpsc::unbounded_channel::<KillRequest>();
+    *running.0.lock().await = Some(kill_tx.clone());
+    spawn_game_monitor(
+        app.clone(),
+        running.0.clone(),
+        version_id,
+        session,
+        log_rx,
+        kill_tx,
+        kill_rx,
+    );
 
     drop(event_tx);
     let _ = event_task.await;
@@ -935,16 +974,115 @@ async fn launch_game(
     Ok(LaunchedDto { pid })
 }
 
+/// 起一条游戏会话监控任务：实时转发日志、随时响应 kill，进程结束后判定崩溃并推送诊断。
+///
+/// 三件事必须挤在同一条任务里，因为它们都要用到同一个 [`GameSession`]：`kill` 要 `&mut`、`wait` 要
+/// 所有权，跨任务分持做不到。串起它们的是日志通道——[`aurora_launch`] 的两个读取任务在 stdout/stderr
+/// 双双关闭时才会丢掉发送端，因此 `log_rx` 返回 `None` 就是「进程输出已结束」的可靠信号。于是 select
+/// 循环期间会话留在本任务手里供 kill 使用，信号到来后再独占它去 `wait`。
+///
+/// `own_kill_tx` 是本任务自己那条句柄的克隆，只用来在收尾时确认槽里放的还是自己（而不是下一局游戏
+/// 刚放进去的句柄），避免误摘。
+#[allow(clippy::too_many_arguments)]
+fn spawn_game_monitor(
+    app: AppHandle,
+    slot: Arc<Mutex<Option<KillHandle>>>,
+    version_id: String,
+    mut session: GameSession,
+    mut log_rx: tokio::sync::mpsc::Receiver<LogLine>,
+    own_kill_tx: KillHandle,
+    mut kill_rx: tokio::sync::mpsc::UnboundedReceiver<KillRequest>,
+) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::select! {
+                line = log_rx.recv() => match line {
+                    Some(line) => {
+                        // emit 失败（窗口已关）不影响监控本身，日志本就是尽力而为的通知。
+                        let _ = app.emit(GAME_LOG_EVENT, GameLogDto::from(line));
+                    }
+                    None => break,
+                },
+                Some(ack) = kill_rx.recv() => {
+                    let result = session.kill().await.map_err(|e| e.to_string());
+                    // 回执发不出去只说明 stop_game 那侧已经不等了，不改变 kill 已经执行的事实。
+                    let _ = ack.send(result);
+                }
+            }
+        }
+
+        // 先摘句柄再 wait：wait 可能还要等上一会儿，这期间 stop_game 应当直接变回幂等空操作，
+        // 而不是对着一个正在收尾的会话发 kill。
+        {
+            let mut guard = slot.lock().await;
+            if guard
+                .as_ref()
+                .is_some_and(|tx| tx.same_channel(&own_kill_tx))
+            {
+                *guard = None;
+            }
+        }
+
+        // 归档路径必须在 wait 之前取——wait 消耗会话。
+        let archive_path = session.archive_path().map(|p| p.display().to_string());
+        let exit = match session.wait().await {
+            Ok(exit) => exit,
+            Err(err) => {
+                // 本 crate 没有接日志框架，失败经告警事件如实上报，不静默咽下。
+                emit_warning(
+                    &app,
+                    format!("等待游戏进程退出失败，本次不做崩溃判定：{err}"),
+                );
+                return;
+            }
+        };
+        // 玩家主动点「结束游戏」的退出在此短路（ExitReport::terminated_by_launcher 已置位），
+        // 不会被报成崩溃。
+        if !detect_crash(&exit) {
+            return;
+        }
+
+        // 诊断喂的是退出报告里缓存的最近若干行，而不是回读归档文件：这份文本就是本次会话的现场，
+        // 归档若因磁盘问题没能建立，读文件反而会拿到上一局的日志、指认一场不存在的崩溃。
+        let log_text = exit.recent_lines.join("\n");
+        let diagnosed = {
+            let state = app.state::<Mutex<Aurora>>();
+            let aurora = state.lock().await;
+            aurora.diagnose_crash(&version_id, &log_text).await
+        };
+        match diagnosed {
+            Ok(mut report) => {
+                // 诊断文本与归档文件同出一源，直接把路径补上供 UI 提供「打开日志」。
+                report.log_path = archive_path;
+                let _ = app.emit(GAME_CRASH_EVENT, report);
+            }
+            Err(err) => {
+                emit_warning(&app, format!("游戏异常退出，但崩溃诊断失败：{err}"));
+            }
+        }
+    });
+}
+
 /// 结束当前运行中的游戏进程（对应“取消/强制结束”）。无运行中的游戏时为幂等空操作。
 ///
-/// 只取出会话并 kill；进程退出监控（`GameSession::wait` -> ExitReport 事件）消耗 self，与本处保留会话
-/// 供 kill 冲突，留待后续迭代（见文件末 followup 注释）。此处只取一次，绝不 double-take。
+/// 会话本体在监控任务手里，故这里发一条 kill 请求并等它的回执，把 kill 的真实成败原样返回。
 #[tauri::command]
 async fn stop_game(running: State<'_, RunningGame>) -> Result<(), String> {
-    let session = running.0.lock().await.take();
-    match session {
-        Some(mut session) => session.kill().await.map_err(|e| e.to_string()),
-        None => Ok(()),
+    let handle = running.0.lock().await.clone();
+    let Some(kill_tx) = handle else {
+        return Ok(());
+    };
+
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+    if kill_tx.send(ack_tx).is_err() {
+        // 接收端已随监控任务一起结束，即进程本就已经退出：没有可结束的游戏，与槽为空同义。
+        return Ok(());
+    }
+    match ack_rx.await {
+        Ok(result) => result,
+        // 监控任务在收到请求与回执之间结束了——同样意味着进程已自行退出。这不是被吞掉的错误，
+        // 而是「已经没有运行中的游戏」这一确凿结果。
+        Err(_) => Ok(()),
     }
 }
 
@@ -1198,6 +1336,217 @@ async fn set_version_settings(
     Ok(VersionSettingsDto::new(next, resolved))
 }
 
+// ===== Mod 治理：版本列表 / 落位匹配 / 依赖计划 / 更新 / 变更史 / 崩溃诊断 =====
+//
+// 这一组的返回类型（[`ModVersionInfo`] / [`InstanceMatch`] / [`InstallPlan`] / [`UpdateCandidate`] /
+// [`History`] / [`RollbackCheck`] / [`Ledger`] / [`CrashReport`]）在 aurora-core 均已 `derive(Serialize)`
+// 且字段命名就是前端契约里那套 snake_case，也不含任何令牌，故直接透传，不再重复摊一层 DTO——
+// 多摊一层只会让两处字段名各自漂移。
+
+/// 列出某工程的全部可用版本（跨平台统一模型，按发布时间倒序）。
+///
+/// `game_versions` / `loaders` 传空数组表示该维度不过滤。工程不存在时平台的 404 原样冒泡，
+/// 不吞成空列表——「这个工程一个版本都没有」与「这个工程根本不存在」对界面是两件事。
+#[tauri::command]
+async fn list_mod_versions(
+    platform: String,
+    project_id: String,
+    game_versions: Vec<String>,
+    loaders: Vec<String>,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<Vec<ModVersionInfo>, String> {
+    let target_platform = parse_platform(&platform)?;
+    let mut parsed_loaders = Vec::with_capacity(loaders.len());
+    for loader in &loaders {
+        parsed_loaders.push(parse_mod_loader(loader)?);
+    }
+
+    let aurora = state.lock().await;
+    aurora
+        .list_mod_versions(
+            target_platform,
+            &project_id,
+            &game_versions,
+            &parsed_loaders,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 为某工程算出判定矩阵（每个已装实例配上该工程在其上最合适的版本），供下载页的安装落位层直接渲染。
+///
+/// 返回顺序已按「完美匹配 > 可能可行 > 不兼容」排好，界面默认选中第一项即可。
+#[tauri::command]
+async fn match_instances(
+    platform: String,
+    project_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<Vec<InstanceMatch>, String> {
+    let target_platform = parse_platform(&platform)?;
+    let aurora = state.lock().await;
+    aurora
+        .match_instances(target_platform, &project_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 解析依赖并产出安装计划（只自动收 Required 依赖，其余进 `skipped` 如实说明）。
+#[tauri::command]
+async fn plan_install(
+    version_id: String,
+    platform: String,
+    project_id: String,
+    mod_version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<InstallPlan, String> {
+    let target_platform = parse_platform(&platform)?;
+    let aurora = state.lock().await;
+    aurora
+        .plan_install(&version_id, target_platform, &project_id, &mod_version_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 对卷宗里没有身份的已装 Mod 做哈希反查补身份，返回补上的条数。
+///
+/// 逐个文件算哈希再联网反查，Mod 多的实例会跑上一阵，故首尾各推一条阶段事件（见 [`emit_stage`]）。
+#[tauri::command]
+async fn identify_installed_mods(
+    app: AppHandle,
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<usize, String> {
+    emit_stage(&app, format!("正在反查 {version_id} 里未知来源的 Mod"));
+
+    let added = {
+        let aurora = state.lock().await;
+        aurora
+            .identify_installed_mods(&version_id)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+
+    emit_stage(&app, format!("来源反查完成，补上 {added} 个 Mod 的身份"));
+    Ok(added)
+}
+
+/// 检查该实例可更新的 Mod。实例未装 Mod 加载器时返回空列表。
+///
+/// 每条卷宗记录都要发一次平台请求，故与 [`identify_installed_mods`] 同样首尾各推一条阶段事件。
+#[tauri::command]
+async fn check_updates(
+    app: AppHandle,
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<Vec<UpdateCandidate>, String> {
+    emit_stage(&app, format!("正在检查 {version_id} 的 Mod 更新"));
+
+    let candidates = {
+        let aurora = state.lock().await;
+        aurora
+            .check_updates(&version_id)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+
+    emit_stage(
+        &app,
+        format!("更新检查完成，{} 个 Mod 有新版本", candidates.len()),
+    );
+    Ok(candidates)
+}
+
+/// 读取该实例的变更历史（时间正序）。
+#[tauri::command]
+async fn list_history(
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<History, String> {
+    let aurora = state.lock().await;
+    aurora.history(&version_id).await.map_err(|e| e.to_string())
+}
+
+/// 逐条判断历史事件能否回滚，顺序与 [`list_history`] 一致，界面可按下标对齐。
+#[tauri::command]
+async fn rollback_checks(
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<Vec<RollbackCheck>, String> {
+    let aurora = state.lock().await;
+    aurora
+        .rollback_checks(&version_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 回滚一次更新事件：把 `<file>.old` 改回原名、删掉新文件，并追加一条回滚事件。
+#[tauri::command]
+async fn rollback(
+    version_id: String,
+    event_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<(), String> {
+    let aurora = state.lock().await;
+    aurora
+        .rollback(&version_id, &event_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 统计该实例 `.old` 备份占用的总字节数，供界面显式告知回滚能力的磁盘代价。
+#[tauri::command]
+async fn backup_size(version_id: String, state: State<'_, Mutex<Aurora>>) -> Result<u64, String> {
+    let aurora = state.lock().await;
+    aurora
+        .backup_size(&version_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 分析给定日志文本，产出诊断并与该实例卷宗 join 出可疑文件。
+#[tauri::command]
+async fn diagnose_crash(
+    version_id: String,
+    log_text: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<CrashReport, String> {
+    let aurora = state.lock().await;
+    aurora
+        .diagnose_crash(&version_id, &log_text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取该实例最近一次归档日志并诊断；从没跑过（无归档）返回 null。
+#[tauri::command]
+async fn last_crash(
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<Option<CrashReport>, String> {
+    let aurora = state.lock().await;
+    aurora
+        .last_crash(&version_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取该实例的安装来源卷宗（Mod 身份索引）。
+///
+/// 卷宗只是索引，磁盘才是权威：界面列已装内容时必须以 `list_mods` 的扫盘结果为骨架，再拿本命令的
+/// 结果补身份，绝不能反过来拿卷宗决定文件存不存在。
+#[tauri::command]
+async fn list_ledger(
+    version_id: String,
+    state: State<'_, Mutex<Aurora>>,
+) -> Result<Ledger, String> {
+    let aurora = state.lock().await;
+    aurora
+        .ledger_store(&version_id)
+        .load()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1207,8 +1556,8 @@ pub fn run() {
             // 构造失败（配置损坏等）直接冒泡终止启动，避免带着半初始化的门面继续跑。
             let aurora = tauri::async_runtime::block_on(Aurora::load())?;
             app.manage(Mutex::new(aurora));
-            // 运行中的游戏会话槽（launch_game 存入、stop_game 取出）。初始空。
-            app.manage(RunningGame(Mutex::new(None)));
+            // 运行中的游戏槽（launch_game 存入 kill 句柄、stop_game 取用、监控任务收尾时摘除）。初始空。
+            app.manage(RunningGame(Arc::new(Mutex::new(None))));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1234,7 +1583,19 @@ pub fn run() {
             list_mods,
             set_mod_enabled,
             get_version_settings,
-            set_version_settings
+            set_version_settings,
+            list_mod_versions,
+            match_instances,
+            plan_install,
+            identify_installed_mods,
+            check_updates,
+            list_history,
+            rollback_checks,
+            rollback,
+            backup_size,
+            diagnose_crash,
+            last_crash,
+            list_ledger
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
