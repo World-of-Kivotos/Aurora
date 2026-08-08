@@ -29,3 +29,5 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt-mul
 wiremock = "0.6"
 tempfile = "3"
 sha1 = "0.11"
+# 造带元数据的测试 jar：mod_id 兜底那道判据必须拿真 jar 验，否则测的只是「解析失败返回 None」。
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

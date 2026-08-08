@@ -1,4 +1,4 @@
-//! 模组安装到实例 + 本地模组管理。
+﻿//! 模组安装到实例 + 本地模组管理。
 //!
 //! 门面把 aurora-modplatform 的双平台客户端（Modrinth / CurseForge）与本地 `mods/` 目录管理串起来。
 //! 安装不是「下一个文件」这么简单：一次安装是一份计划（玩家选的那个 Mod + 它的必需前置），整份计划
@@ -26,7 +26,7 @@ use aurora_download::DownloadTask;
 use aurora_instance::AURORA_META_DIR;
 use aurora_modplatform::{
     CurseForgeClient, InstalledMod, ModrinthClient, Platform, disable_mod, enable_mod,
-    scan_mods_dir,
+    parse_mod_metadata, scan_mods_dir,
 };
 
 use crate::deps::PlannedItem;
@@ -575,6 +575,7 @@ async fn plan_placement(
         version.platform,
         &version.project_id,
         &item.file_name,
+        &item.task.dest,
     )
     .await?;
 
@@ -604,12 +605,18 @@ async fn plan_placement(
 ///
 /// 卷宗认不出、但目标文件名已经被占时同样按「顶替」处理：那是玩家手动丢进来或老启动器装的文件，版本
 /// 无从查考（记为 [`UNKNOWN_VERSION`]），但绝不能就这么覆盖掉。
+///
+/// 最后一道兜底比 jar 里的 `mod_id`：卷宗按「平台 + 工程」认，认不出跨来源的同一个 Mod——
+/// 同一个 Sodium 从 Modrinth 装一次、再从 CurseForge 装一次，两个平台的工程 id 各自成命名空间，
+/// 前两道都判「没装过」，于是两个 jar 共存，游戏抛 DuplicateModsFoundException。
+/// 而 `mod_id` 正是加载器眼中的唯一身份，手动丢进来的 jar 也一样带着它。
 async fn find_previous(
     ledger: &Ledger,
     mods_dir: &Path,
     platform: Platform,
     project_id: &str,
     new_file_name: &str,
+    staged_file: &Path,
 ) -> Result<Option<Replaced>> {
     for entry in &ledger.entries {
         if entry.platform != platform || entry.project_id != project_id {
@@ -629,7 +636,59 @@ async fn find_previous(
             from_version: UNKNOWN_VERSION.to_owned(),
         }));
     }
+    find_previous_by_mod_id(ledger, mods_dir, staged_file).await
+}
+
+/// 按 `mod_id` 在 mods 目录里找同一个 Mod 的另一份拷贝（跨平台、跨来源）。
+///
+/// 解析失败一律当作「认不出」而不是报错：这道兜底是额外收益，读不出元数据的 jar
+/// （损坏包、非标准打包）不该让整次安装失败。
+async fn find_previous_by_mod_id(
+    ledger: &Ledger,
+    mods_dir: &Path,
+    staged_file: &Path,
+) -> Result<Option<Replaced>> {
+    let Some(new_id) = mod_id_of(staged_file).await else {
+        return Ok(None);
+    };
+
+    // 目录不存在说明一个 Mod 都还没装，没什么可比的。
+    let Ok(installed) = scan_mods_dir(mods_dir).await else {
+        return Ok(None);
+    };
+    for item in installed {
+        let Some(meta) = &item.metadata else {
+            continue;
+        };
+        if meta.mod_id != new_id {
+            continue;
+        }
+        // 卷宗里查得到就带上它的版本号，查不到（手动丢进来的）记未知，回滚仍能靠 .old 复原。
+        let key = ledger_key(&item.file_name).to_owned();
+        let from_version = ledger
+            .find(&key)
+            .map(|e| e.version_id.clone())
+            .unwrap_or_else(|| UNKNOWN_VERSION.to_owned());
+        return Ok(Some(Replaced {
+            old_file: key,
+            from_version,
+        }));
+    }
     Ok(None)
+}
+
+/// 读一个 jar 的 `mod_id`；解析不出或没有元数据都返回 `None`。
+async fn mod_id_of(path: &Path) -> Option<String> {
+    parse_mod_metadata(path)
+        .await
+        .ok()
+        .flatten()
+        .map(|meta| meta.mod_id)
+}
+
+/// 取与卷宗 join 的键：卷宗记的是启用态文件名，磁盘上禁用态会多一个 `.disabled` 后缀。
+fn ledger_key(file_name: &str) -> &str {
+    file_name.strip_suffix(DISABLED_SUFFIX).unwrap_or(file_name)
 }
 
 /// 把一个暂存文件移进 mods 目录，必要时先给旧文件留一份 `.old` 备份。
@@ -1493,12 +1552,15 @@ mod tests {
             installed_as_dependency_of: None,
         });
 
+        // 暂存文件传一个不存在的路径：本用例验证的是卷宗那道判据，mod_id 兜底不该介入。
+        let staged = tmp.path().join("staged-not-there.jar");
         let found = find_previous(
             &ledger,
             &mods,
             Platform::Modrinth,
             "sodium",
             "sodium-0.6.jar",
+            &staged,
         )
         .await
         .unwrap();
@@ -1517,6 +1579,7 @@ mod tests {
             Platform::CurseForge,
             "sodium",
             "sodium-0.6.jar",
+            &staged,
         )
         .await
         .unwrap();
@@ -1533,12 +1596,14 @@ mod tests {
             .await
             .unwrap();
 
+        let staged = tmp.path().join("staged-not-there.jar");
         let found = find_previous(
             &Ledger::default(),
             &mods,
             Platform::Modrinth,
             "whatever",
             "manual.jar",
+            &staged,
         )
         .await
         .unwrap();
@@ -1561,9 +1626,131 @@ mod tests {
             installed_at: 1_700_000_000,
             installed_as_dependency_of: None,
         });
-        let missing = find_previous(&ledger, &mods, Platform::Modrinth, "gone", "gone-2.jar")
+        let missing = find_previous(
+            &ledger,
+            &mods,
+            Platform::Modrinth,
+            "gone",
+            "gone-2.jar",
+            &tmp.path().join("staged-not-there.jar"),
+        )
             .await
             .unwrap();
         assert_eq!(missing, None);
+    }
+
+    /// 造一个带 fabric.mod.json 的最小 jar，用于验证按 mod_id 的跨来源判据。
+    fn build_mod_jar(path: &Path, mod_id: &str) {
+        use std::io::Write;
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("fabric.mod.json", options).unwrap();
+        zip.write_all(
+            format!(r#"{{"schemaVersion":1,"id":"{mod_id}","version":"1.0.0"}}"#).as_bytes(),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
+
+    /// 同一个 Mod 从另一个平台再装一次：卷宗按「平台 + 工程」认不出，文件名也不撞，
+    /// 但 jar 里的 mod_id 一致——必须顶替，否则两份共存直接是 DuplicateModsFoundException。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_previous_matches_across_platforms_by_mod_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mods = tmp.path().join("mods");
+        tokio::fs::create_dir_all(&mods).await.unwrap();
+
+        // 已装的那份来自 Modrinth，卷宗有记录。
+        build_mod_jar(&mods.join("sodium-modrinth.jar"), "sodium");
+        let mut ledger = Ledger::default();
+        ledger.upsert(LedgerEntry {
+            file_name: "sodium-modrinth.jar".to_owned(),
+            platform: Platform::Modrinth,
+            project_id: "AANobbMI".to_owned(),
+            version_id: "v-modrinth".to_owned(),
+            sha1: None,
+            installed_at: 1_700_000_000,
+            installed_as_dependency_of: None,
+        });
+
+        // 这次要装的是 CurseForge 的同一个 Mod：平台不同、工程 id 不同、文件名也不同。
+        let staged = tmp.path().join("sodium-curseforge.jar");
+        build_mod_jar(&staged, "sodium");
+
+        let found = find_previous(
+            &ledger,
+            &mods,
+            Platform::CurseForge,
+            "394468",
+            "sodium-curseforge.jar",
+            &staged,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            found,
+            Some(Replaced {
+                old_file: "sodium-modrinth.jar".to_owned(),
+                from_version: "v-modrinth".to_owned(),
+            }),
+            "跨平台的同一个 Mod 必须被认出来顶替，而不是放任两份共存"
+        );
+    }
+
+    /// mod_id 不同就是两个 Mod：不能因为都装在同一个目录就互相顶替。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_previous_by_mod_id_leaves_unrelated_mods_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mods = tmp.path().join("mods");
+        tokio::fs::create_dir_all(&mods).await.unwrap();
+        build_mod_jar(&mods.join("lithium.jar"), "lithium");
+
+        let staged = tmp.path().join("sodium.jar");
+        build_mod_jar(&staged, "sodium");
+
+        let found = find_previous(
+            &Ledger::default(),
+            &mods,
+            Platform::Modrinth,
+            "AANobbMI",
+            "sodium.jar",
+            &staged,
+        )
+        .await
+        .unwrap();
+        assert_eq!(found, None);
+    }
+
+    /// 手动丢进 mods 的同一个 Mod（卷宗完全没记录）：一样按 mod_id 认出来顶替，版本记未知。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_previous_by_mod_id_covers_hand_dropped_jar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mods = tmp.path().join("mods");
+        tokio::fs::create_dir_all(&mods).await.unwrap();
+        build_mod_jar(&mods.join("我自己下的-sodium.jar"), "sodium");
+
+        let staged = tmp.path().join("sodium-0.6.jar");
+        build_mod_jar(&staged, "sodium");
+
+        let found = find_previous(
+            &Ledger::default(),
+            &mods,
+            Platform::Modrinth,
+            "AANobbMI",
+            "sodium-0.6.jar",
+            &staged,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            found,
+            Some(Replaced {
+                old_file: "我自己下的-sodium.jar".to_owned(),
+                from_version: UNKNOWN_VERSION.to_owned(),
+            })
+        );
     }
 }
