@@ -7,6 +7,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "../components/Button";
 import { Select } from "../components/Select";
 import { EmptyState } from "../components/EmptyState";
+import { Modal } from "../components/Modal";
+import { InstancePicker } from "../components/InstancePicker";
+import { InstallPlanPreview } from "../components/InstallPlanPreview";
 import { ResourceCardSkeleton, VersionCardSkeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import {
@@ -23,6 +26,7 @@ import {
 } from "../components/icons";
 import { pageItem, springs } from "../lib/motion";
 import {
+  installMod,
   installVersion,
   listInstalled,
   type LoaderChoice,
@@ -391,7 +395,26 @@ function ResIcon({ url, title }: { url: string | null; title: string }) {
   );
 }
 
-function ResourceCard({ hit, index, onInstall }: { hit: SearchHit; index: number; onInstall: () => void }) {
+/** 安装按钮的状态机：状态直接长在按钮上，不靠列表另挂徽标（抄自 Modrinth App）。 */
+type InstallState = "idle" | "installing" | "installed";
+
+const INSTALL_LABEL: Record<InstallState, string> = {
+  idle: "安装",
+  installing: "安装中",
+  installed: "已安装",
+};
+
+function ResourceCard({
+  hit,
+  index,
+  state,
+  onInstall,
+}: {
+  hit: SearchHit;
+  index: number;
+  state: InstallState;
+  onInstall: () => void;
+}) {
   return (
     <motion.li
       initial={{ opacity: 0, y: 8 }}
@@ -427,11 +450,17 @@ function ResourceCard({ hit, index, onInstall }: { hit: SearchHit; index: number
 
       <Button
         variant="secondary"
-        className="shrink-0 opacity-55 transition-opacity group-hover:opacity-100"
-        icon={<DownloadIcon size={15} />}
+        // 已装/在装的按钮常亮，避免它随 hover 忽隐忽现让状态看起来不确定。
+        className={[
+          "shrink-0 transition-opacity",
+          state === "idle" ? "opacity-55 group-hover:opacity-100" : "opacity-100",
+        ].join(" ")}
+        icon={state === "installed" ? <CheckIcon size={15} /> : <DownloadIcon size={15} />}
         onClick={onInstall}
+        disabled={state !== "idle"}
+        title={state === "installed" ? "本次已安装到所选实例" : undefined}
       >
-        安装
+        {INSTALL_LABEL[state]}
       </Button>
     </motion.li>
   );
@@ -449,6 +478,14 @@ function ContentTab({ type }: { type: ResourceType }) {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 安装流程两段式：先选实例与版本（picking），再确认依赖计划（planning），最后真正下载。
+  const [picking, setPicking] = useState<SearchHit | null>(null);
+  const [planning, setPlanning] = useState<{ hit: SearchHit; versionId: string; modVersionId: string } | null>(
+    null,
+  );
+  // 按 平台+工程 记安装态，供按钮状态机使用。仅本次会话有效——跨实例的真实已装状态由落位层逐实例标注。
+  const [installState, setInstallState] = useState<Record<string, InstallState>>({});
 
   const loaders = useMemo<ModLoader[]>(() => (loaderFilter === "all" ? [] : [loaderFilter]), [loaderFilter]);
   // 加载器筛选只对 Mod / 整合包有意义，资源包与光影不挂加载器。
@@ -481,6 +518,27 @@ function ContentTab({ type }: { type: ResourceType }) {
 
   const hits = result?.hits ?? [];
   const label = TABS.find((t) => t.type === type)?.label ?? "";
+
+  const keyOf = (h: SearchHit) => h.platform + ":" + h.project_id;
+
+  // 依赖计划确认后的真正安装。后端已按计划批量下 staging、校验通过才原子移入，
+  // 并在落盘后写卷宗与历史，所以这里只管发起与反馈。
+  const runInstall = useCallback(async () => {
+    if (!planning) return;
+    const { hit, versionId, modVersionId } = planning;
+    const key = keyOf(hit);
+    setPlanning(null);
+    setInstallState((s) => ({ ...s, [key]: "installing" }));
+    try {
+      const outcome = await installMod(versionId, hit.platform, hit.project_id, modVersionId);
+      setInstallState((s) => ({ ...s, [key]: "installed" }));
+      toast(`已安装 ${outcome.file_name} 到 ${versionId}`, "success");
+    } catch (e) {
+      // 装失败要退回可重试态，否则按钮会永远卡在「安装中」。
+      setInstallState((s) => ({ ...s, [key]: "idle" }));
+      toast(String(e), "error");
+    }
+  }, [planning, toast]);
 
   return (
     <div>
@@ -534,14 +592,49 @@ function ContentTab({ type }: { type: ResourceType }) {
         <ul className="m-0 grid list-none grid-cols-2 gap-2.5 p-0 max-[1180px]:grid-cols-1">
           {hits.map((h, i) => (
             <ResourceCard
-              key={h.platform + h.project_id}
+              key={keyOf(h)}
               hit={h}
               index={i}
-              onInstall={() => toast("安装需选择目标实例（接线中）", "error")}
+              state={installState[keyOf(h)] ?? "idle"}
+              onInstall={() => setPicking(h)}
             />
           ))}
         </ul>
       )}
+
+      {/* 第一段：选实例与版本。后端一次算出兼容矩阵，用户不必先导航进实例。 */}
+      {picking && (
+        <InstancePicker
+          open
+          platform={picking.platform}
+          projectId={picking.project_id}
+          title={picking.title}
+          onClose={() => setPicking(null)}
+          onConfirm={(versionId, modVersionId) => {
+            setPlanning({ hit: picking, versionId, modVersionId });
+            setPicking(null);
+          }}
+        />
+      )}
+
+      {/* 第二段：依赖清单预览。CurseForge 至今没做这块（CF-I-7577），是实打实的差异点。 */}
+      <Modal
+        open={!!planning}
+        onClose={() => setPlanning(null)}
+        size="lg"
+        title={planning ? `安装「${planning.hit.title}」` : ""}
+      >
+        {planning && (
+          <InstallPlanPreview
+            versionId={planning.versionId}
+            platform={planning.hit.platform}
+            projectId={planning.hit.project_id}
+            modVersionId={planning.modVersionId}
+            onCancel={() => setPlanning(null)}
+            onConfirm={() => void runInstall()}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

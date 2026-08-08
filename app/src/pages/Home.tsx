@@ -3,10 +3,12 @@
 // 真调 IPC：入场并行 current_account + list_installed；启动走 launch_game + 日志窗；错误显式冒泡不吞。
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
+import { CrashBanner } from "../components/CrashBanner";
 import { LaunchControl, type LaunchPhase } from "../components/LaunchControl";
 import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
@@ -20,10 +22,12 @@ import {
   listInstalled,
   listMods,
   onCoreEvent,
+  onGameCrash,
   onGameLog,
   stopGame,
   type AccountDto,
   type AccountType,
+  type CrashReport,
   type GameLog,
   type InstalledVersionDto,
   type LaunchArgs,
@@ -44,6 +48,7 @@ function loaderText(v: InstalledVersionDto): string {
 
 export function Home() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   // config 里选中的启动版本 id；入场随 load 拉取，决定「开始游戏」启动哪个（版本页设定）。
@@ -58,6 +63,8 @@ export function Home() {
   const [running, setRunning] = useState(false);
   // 游戏日志后台累积（不在 UI 显示，留作诊断 / 未来日志页）。
   const logRef = useRef<GameLog[]>([]);
+  // 崩溃报告：由后端在进程异常退出后推送。玩家主动点结束不会触发（detect_crash 对主动终止短路）。
+  const [crash, setCrash] = useState<{ report: CrashReport; versionId: string } | null>(null);
   // 进程运行期间持续存活的事件订阅，仅在结束游戏 / 组件卸载时统一 unlisten。
   const runUnlisten = useRef<Array<() => void>>([]);
 
@@ -135,13 +142,20 @@ export function Home() {
     setLaunching(true);
     setError(null);
     logRef.current = [];
+    // 上一次的崩溃横条属于上一次会话，重新启动就该收起来。
+    setCrash(null);
 
     // 先订阅日志与进度事件，再 invoke，避免漏掉启动早期的输出。日志只后台累积，告警仍冒泡到 toast。
     const unGame = await onGameLog((line) => logRef.current.push(line));
     const unCore = await onCoreEvent((ev) => {
       if (ev.kind === "warning") toast(`告警：${ev.message}`, "error");
     });
-    runUnlisten.current = [unGame, unCore];
+    // 崩溃推送到达即意味着进程已退出：顺手收束运行态，让 Start 从「运行中」复位。
+    const unCrash = await onGameCrash((report) => {
+      setCrash({ report, versionId });
+      setRunning(false);
+    });
+    runUnlisten.current = [unGame, unCore, unCrash];
 
     // 微软/外置登录用 accountUuid 走服务器校验；离线账户只有本地名，用 offlineName。
     const args: LaunchArgs =
@@ -216,6 +230,18 @@ export function Home() {
             重试
           </Button>
         </Card>
+      )}
+
+      {/* 崩溃横条：被动触发的止损入口，不常驻也不打断启动流程。完整诊断在实例卷宗页。 */}
+      {crash && (
+        <motion.div variants={pageItem} className="mb-6">
+          <CrashBanner
+            report={crash.report}
+            versionId={crash.versionId}
+            onDismiss={() => setCrash(null)}
+            onOpenDetail={() => navigate(`/versions/${encodeURIComponent(crash.versionId)}`)}
+          />
+        </motion.div>
       )}
 
       {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}

@@ -6,6 +6,7 @@ import { AppShell } from "./components/AppShell";
 import { Home } from "./pages/Home";
 import { Account } from "./pages/Account";
 import { Versions } from "./pages/Versions";
+import { InstanceDetail } from "./pages/InstanceDetail";
 import { Download } from "./pages/Download";
 import { Settings } from "./pages/Settings";
 
@@ -17,6 +18,8 @@ export default function App() {
           <Route index element={<Home />} />
           <Route path="account" element={<Account />} />
           <Route path="versions" element={<Versions />} />
+          {/* 实例卷宗：id 即版本目录名，可能含空格与中文，路由参数天然承载不需要额外编码。 */}
+          <Route path="versions/:id" element={<InstanceDetail />} />
           <Route path="download" element={<Download />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
