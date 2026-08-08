@@ -251,19 +251,11 @@ fn pick_latest_compatible(
 }
 
 /// 按实例事实判定某版本是否可用。
+///
+/// 实例 MC 版本识别不出时直接把 `None` 交给 [`classify`]：它会跳过版本维度只判加载器，
+/// 结果落在 [`Compatibility::Unknown`]。因为我们不知道而把候选判成「不支持 MC」是惩罚玩家。
 fn judge(version: &ModVersionInfo, facts: &InstanceFacts) -> Compatibility {
-    match facts.mc_version.as_deref() {
-        Some(mc) => classify(version, mc, &facts.loaders),
-        None => {
-            // 实例 MC 版本识别不出时，把版本侧的 MC 维度一并抹掉后交给同一个判定函数，只判加载器。
-            // 拿空版本号去比对会把每个候选都判成「不支持 MC 」——那是因为我们不知道而惩罚玩家。
-            let loader_only = ModVersionInfo {
-                game_versions: Vec::new(),
-                ..version.clone()
-            };
-            classify(&loader_only, "", &facts.loaders)
-        }
-    }
+    classify(version, facts.mc_version.as_deref(), &facts.loaders)
 }
 
 /// 该版本是否已装在此实例（卷宗有同工程同版本的记录，且其文件确实在磁盘上）。

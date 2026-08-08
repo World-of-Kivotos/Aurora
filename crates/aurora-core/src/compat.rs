@@ -1,4 +1,4 @@
-//! 兼容性判定与实例匹配。
+﻿//! 兼容性判定与实例匹配。
 //!
 //! 下载页的落位层要回答一个问题：「这个 Mod 该装进哪个实例」。答案由两部分组成——纯判定
 //! （[`classify`]：某个版本对某组实例事实是否可用）与编排（把判定结果铺成全部已装实例的矩阵）。
@@ -14,6 +14,7 @@ use std::collections::HashSet;
 
 use aurora_instance::{DiscoveredVersion, discover_versions};
 use aurora_modplatform::{ModLoader, ModVersionInfo, Platform, parse_loader_name, scan_mods_dir};
+use aurora_version::identify_mc_version;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -85,9 +86,12 @@ fn join_loader_names(loaders: &[ModLoader]) -> String {
 /// `instance_loaders` 取实例已装的加载器名（大小写不敏感，非 Mod 加载器如 OptiFine 会被忽略）。
 /// 判定顺序按「越确凿越先判」排：先看加载器（对不上一定装不了），再看 MC 版本，最后才把
 /// 元数据缺失归到 [`Compatibility::Unknown`]。
+/// `instance_mc_version` 传 `None` 表示「认不出这个实例基于哪个 MC 版本」。此时只判加载器，
+/// 版本维度一律归入 [`Compatibility::Unknown`]——拿一个没把握的版本号去比对，得到的
+/// 「不支持 MC X」是凭空捏造的结论，比说不知道更糟。
 pub fn classify(
     version: &ModVersionInfo,
-    instance_mc_version: &str,
+    instance_mc_version: Option<&str>,
     instance_loaders: &[String],
 ) -> Compatibility {
     // 实例侧加载器归一后再比对：两个平台与本地探测对同一加载器的写法并不统一。认不出的名字
@@ -118,6 +122,11 @@ pub fn classify(
             };
         }
     }
+
+    // 认不出实例的 MC 版本：加载器这一关已经过了，但版本对不对无从判断，交给用户自行决定。
+    let Some(instance_mc_version) = instance_mc_version else {
+        return Compatibility::Unknown;
+    };
 
     if !version.game_versions.is_empty()
         && !version
@@ -159,7 +168,7 @@ fn tier(compatibility: &Compatibility) -> u8 {
 /// 拿一个陈年旧版的失败原因去解释当前状况只会误导。
 fn pick_best(
     versions: &[ModVersionInfo],
-    instance_mc_version: &str,
+    instance_mc_version: Option<&str>,
     instance_loaders: &[String],
 ) -> (Compatibility, Option<ModVersionInfo>) {
     let mut newest_unknown: Option<&ModVersionInfo> = None;
@@ -196,16 +205,18 @@ fn pick_best(
     }
 }
 
-/// 实例的 MC 版本号：加载器版本的 `inheritsFrom` 即其基准原版版本；独立版本（原版、快照）的 id
-/// 本身就是版本号。空串按缺失处理——写了个空 `inheritsFrom` 的版本 JSON 若照单全收，
-/// 会让该实例的 MC 版本变成空串，之后每个版本都判「不支持 MC 」。
-fn instance_mc_version(version: &DiscoveredVersion) -> String {
-    version
-        .json
-        .inherits_from
-        .clone()
-        .filter(|parent| !parent.is_empty())
-        .unwrap_or_else(|| version.id.clone())
+/// 实例基于哪个 MC 版本；认不出返回 `None`。
+///
+/// 走 aurora-version 的完整识别链（inheritsFrom -> clientVersion -> 严格 id -> --fml.mcVersion
+/// -> 库坐标 -> id 内嵌子串），与更新检查口径一致。
+///
+/// 这里曾经只看 `inheritsFrom`、取不到就回落实例 id，代价很实际：PCL2 之类会把加载器 JSON 与原版
+/// JSON 合并成一份自包含文件，没有 `inheritsFrom`，于是实例名（`1.20.1-Forge_47.4.20(方块日志)`）
+/// 被当成 MC 版本号拿去和 Mod 的 game_versions 求交，永远交不上——整个落位矩阵全判「不兼容」。
+fn instance_mc_version(version: &DiscoveredVersion) -> Option<String> {
+    identify_mc_version(&version.json)
+        .value
+        .filter(|v| !v.is_empty())
 }
 
 /// 实例已装加载器的小写技术名。OptiFine / LiteLoader 这类也照实列出，由 [`classify`] 自行取舍——
@@ -245,13 +256,15 @@ impl Aurora {
         for discovered in &scan.versions {
             let mc_version = instance_mc_version(discovered);
             let loaders = instance_loaders(discovered);
-            let (compatibility, best_version) = pick_best(&versions, &mc_version, &loaders);
+            let (compatibility, best_version) =
+                pick_best(&versions, mc_version.as_deref(), &loaders);
             let already_installed = self
                 .installed_file_of(discovered, platform, project_id)
                 .await?;
             matches.push(InstanceMatch {
                 version_id: discovered.id.clone(),
-                mc_version,
+                // 认不出版本时回落实例 id：判定已按 Unknown 处理，这里只求界面上还能认出是哪个实例。
+                mc_version: mc_version.unwrap_or_else(|| discovered.id.clone()),
                 loaders,
                 compatibility,
                 best_version,
@@ -366,7 +379,7 @@ mod tests {
     fn full_metadata_hit_is_match() {
         let v = version(&[ModLoader::Fabric], &["1.20.1", "1.20.2"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["fabric"])),
+            classify(&v, Some("1.20.1"), &names(&["fabric"])),
             Compatibility::Match
         );
     }
@@ -375,11 +388,11 @@ mod tests {
     fn loader_name_comparison_is_case_insensitive() {
         let v = version(&[ModLoader::NeoForge], &["1.21"]);
         assert_eq!(
-            classify(&v, "1.21", &names(&["NeoForge"])),
+            classify(&v, Some("1.21"), &names(&["NeoForge"])),
             Compatibility::Match
         );
         assert_eq!(
-            classify(&v, "1.21", &names(&["neo-forge"])),
+            classify(&v, Some("1.21"), &names(&["neo-forge"])),
             Compatibility::Match
         );
     }
@@ -389,7 +402,7 @@ mod tests {
         // 版本同时支持 Fabric 与 Quilt，实例只有 Quilt：交集非空即通过。
         let v = version(&[ModLoader::Fabric, ModLoader::Quilt], &["1.20.1"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["quilt"])),
+            classify(&v, Some("1.20.1"), &names(&["quilt"])),
             Compatibility::Match
         );
     }
@@ -398,7 +411,7 @@ mod tests {
     fn vanilla_instance_rejects_loader_requiring_version() {
         let v = version(&[ModLoader::Forge], &["1.20.1"]);
         assert_eq!(
-            classify(&v, "1.20.1", &[]),
+            classify(&v, Some("1.20.1"), &[]),
             Compatibility::Mismatch {
                 reason: "该实例未安装 Mod 加载器".to_owned()
             }
@@ -410,7 +423,7 @@ mod tests {
         // OptiFine 不是 Mod 加载器：应给「未安装 Mod 加载器」，而不是列出它做对比。
         let v = version(&[ModLoader::Forge], &["1.20.1"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["optifine"])),
+            classify(&v, Some("1.20.1"), &names(&["optifine"])),
             Compatibility::Mismatch {
                 reason: "该实例未安装 Mod 加载器".to_owned()
             }
@@ -421,7 +434,7 @@ mod tests {
     fn disjoint_loaders_name_both_sides_in_reason() {
         let v = version(&[ModLoader::Fabric, ModLoader::Quilt], &["1.20.1"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["forge"])),
+            classify(&v, Some("1.20.1"), &names(&["forge"])),
             Compatibility::Mismatch {
                 reason: "需要 Fabric/Quilt，该实例装的是 Forge".to_owned()
             }
@@ -431,7 +444,7 @@ mod tests {
     #[test]
     fn reason_uses_canonical_loader_spelling() {
         let v = version(&[ModLoader::NeoForge], &["1.21"]);
-        let got = classify(&v, "1.21", &names(&["forge"]));
+        let got = classify(&v, Some("1.21"), &names(&["forge"]));
         // 文案里必须是 NeoForge / Forge 的规范写法，而非小写技术名。
         assert_eq!(
             got,
@@ -446,7 +459,7 @@ mod tests {
         // 两维都对不上时先报加载器：加载器是更硬的门槛，换个 Mod 版本也解决不了。
         let v = version(&[ModLoader::Forge], &["1.19.2"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["fabric"])),
+            classify(&v, Some("1.20.1"), &names(&["fabric"])),
             Compatibility::Mismatch {
                 reason: "需要 Forge，该实例装的是 Fabric".to_owned()
             }
@@ -457,7 +470,7 @@ mod tests {
     fn game_version_miss_reports_instance_version() {
         let v = version(&[ModLoader::Fabric], &["1.19.2", "1.19.4"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["fabric"])),
+            classify(&v, Some("1.20.1"), &names(&["fabric"])),
             Compatibility::Mismatch {
                 reason: "不支持 MC 1.20.1".to_owned()
             }
@@ -469,14 +482,14 @@ mod tests {
         // "1.20" 与 "1.20.1" 是两个 MC 版本，前缀相同不等于兼容。
         let v = version(&[ModLoader::Fabric], &["1.20"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["fabric"])),
+            classify(&v, Some("1.20.1"), &names(&["fabric"])),
             Compatibility::Mismatch {
                 reason: "不支持 MC 1.20.1".to_owned()
             }
         );
         let snapshot = version(&[ModLoader::Fabric], &["24w14a"]);
         assert_eq!(
-            classify(&snapshot, "24w14a", &names(&["fabric"])),
+            classify(&snapshot, Some("24w14a"), &names(&["fabric"])),
             Compatibility::Match
         );
     }
@@ -485,7 +498,7 @@ mod tests {
     fn missing_game_versions_is_unknown_not_mismatch() {
         let v = version(&[ModLoader::Fabric], &[]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["fabric"])),
+            classify(&v, Some("1.20.1"), &names(&["fabric"])),
             Compatibility::Unknown
         );
     }
@@ -495,10 +508,10 @@ mod tests {
         // 平台没标加载器时不能反推「这是原版 Mod」，也不能反推「装不了」，只能说不知道。
         let v = version(&[], &["1.20.1"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["forge"])),
+            classify(&v, Some("1.20.1"), &names(&["forge"])),
             Compatibility::Unknown
         );
-        assert_eq!(classify(&v, "1.20.1", &[]), Compatibility::Unknown);
+        assert_eq!(classify(&v, Some("1.20.1"), &[]), Compatibility::Unknown);
     }
 
     #[test]
@@ -506,7 +519,7 @@ mod tests {
         // 加载器缺失不该让 MC 版本这一维也失效：能判的仍要判。
         let v = version(&[], &["1.19.2"]);
         assert_eq!(
-            classify(&v, "1.20.1", &names(&["forge"])),
+            classify(&v, Some("1.20.1"), &names(&["forge"])),
             Compatibility::Mismatch {
                 reason: "不支持 MC 1.20.1".to_owned()
             }
@@ -516,7 +529,7 @@ mod tests {
     #[test]
     fn both_dimensions_missing_is_unknown() {
         let v = version(&[], &[]);
-        assert_eq!(classify(&v, "1.20.1", &[]), Compatibility::Unknown);
+        assert_eq!(classify(&v, Some("1.20.1"), &[]), Compatibility::Unknown);
     }
 
     #[test]
@@ -585,7 +598,7 @@ mod tests {
             dated("newest", 2026, &[ModLoader::Fabric], &["1.20.1"]),
             dated("older", 2025, &[ModLoader::Fabric], &["1.20.1"]),
         ];
-        let (compat, best) = pick_best(&versions, "1.20.1", &names(&["fabric"]));
+        let (compat, best) = pick_best(&versions, Some("1.20.1"), &names(&["fabric"]));
         assert_eq!(compat, Compatibility::Match);
         assert_eq!(best.unwrap().version_id, "newest");
     }
@@ -596,7 +609,7 @@ mod tests {
             dated("too-new", 2026, &[ModLoader::Fabric], &["1.21"]),
             dated("fits", 2025, &[ModLoader::Fabric], &["1.20.1"]),
         ];
-        let (compat, best) = pick_best(&versions, "1.20.1", &names(&["fabric"]));
+        let (compat, best) = pick_best(&versions, Some("1.20.1"), &names(&["fabric"]));
         assert_eq!(compat, Compatibility::Match);
         assert_eq!(best.unwrap().version_id, "fits");
     }
@@ -608,7 +621,7 @@ mod tests {
             dated("no-metadata", 2026, &[], &[]),
             dated("certain", 2025, &[ModLoader::Fabric], &["1.20.1"]),
         ];
-        let (compat, best) = pick_best(&versions, "1.20.1", &names(&["fabric"]));
+        let (compat, best) = pick_best(&versions, Some("1.20.1"), &names(&["fabric"]));
         assert_eq!(compat, Compatibility::Match);
         assert_eq!(best.unwrap().version_id, "certain");
     }
@@ -620,7 +633,7 @@ mod tests {
             dated("no-loaders", 2025, &[], &["1.20.1"]),
             dated("older-unknown", 2024, &[], &["1.20.1"]),
         ];
-        let (compat, best) = pick_best(&versions, "1.20.1", &names(&["fabric"]));
+        let (compat, best) = pick_best(&versions, Some("1.20.1"), &names(&["fabric"]));
         assert_eq!(compat, Compatibility::Unknown);
         // 软提示也要给最新的那个候选。
         assert_eq!(best.unwrap().version_id, "no-loaders");
@@ -632,7 +645,7 @@ mod tests {
             dated("newest", 2026, &[ModLoader::Fabric], &["1.21"]),
             dated("ancient", 2019, &[ModLoader::Forge], &["1.12.2"]),
         ];
-        let (compat, best) = pick_best(&versions, "1.20.1", &names(&["fabric"]));
+        let (compat, best) = pick_best(&versions, Some("1.20.1"), &names(&["fabric"]));
         assert_eq!(
             compat,
             Compatibility::Mismatch {
@@ -645,7 +658,7 @@ mod tests {
 
     #[test]
     fn pick_best_on_empty_version_list_states_the_project_has_none() {
-        let (compat, best) = pick_best(&[], "1.20.1", &names(&["fabric"]));
+        let (compat, best) = pick_best(&[], Some("1.20.1"), &names(&["fabric"]));
         assert_eq!(
             compat,
             Compatibility::Mismatch {
@@ -677,20 +690,47 @@ mod tests {
             r#"{"id":"fabric-loader-0.15.11-1.20.1","inheritsFrom":"1.20.1","type":"release",
                 "libraries":[{"name":"net.fabricmc:fabric-loader:0.15.11"}]}"#,
         );
-        assert_eq!(instance_mc_version(&v), "1.20.1");
+        assert_eq!(instance_mc_version(&v).as_deref(), Some("1.20.1"));
     }
 
     #[test]
-    fn instance_mc_version_falls_back_to_id_when_inherits_absent_or_blank() {
+    fn instance_mc_version_reads_plain_and_blank_inherits() {
         let vanilla = discovered("1.21", r#"{"id":"1.21","type":"release"}"#);
-        assert_eq!(instance_mc_version(&vanilla), "1.21");
+        assert_eq!(instance_mc_version(&vanilla).as_deref(), Some("1.21"));
 
         // 空串不能当成有效父版本，否则该实例的 MC 版本会变成空串。
         let blank = discovered(
             "24w14a",
             r#"{"id":"24w14a","inheritsFrom":"","type":"snapshot"}"#,
         );
-        assert_eq!(instance_mc_version(&blank), "24w14a");
+        assert_eq!(instance_mc_version(&blank).as_deref(), Some("24w14a"));
+    }
+
+    /// 自包含的整合版本 JSON（PCL2 会把加载器与原版 JSON 合并成一份，没有 inheritsFrom），
+    /// 实例名还带中文与括号。必须从库坐标里认出 1.20.1，而不是把整个实例名当版本号。
+    ///
+    /// 这正是线上踩到的那一例：认错版本会让落位矩阵里每个实例都判「不兼容」。
+    #[test]
+    fn instance_mc_version_identifies_self_contained_forge_json() {
+        let v = discovered(
+            "1.20.1-Forge_47.4.20(方块日志)",
+            r#"{"id":"1.20.1-Forge_47.4.20(方块日志)","type":"release",
+                "libraries":[{"name":"net.minecraftforge:forge:1.20.1-47.4.20"}]}"#,
+        );
+        assert_eq!(instance_mc_version(&v).as_deref(), Some("1.20.1"));
+    }
+
+    /// 认不出版本时只判加载器，版本维度归 Unknown——绝不拿没把握的版本号造出「不支持 MC X」。
+    #[test]
+    fn classify_without_instance_mc_version_falls_back_to_unknown() {
+        let v = version(&[ModLoader::Fabric], &["1.20.1"]);
+        assert_eq!(classify(&v, None, &names(&["fabric"])), Compatibility::Unknown);
+
+        // 加载器仍然照判：这一维不依赖 MC 版本。
+        assert!(matches!(
+            classify(&v, None, &names(&["forge"])),
+            Compatibility::Mismatch { .. }
+        ));
     }
 
     #[test]
