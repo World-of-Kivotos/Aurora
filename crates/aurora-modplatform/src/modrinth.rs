@@ -13,6 +13,7 @@ use serde::Deserialize;
 use crate::error::{Error, Result};
 use crate::model::{DependencyKind, Platform, ResourceType, SearchHit, SearchQuery};
 use crate::net::send_json;
+use crate::version::{ModDependency, ModVersionInfo, ReleaseChannel, parse_loader_name};
 
 /// Modrinth v2 API 根地址。
 pub const MODRINTH_BASE: &str = "https://api.modrinth.com/v2";
@@ -336,6 +337,39 @@ impl ModrinthVersion {
             .find(|f| f.primary)
             .or_else(|| self.files.first())
     }
+
+    /// 转成跨平台统一版本视图。
+    ///
+    /// 一个文件都没有的版本装不了（Modrinth 上确实存在 `files` 为空的历史版本），返回 `None` 让上层
+    /// 显式跳过，而不是塞个空文件名往下传——空文件名会一路污染卷宗与磁盘 join。
+    pub fn to_version_info(&self) -> Option<ModVersionInfo> {
+        let file = self.primary_file()?;
+        Some(ModVersionInfo {
+            version_id: self.id.clone(),
+            project_id: self.project_id.clone(),
+            platform: Platform::Modrinth,
+            name: self.name.clone(),
+            version_number: self.version_number.clone(),
+            // 认不出的通道按最不稳定处理：把没见过的通道当正式版推给玩家，比多打一个 alpha 标签危险得多。
+            release_channel: ReleaseChannel::from_modrinth(&self.version_type)
+                .unwrap_or(ReleaseChannel::Alpha),
+            game_versions: self.game_versions.clone(),
+            loaders: self
+                .loaders
+                .iter()
+                .filter_map(|name| parse_loader_name(name))
+                .collect(),
+            file_name: file.filename.clone(),
+            file_size: Some(file.size),
+            sha1: file.hashes.sha1.clone(),
+            date_published: self.date_published.clone(),
+            dependencies: self
+                .dependencies
+                .iter()
+                .filter_map(|dep| dep.to_mod_dependency())
+                .collect(),
+        })
+    }
 }
 
 /// 版本依赖。
@@ -358,6 +392,16 @@ impl ModrinthDependency {
     /// 依赖关系（统一模型）；未知类型返回 `None`。
     pub fn kind(&self) -> Option<DependencyKind> {
         DependencyKind::from_modrinth(&self.dependency_type)
+    }
+
+    /// 转成跨平台依赖项；未知 `dependency_type` 返回 `None`——判不出是必需还是不兼容时，
+    /// 宁可不呈现也不能猜成必需去自动装。
+    pub fn to_mod_dependency(&self) -> Option<ModDependency> {
+        Some(ModDependency {
+            project_id: self.project_id.clone(),
+            version_id: self.version_id.clone(),
+            kind: self.kind()?,
+        })
     }
 }
 
@@ -546,5 +590,104 @@ mod tests {
         assert_eq!(task.url, "https://cdn/sodium.jar");
         assert_eq!(task.sha1.as_deref(), Some("ddeeff"));
         assert_eq!(task.size, Some(204800));
+    }
+
+    /// 造一个版本裸模型，便于各转换用例改单个字段。
+    fn version_json(
+        version_type: &str,
+        loaders: serde_json::Value,
+        files: serde_json::Value,
+    ) -> ModrinthVersion {
+        serde_json::from_value(serde_json::json!({
+            "id": "IZskiJmZ",
+            "project_id": "AANobbMI",
+            "name": "Sodium 0.5.3",
+            "version_number": "mc1.20.1-0.5.3",
+            "dependencies": [
+                {"project_id": "P7dR8mSH", "dependency_type": "required"},
+                {"project_id": "aaa", "version_id": "bbb", "dependency_type": "optional"},
+                {"project_id": "ccc", "dependency_type": "外星依赖类型"}
+            ],
+            "game_versions": ["1.20.1", "1.20.2"],
+            "version_type": version_type,
+            "loaders": loaders,
+            "date_published": "2026-01-02T03:04:05Z",
+            "files": files
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn version_info_maps_channel_loaders_and_primary_file() {
+        let version = version_json(
+            "beta",
+            serde_json::json!(["fabric", "quilt", "rift"]),
+            serde_json::json!([
+                { "hashes": {"sha1": "aabbcc"}, "url": "https://cdn/other.jar", "filename": "other.jar", "primary": false, "size": 10 },
+                { "hashes": {"sha1": "ddeeff"}, "url": "https://cdn/sodium.jar", "filename": "sodium.jar", "primary": true, "size": 204800 }
+            ]),
+        );
+        let info = version.to_version_info().expect("有文件应能转换");
+        assert_eq!(info.version_id, "IZskiJmZ");
+        assert_eq!(info.project_id, "AANobbMI");
+        assert_eq!(info.platform, Platform::Modrinth);
+        assert_eq!(info.version_number, "mc1.20.1-0.5.3");
+        assert_eq!(info.release_channel, ReleaseChannel::Beta);
+        assert_eq!(info.game_versions, vec!["1.20.1", "1.20.2"]);
+        // "rift" 认不出，丢弃而非报错。
+        assert_eq!(info.loaders, vec![ModLoader::Fabric, ModLoader::Quilt]);
+        assert_eq!(info.file_name, "sodium.jar");
+        assert_eq!(info.file_size, Some(204_800));
+        assert_eq!(info.sha1.as_deref(), Some("ddeeff"));
+        assert_eq!(info.date_published, "2026-01-02T03:04:05Z");
+
+        // 三条依赖里未知类型那条被丢，剩两条保留原样。
+        assert_eq!(info.dependencies.len(), 2);
+        assert_eq!(info.dependencies[0].project_id.as_deref(), Some("P7dR8mSH"));
+        assert_eq!(info.dependencies[0].version_id, None);
+        assert_eq!(info.dependencies[0].kind, DependencyKind::Required);
+        assert_eq!(info.dependencies[1].version_id.as_deref(), Some("bbb"));
+        assert_eq!(info.dependencies[1].kind, DependencyKind::Optional);
+    }
+
+    #[test]
+    fn version_info_falls_back_to_alpha_for_unknown_channel() {
+        let version = version_json(
+            "某种新通道",
+            serde_json::json!(["forge"]),
+            serde_json::json!([
+                { "hashes": {"sha1": "aa"}, "url": "https://cdn/a.jar", "filename": "a.jar", "primary": true, "size": 1 }
+            ]),
+        );
+        let info = version.to_version_info().unwrap();
+        assert_eq!(info.release_channel, ReleaseChannel::Alpha);
+        assert_eq!(info.loaders, vec![ModLoader::Forge]);
+    }
+
+    #[test]
+    fn version_without_files_has_no_version_info() {
+        let version = version_json(
+            "release",
+            serde_json::json!(["fabric"]),
+            serde_json::json!([]),
+        );
+        assert!(version.to_version_info().is_none());
+    }
+
+    #[test]
+    fn version_info_without_primary_flag_takes_first_file() {
+        let version = version_json(
+            "release",
+            serde_json::json!(["fabric"]),
+            serde_json::json!([
+                { "hashes": {}, "url": "https://cdn/first.jar", "filename": "first.jar", "size": 7 },
+                { "hashes": {"sha1": "zz"}, "url": "https://cdn/second.jar", "filename": "second.jar", "size": 8 }
+            ]),
+        );
+        let info = version.to_version_info().unwrap();
+        assert_eq!(info.file_name, "first.jar");
+        assert_eq!(info.file_size, Some(7));
+        // 该文件没给 sha1，不能伪造一个空串。
+        assert_eq!(info.sha1, None);
     }
 }
