@@ -16,7 +16,7 @@ use std::path::Path;
 use aurora_instance::discover_versions;
 use aurora_modplatform::{
     CurseForgeClient, CurseForgeFile, CurseForgeFingerprintMatch, InstalledMod, ModHashes,
-    ModLoader, ModVersionInfo, ModrinthClient, hash_mod_file, parse_loader_name,
+    ModLoader, ModVersionInfo, ModrinthClient, Platform, hash_mod_file, parse_loader_name,
 };
 use aurora_version::identify_mc_version;
 use serde::Serialize;
@@ -91,12 +91,61 @@ impl Aurora {
 
         let game_versions = [mc_version];
         let mut candidates = Vec::new();
+
+        // Modrinth 侧走批量端点：一次请求覆盖整个实例。此前是「每个 Mod 查一次工程版本列表」，
+        // 几十个 Mod 的实例一进来就是几十次请求，几个实例连着查立刻被限流（HTTP 429）。
+        let mut modrinth_by_hash: HashMap<String, (String, LedgerEntry)> = HashMap::new();
+        // CurseForge 没有等价的「按指纹批量查更新」端点，仍逐个走工程文件列表。
+        let mut curseforge_targets: Vec<(String, LedgerEntry)> = Vec::new();
+
         for file_name in present {
             // 卷宗里查不到身份：两条反查通道都没认出来的本地 Mod，无从判断它有没有新版。
             let Some(entry) = ledger.find(&file_name) else {
                 continue;
             };
+            match entry.platform {
+                Platform::Modrinth => {
+                    // 批量端点按 SHA-1 索引。卷宗里没记哈希的老记录就地补算（纯本地 IO，不触网）；
+                    // 文件读不出来（被占用、刚被删）就跳过这一个，不牵连整批。
+                    let sha1 = match &entry.sha1 {
+                        Some(sha1) => sha1.clone(),
+                        None => match sha1_of_installed(&installed, &file_name).await {
+                            Some(sha1) => sha1,
+                            None => continue,
+                        },
+                    };
+                    modrinth_by_hash.insert(sha1, (file_name, entry.clone()));
+                }
+                Platform::CurseForge => curseforge_targets.push((file_name, entry.clone())),
+            }
+        }
 
+        if !modrinth_by_hash.is_empty() {
+            let hashes: Vec<String> = modrinth_by_hash.keys().cloned().collect();
+            let client = ModrinthClient::new(self.http()).with_base_url(self.modrinth_base());
+            let latest = client
+                .latest_versions_by_hashes(&hashes, &facts.loaders, &[game_versions[0].as_str()])
+                .await?;
+            for (hash, version) in latest {
+                let Some((file_name, entry)) = modrinth_by_hash.get(&hash) else {
+                    continue;
+                };
+                // 端点返回的就是该文件在本实例加载器/版本下的最新兼容版本，可能正是当前这个。
+                if version.id == entry.version_id {
+                    continue;
+                }
+                let Some(info) = version.to_version_info() else {
+                    continue;
+                };
+                candidates.push(UpdateCandidate {
+                    current_version_id: entry.version_id.clone(),
+                    latest: info,
+                    file_name: file_name.clone(),
+                });
+            }
+        }
+
+        for (file_name, entry) in curseforge_targets {
             let mut versions = self
                 .list_mod_versions(
                     entry.platform,
@@ -130,8 +179,21 @@ impl Aurora {
                 file_name,
             });
         }
+
+        // 两条通道的结果合到一起，按文件名排序保证 UI 列表稳定。
+        candidates.sort_by(|a, b| a.file_name.cmp(&b.file_name));
         Ok(candidates)
     }
+}
+
+/// 就地补算某个已装文件的 SHA-1（卷宗里没记哈希的老记录会走到这）。
+///
+/// 读不出文件返回 `None`：文件可能刚被删或被占用，这只该让它一个查不了更新，不该让整批失败。
+async fn sha1_of_installed(installed: &[InstalledMod], file_name: &str) -> Option<String> {
+    let item = installed
+        .iter()
+        .find(|m| ledger_key(&m.file_name) == file_name)?;
+    hash_mod_file(Path::new(&item.path)).await.ok().map(|h| h.sha1)
 }
 
 /// 更新检查所需的实例事实。
@@ -395,17 +457,15 @@ mod tests {
     /// 卷宗里已有身份的 Mod：命中更新时如实给出「从哪个版本到哪个版本」。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn check_updates_reports_newer_version_for_known_mod() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path();
+        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
+        let (_, sha1) = put_mod(mc, "1.20.1-fabric", "sodium-0.5.3.jar", b"sodium-payload").await;
+
+        // Modrinth 侧走批量端点：一次 POST 带走整批哈希，响应按哈希索引。
         let server = MockServer::start().await;
         let body = format!(
-            "[{},{}]",
-            modrinth_version(
-                "old1",
-                "AANobbMI",
-                "0.5.3",
-                "2025-01-01T00:00:00Z",
-                "sodium-0.5.3.jar",
-                "aa"
-            ),
+            r#"{{"{sha1}":{}}}"#,
             modrinth_version(
                 "new2",
                 "AANobbMI",
@@ -415,16 +475,12 @@ mod tests {
                 "bb"
             ),
         );
-        Mock::given(method("GET"))
-            .and(path("/project/AANobbMI/version"))
+        Mock::given(method("POST"))
+            .and(path("/version_files/update"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;
 
-        let tmp = tempfile::tempdir().unwrap();
-        let mc = tmp.path();
-        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
-        put_mod(mc, "1.20.1-fabric", "sodium-0.5.3.jar", b"sodium-payload").await;
         let aurora = aurora_at(mc, &server.uri());
         save_ledger(
             &aurora,
@@ -441,15 +497,34 @@ mod tests {
         assert_eq!(found[0].latest.file_name, "sodium-0.6.0.jar");
         assert_eq!(found[0].latest.release_channel, ReleaseChannel::Release);
         assert_eq!(found[0].latest.date_published, "2026-06-01T00:00:00Z");
+
+        // 整个实例只该打一次更新查询，而不是每个 Mod 一次——这正是限流的成因。
+        let posts = server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.url.path() == "/version_files/update")
+            .count();
+        assert_eq!(posts, 1);
     }
 
-    /// 已装的就是最新发布：不报更新。此处版本号串比较会给出相反结论（"0.9.1" > "0.9.0"），
-    /// 把判定换成版本号比较这条测试立刻挂。
+    /// 批量端点返回的就是当前已装的那个版本：说明已是最新，不该报更新。
+    ///
+    /// 端点语义是「该文件在指定加载器与游戏版本下的最新兼容版本」，所以 Modrinth 侧不再自己比
+    /// 发布时间，只比版本 id。按发布时间而非版本号串比较的逻辑仍用在 CurseForge 侧，
+    /// 但那条路径要求 AURORA_CURSEFORGE_API_KEY，而环境变量是进程全局的、并行测试里会互相干扰，
+    /// 故暂无自动化覆盖——改动 CurseForge 分支时需人工留意这条判定。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn check_updates_uses_publish_date_not_version_string() {
+    async fn check_updates_skips_when_batch_returns_same_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path();
+        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
+        let (_, sha1) = put_mod(mc, "1.20.1-fabric", "lithium-0.9.0.jar", b"lithium-payload").await;
+
         let server = MockServer::start().await;
         let body = format!(
-            "[{},{}]",
+            r#"{{"{sha1}":{}}}"#,
             modrinth_version(
                 "v090",
                 "AANobbMI",
@@ -458,30 +533,44 @@ mod tests {
                 "lithium-0.9.0.jar",
                 "aa"
             ),
-            modrinth_version(
-                "v091",
-                "AANobbMI",
-                "0.9.1",
-                "2025-01-01T00:00:00Z",
-                "lithium-0.9.1.jar",
-                "bb"
-            ),
         );
-        Mock::given(method("GET"))
-            .and(path("/project/AANobbMI/version"))
+        Mock::given(method("POST"))
+            .and(path("/version_files/update"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;
 
-        let tmp = tempfile::tempdir().unwrap();
-        let mc = tmp.path();
-        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
-        put_mod(mc, "1.20.1-fabric", "lithium-0.9.0.jar", b"lithium-payload").await;
         let aurora = aurora_at(mc, &server.uri());
         save_ledger(
             &aurora,
             "1.20.1-fabric",
             vec![ledger_entry("lithium-0.9.0.jar", "AANobbMI", "v090")],
+        )
+        .await;
+
+        assert!(aurora.check_updates("1.20.1-fabric").await.unwrap().is_empty());
+    }
+
+    /// 响应里没有某个哈希：代表该文件无更新（或平台未收录），不是错误，也不该报更新。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn check_updates_treats_missing_hash_in_response_as_no_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path();
+        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
+        put_mod(mc, "1.20.1-fabric", "sodium-0.5.3.jar", b"sodium-payload").await;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/version_files/update"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+
+        let aurora = aurora_at(mc, &server.uri());
+        save_ledger(
+            &aurora,
+            "1.20.1-fabric",
+            vec![ledger_entry("sodium-0.5.3.jar", "AANobbMI", "old1")],
         )
         .await;
 
@@ -532,16 +621,9 @@ mod tests {
             )))
             .mount(&server)
             .await;
+        // 补上身份之后，更新查询同样走批量端点。
         let body = format!(
-            "[{},{}]",
-            modrinth_version(
-                "old1",
-                "AANobbMI",
-                "0.5.3",
-                "2025-01-01T00:00:00Z",
-                "mystery.jar",
-                &sha1
-            ),
+            r#"{{"{sha1}":{}}}"#,
             modrinth_version(
                 "new2",
                 "AANobbMI",
@@ -551,8 +633,8 @@ mod tests {
                 "bb"
             ),
         );
-        Mock::given(method("GET"))
-            .and(path("/project/AANobbMI/version"))
+        Mock::given(method("POST"))
+            .and(path("/version_files/update"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;

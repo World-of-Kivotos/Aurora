@@ -142,6 +142,42 @@ impl ModrinthClient {
             Err(err) => Err(err),
         }
     }
+
+    /// 按一批 SHA-1 查各自在指定加载器/游戏版本下的最新版本，返回 `哈希 -> 版本` 映射。
+    ///
+    /// 未收录或已是最新的哈希不会出现在结果里，故缺键即「无更新」，不是错误。
+    ///
+    /// 存在的意义是替掉「对每个文件调一次 [`Self::latest_version_by_hash`]」：一个实例几十个 Mod
+    /// 就是几十次请求，几个实例一起查立刻撞上 Modrinth 限流（HTTP 429）。这里一次请求覆盖整批。
+    pub async fn latest_versions_by_hashes(
+        &self,
+        sha1s: &[String],
+        loaders: &[crate::model::ModLoader],
+        game_versions: &[&str],
+    ) -> Result<std::collections::HashMap<String, ModrinthVersion>> {
+        // 空批次不该白打一次网络请求，也避免服务端对空 hashes 的行为差异。
+        if sha1s.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        #[derive(serde::Serialize)]
+        struct UpdateBody<'a> {
+            hashes: &'a [String],
+            algorithm: &'a str,
+            loaders: Vec<&'a str>,
+            game_versions: Vec<&'a str>,
+        }
+        let body = UpdateBody {
+            hashes: sha1s,
+            algorithm: "sha1",
+            loaders: loaders.iter().map(|l| l.modrinth_facet()).collect(),
+            game_versions: game_versions.to_vec(),
+        };
+        let url = format!("{}/version_files/update", self.base_url);
+        send_json(&self.retry, "modrinth.version_files.update", || {
+            self.http.post(url.as_str()).json(&body)
+        })
+        .await
+    }
 }
 
 /// 构造 Modrinth `facets` 查询串：形如 `[["project_type:mod"],["categories:fabric"],["versions:1.20.1"]]`。
@@ -590,6 +626,56 @@ mod tests {
         assert_eq!(task.url, "https://cdn/sodium.jar");
         assert_eq!(task.sha1.as_deref(), Some("ddeeff"));
         assert_eq!(task.size, Some(204800));
+    }
+
+    /// 批量查更新：一次请求带走整批哈希，响应是 哈希 -> 版本 的映射，
+    /// 没更新的哈希不出现在结果里（缺键即无更新，不是错误）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn latest_versions_by_hashes_posts_batch_and_maps_by_hash() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "hash-a": {
+                "id": "newA",
+                "project_id": "AANobbMI",
+                "name": "Sodium 0.6.5",
+                "version_number": "mc1.21.1-0.6.5",
+                "dependencies": [],
+                "game_versions": ["1.21.1"],
+                "version_type": "release",
+                "loaders": ["fabric"],
+                "featured": true,
+                "date_published": "2026-03-04T05:06:07Z",
+                "downloads": 1,
+                "files": [{ "hashes": {"sha1": "n1"}, "url": "https://cdn/a.jar", "filename": "a.jar", "primary": true, "size": 1 }]
+            }
+        });
+        Mock::given(method("POST"))
+            .and(path("/version_files/update"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let hashes = vec!["hash-a".to_owned(), "hash-b".to_owned()];
+        let got = client(&server)
+            .latest_versions_by_hashes(&hashes, &[crate::model::ModLoader::Fabric], &["1.21.1"])
+            .await
+            .unwrap();
+
+        assert_eq!(got.len(), 1);
+        assert_eq!(got["hash-a"].version_number, "mc1.21.1-0.6.5");
+        // hash-b 服务端没返回，视为「无更新」而不是查询失败。
+        assert!(!got.contains_key("hash-b"));
+    }
+
+    /// 空批次直接短路，不打网络请求——mock server 没挂任何路由，真发请求会 404 失败。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn latest_versions_by_hashes_skips_request_when_empty() {
+        let server = MockServer::start().await;
+        let got = client(&server)
+            .latest_versions_by_hashes(&[], &[crate::model::ModLoader::Fabric], &["1.21.1"])
+            .await
+            .unwrap();
+        assert!(got.is_empty());
     }
 
     /// 造一个版本裸模型，便于各转换用例改单个字段。
