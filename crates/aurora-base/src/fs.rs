@@ -191,9 +191,54 @@ impl DirectoryProvider for RootedDirs {
     }
 }
 
-/// 默认（Windows 系统）数据目录：`%LOCALAPPDATA%\Aurora`。
+/// 便携优先：可执行文件所在目录可写就用它，否则回落 [`SystemDirs`]。
+///
+/// NSIS 默认按用户安装（`%LOCALAPPDATA%\Aurora`）且安装路径可改，所以「装到哪，数据就在哪旁边」
+/// 是能成立的，也是绿色版用户的预期：解压到 `D:\Aurora` 双击即用，整个目录搬走就是搬走了全部数据。
+/// 装进 Program Files 这类写不了的位置时才回落到系统目录。
+///
+/// 便携模式下数据根就是 exe 所在目录本身，不再往下套一层 `Aurora`——安装目录本来就叫 Aurora，
+/// 再套一层会变成 `D:\Aurora\Aurora\.minecraft`。
+pub struct PortableFirstDirs;
+
+impl DirectoryProvider for PortableFirstDirs {
+    fn data_dir(&self) -> Result<PathBuf> {
+        match writable_exe_dir() {
+            Some(dir) => Ok(dir),
+            None => SystemDirs.data_dir(),
+        }
+    }
+}
+
+/// 可执行文件所在目录，且确认真的能写；取不到路径或写不进去都返回 `None`。
+///
+/// 判据是实际写一个探针文件再删掉，而不是查权限位：网络驱动器、只读介质、组策略重定向
+/// 都可能让权限位看着没问题却写不进去，那种失败要等到下载游戏文件时才炸。
+///
+/// debug 构建一律返回 `None`：开发时 exe 在 `target/debug` 下，便携判定会把配置、账户凭据和
+/// 整个 `.minecraft` 全写进构建产物目录，一次 `cargo clean` 就全没了。
+fn writable_exe_dir() -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.to_path_buf();
+    let probe = dir.join(".aurora-write-probe");
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            // 探针删不掉不影响判定结论（已经证明可写），留个日志即可。
+            if let Err(err) = std::fs::remove_file(&probe) {
+                tracing::debug!(path = %probe.display(), error = %err, "清理写入探针失败");
+            }
+            Some(dir)
+        }
+        Err(_) => None,
+    }
+}
+
+/// 默认数据目录：便携优先，回落 `%LOCALAPPDATA%\Aurora`。
 pub fn data_dir() -> Result<PathBuf> {
-    SystemDirs.data_dir()
+    PortableFirstDirs.data_dir()
 }
 
 /// 默认（Windows 系统）缓存目录：`%LOCALAPPDATA%\Aurora\cache`。
@@ -208,6 +253,34 @@ mod tests {
     // 已知向量：SHA-1("abc") 与 SHA-256("abc")。
     const ABC_SHA1: &str = "a9993e364706816aba3e25717850c26c9cd0d89d";
     const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    /// 测试进程是 debug 构建，便携探测按约定直接短路，于是数据目录必然回落系统目录。
+    /// 这条同时钉住那个短路：去掉它，测试会拿到 target/debug 而不是 %LOCALAPPDATA%\Aurora。
+    #[test]
+    fn portable_probe_is_disabled_in_debug_builds() {
+        assert!(writable_exe_dir().is_none());
+        assert_eq!(
+            PortableFirstDirs.data_dir().unwrap(),
+            SystemDirs.data_dir().unwrap()
+        );
+    }
+
+    /// 探测不会留下垃圾：跑完之后 exe 目录里不该有探针文件。
+    #[test]
+    fn write_probe_leaves_no_residue() {
+        let _ = writable_exe_dir();
+        let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        assert!(!exe_dir.join(".aurora-write-probe").exists());
+    }
+
+    /// 缓存目录始终挂在数据目录下，便携与否都成立。
+    #[test]
+    fn cache_dir_hangs_under_data_dir() {
+        let root = PathBuf::from("D:/somewhere");
+        let dirs = RootedDirs { root: root.clone() };
+        assert_eq!(dirs.data_dir().unwrap(), root.join(APP_DIR_NAME));
+        assert_eq!(dirs.cache_dir().unwrap(), root.join(APP_DIR_NAME).join("cache"));
+    }
 
     #[tokio::test]
     async fn sha1_and_sha256_match_known_vectors() {

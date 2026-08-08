@@ -34,6 +34,7 @@ pub mod error;
 pub mod event;
 pub mod facade;
 pub mod history;
+pub mod folders;
 pub mod install;
 pub mod instance;
 pub mod java;
@@ -47,7 +48,7 @@ pub mod versions;
 
 // ---- 门面自身的公开类型 ----
 pub use compat::{Compatibility, InstanceMatch, classify};
-pub use config::{AuroraConfig, ConfigStore, DownloadSourcePolicy, MemorySettings};
+pub use config::{AuroraConfig, ConfigStore, DownloadSourcePolicy, MemorySettings, NamedDirectory};
 pub use crashdiag::{CrashReport, CrashSuspect};
 pub use deps::{InstallPlan, PlannedItem};
 pub use error::{CoreError, Result};
@@ -67,8 +68,8 @@ pub use auth::{MSA_CLIENT_ID_ENV, perform_microsoft_login};
 pub use aurora_auth::{Account, AccountType, DeviceCodeResponse, GameProfile};
 pub use aurora_install::{LoaderSummary, VanillaSummary};
 pub use aurora_instance::{
-    BrokenReason, BrokenVersion, DiscoveredVersion, IsolationOverride, IsolationPolicy,
-    ResolvedIsolation, VersionScan, VersionSettings,
+    BrokenReason, BrokenVersion, DiscoveredVersion, GameDirectory, GameDirectorySource,
+    IsolationOverride, IsolationPolicy, ResolvedIsolation, VersionScan, VersionSettings,
 };
 pub use aurora_java::{DetectSource, InstalledRuntime, JavaInstallation, JavaVersion};
 pub use aurora_launch::{

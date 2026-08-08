@@ -76,6 +76,13 @@ impl Aurora {
         &self.config
     }
 
+    /// 可变访问配置，供本 crate 内需要成批改字段的模块使用（如游戏目录列表的增删）。
+    /// 不对外公开：外部改配置一律走语义明确的 setter，避免绕过它们附带的重算逻辑
+    /// （例如 `set_version_list_source` 要同步重算清单地址）。
+    pub(crate) fn config_mut(&mut self) -> &mut AuroraConfig {
+        &mut self.config
+    }
+
     /// 当前游戏目录（`.minecraft`）。
     pub fn game_dir(&self) -> &Path {
         &self.game_dir
