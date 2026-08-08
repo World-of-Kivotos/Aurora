@@ -2,8 +2,11 @@
 //!
 //! 只承担一件事：把 aurora-core 门面（[`Aurora`]）经 `#[tauri::command]` 暴露给 React 前端。
 //! 三条纪律贯穿全文件：
-//! 1. 门面放进 managed state，用 `tokio::sync::Mutex` 包裹——`Aurora` 兼有 `&self` 异步方法与
-//!    `set_client_id`/`set_game_dir` 这类 `&mut self` 方法，异步 Mutex 才能把两类方法都用上。
+//! 1. 门面放进 managed state，用 `tokio::sync::RwLock` 包裹——`Aurora` 兼有 `&self` 异步方法与
+//!    `set_client_id`/`set_game_dir` 这类 `&mut self` 方法，异步锁才能把两类方法都用上。
+//!    取读写锁而非互斥锁是必须的：命令在持锁期间会跑网络请求（搜索、版本列表、依赖解析），
+//!    而三十多个命令里只有 update_config 与 set_game_directory 需要可变借用。用 Mutex 会让
+//!    所有命令全局串行，一次慢请求就把界面上其它操作全堵住——启动预取并发拉五份数据时尤其明显。
 //! 2. 绝不把 aurora-core 原始类型（尤其含登录令牌的 [`Account`]）整体过 IPC；命令一律返回本文件
 //!    定义的瘦 DTO，只映射前端需要的安全字段。
 //! 3. 进度/事件走一条固定范式：命令内建一个 `tokio::mpsc` 通道作为门面的 [`EventSink`]，另起一个
@@ -22,7 +25,7 @@ use aurora_core::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 /// 前端订阅进度事件的统一事件名。install/launch 等后续长任务照抄本范式时复用同一事件名，
 /// 前端按负载里的 `kind` 区分阶段/告警/下载进度。
@@ -367,7 +370,7 @@ type KillHandle = tokio::sync::mpsc::UnboundedSender<KillRequest>;
 /// 归档，产出 `ExitReport`）消耗 self，而 `kill` 要 `&mut self`——同一个会话没法既留在槽里供 kill、
 /// 又交给某处去 wait。故会话在启动时就移交给一条监控任务独占，本槽只留一条请求通道。
 ///
-/// 与门面分列两个 managed state：门面是 `Mutex<Aurora>`，而会话生命周期独立于门面——启动后门面锁应
+/// 与门面分列两个 managed state：门面是 `RwLock<Aurora>`，而会话生命周期独立于门面——启动后门面锁应
 /// 尽快释放以便其它命令继续读写配置，故不塞进门面而单列一个槽。内层用 `Arc` 是为了让监控任务也能
 /// 持有同一个槽，进程退出时把自己的句柄摘掉。
 struct RunningGame(Arc<Mutex<Option<KillHandle>>>);
@@ -659,13 +662,14 @@ async fn ensure_fresh_impl(_aurora: &Aurora, account: &Account) -> Result<Accoun
 // ===== IPC 命令 =====
 //
 // 全部为 async：借用 managed state 的命令必须返回 Result（Tauri 对借用 State 的异步命令的硬性要求），
-// 内部一律 `state.lock().await` 取门面。CoreError 经 `to_string()` 转成字符串上抛，让前端能显示；
+// 内部一律 `state.read().await` 取门面（改配置的两个命令用 `write()`）。CoreError 经 `to_string()`
+// 转成字符串上抛，让前端能显示；
 // 不在命令里 try/catch 生吞。
 
 /// 读取全局配置（含游戏目录、内存、下载源策略、是否已配 client_id 等）。
 #[tauri::command]
-async fn get_config(state: State<'_, Mutex<Aurora>>) -> Result<ConfigDto, String> {
-    let aurora = state.lock().await;
+async fn get_config(state: State<'_, RwLock<Aurora>>) -> Result<ConfigDto, String> {
+    let aurora = state.read().await;
     let config = aurora.config();
     Ok(ConfigDto {
         game_dir: aurora.game_dir().display().to_string(),
@@ -683,16 +687,16 @@ async fn get_config(state: State<'_, Mutex<Aurora>>) -> Result<ConfigDto, String
 
 /// 扫描游戏目录下已安装的版本（含损坏版本单列）。
 #[tauri::command]
-async fn list_installed(state: State<'_, Mutex<Aurora>>) -> Result<VersionScanDto, String> {
-    let aurora = state.lock().await;
+async fn list_installed(state: State<'_, RwLock<Aurora>>) -> Result<VersionScanDto, String> {
+    let aurora = state.read().await;
     let scan = aurora.list_installed().await.map_err(|e| e.to_string())?;
     Ok(scan_dto(scan))
 }
 
 /// 读取当前选中账户（可能没有）。
 #[tauri::command]
-async fn current_account(state: State<'_, Mutex<Aurora>>) -> Result<Option<AccountDto>, String> {
-    let aurora = state.lock().await;
+async fn current_account(state: State<'_, RwLock<Aurora>>) -> Result<Option<AccountDto>, String> {
+    let aurora = state.read().await;
     read_current_account(&aurora)
 }
 
@@ -707,7 +711,7 @@ async fn current_account(state: State<'_, Mutex<Aurora>>) -> Result<Option<Accou
 async fn create_offline_account(
     app: AppHandle,
     name: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CoreEvent>();
 
@@ -722,7 +726,7 @@ async fn create_offline_account(
 
     // 单独作用域持锁：门面方法本身很快，尽早释放锁再去 await 桥接任务。
     let account = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora
             .create_offline_account(&name, Some(&tx))
             .map_err(|e| e.to_string())?
@@ -742,7 +746,7 @@ async fn create_offline_account(
 #[tauri::command]
 async fn microsoft_login(
     app: AppHandle,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
     microsoft_login_impl(app, state).await
 }
@@ -750,9 +754,9 @@ async fn microsoft_login(
 #[cfg(windows)]
 async fn microsoft_login_impl(
     app: AppHandle,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     let account = aurora
         .microsoft_login(|device| {
             // emit 失败（无监听者/窗口已关）不影响登录主流程。
@@ -766,7 +770,7 @@ async fn microsoft_login_impl(
 #[cfg(not(windows))]
 async fn microsoft_login_impl(
     _app: AppHandle,
-    _state: State<'_, Mutex<Aurora>>,
+    _state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
     Err(WINDOWS_ONLY.to_owned())
 }
@@ -777,7 +781,7 @@ async fn authlib_login(
     server_url: String,
     username: String,
     password: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
     authlib_login_impl(&server_url, &username, &password, state).await
 }
@@ -787,9 +791,9 @@ async fn authlib_login_impl(
     server_url: &str,
     username: &str,
     password: &str,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     let account = aurora
         .authlib_login(server_url, username, password)
         .await
@@ -802,36 +806,36 @@ async fn authlib_login_impl(
     _server_url: &str,
     _username: &str,
     _password: &str,
-    _state: State<'_, Mutex<Aurora>>,
+    _state: State<'_, RwLock<Aurora>>,
 ) -> Result<AccountDto, String> {
     Err(WINDOWS_ONLY.to_owned())
 }
 
 /// 读取账户库中的全部账户（只含 uuid/name/type，无任何令牌）。
 #[tauri::command]
-async fn list_accounts(state: State<'_, Mutex<Aurora>>) -> Result<Vec<AccountDto>, String> {
-    let aurora = state.lock().await;
+async fn list_accounts(state: State<'_, RwLock<Aurora>>) -> Result<Vec<AccountDto>, String> {
+    let aurora = state.read().await;
     list_accounts_impl(&aurora)
 }
 
 /// 切换当前选中账户。
 #[tauri::command]
-async fn set_current_account(uuid: String, state: State<'_, Mutex<Aurora>>) -> Result<(), String> {
-    let aurora = state.lock().await;
+async fn set_current_account(uuid: String, state: State<'_, RwLock<Aurora>>) -> Result<(), String> {
+    let aurora = state.read().await;
     set_current_account_impl(&aurora, &uuid)
 }
 
 /// 删除账户。
 #[tauri::command]
-async fn remove_account(uuid: String, state: State<'_, Mutex<Aurora>>) -> Result<(), String> {
-    let aurora = state.lock().await;
+async fn remove_account(uuid: String, state: State<'_, RwLock<Aurora>>) -> Result<(), String> {
+    let aurora = state.read().await;
     remove_account_impl(&aurora, &uuid)
 }
 
 /// 拉取官方版本清单（最新正式版/快照 + 全部可安装版本条目）。
 #[tauri::command]
-async fn list_manifest(state: State<'_, Mutex<Aurora>>) -> Result<ManifestDto, String> {
-    let aurora = state.lock().await;
+async fn list_manifest(state: State<'_, RwLock<Aurora>>) -> Result<ManifestDto, String> {
+    let aurora = state.read().await;
     let manifest = aurora.list_manifest().await.map_err(|e| e.to_string())?;
     Ok(manifest_dto(manifest))
 }
@@ -843,7 +847,7 @@ async fn install_version(
     id: String,
     loader: Option<String>,
     loader_version: Option<String>,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<InstallOutcomeDto, String> {
     let loader_choice = match loader {
         Some(name) => Some(parse_loader_choice(&name)?),
@@ -859,7 +863,7 @@ async fn install_version(
     });
 
     let outcome = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora
             .install(&id, loader_choice, loader_version.as_deref(), Some(&tx))
             .await
@@ -903,7 +907,7 @@ async fn launch_game(
     extra_game_args: Vec<String>,
     resolution: Option<(u32, u32)>,
     demo: bool,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
     running: State<'_, RunningGame>,
 ) -> Result<LaunchedDto, String> {
     let options = LaunchOptions {
@@ -930,7 +934,7 @@ async fn launch_game(
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<LogLine>(256);
 
     let session = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         let launched = match account_uuid.as_deref() {
             Some(uuid) => {
                 let account = find_account_impl(&aurora, uuid)?;
@@ -1046,8 +1050,8 @@ fn spawn_game_monitor(
         // 归档若因磁盘问题没能建立，读文件反而会拿到上一局的日志、指认一场不存在的崩溃。
         let log_text = exit.recent_lines.join("\n");
         let diagnosed = {
-            let state = app.state::<Mutex<Aurora>>();
-            let aurora = state.lock().await;
+            let state = app.state::<RwLock<Aurora>>();
+            let aurora = state.read().await;
             aurora.diagnose_crash(&version_id, &log_text).await
         };
         match diagnosed {
@@ -1088,8 +1092,8 @@ async fn stop_game(running: State<'_, RunningGame>) -> Result<(), String> {
 
 /// 探测本机全部可用 Java（注册表 / 常见目录 / PATH）。
 #[tauri::command]
-async fn detect_java(state: State<'_, Mutex<Aurora>>) -> Result<Vec<JavaInstallationDto>, String> {
-    let aurora = state.lock().await;
+async fn detect_java(state: State<'_, RwLock<Aurora>>) -> Result<Vec<JavaInstallationDto>, String> {
+    let aurora = state.read().await;
     let installations = aurora.detect_java().await;
     Ok(installations.iter().map(java_installation_dto).collect())
 }
@@ -1099,7 +1103,7 @@ async fn detect_java(state: State<'_, Mutex<Aurora>>) -> Result<Vec<JavaInstalla
 async fn install_java(
     app: AppHandle,
     required_major: u32,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<InstalledRuntimeDto, String> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CoreEvent>();
     let forwarder = app.clone();
@@ -1110,7 +1114,7 @@ async fn install_java(
     });
 
     let runtime = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora
             .install_java(required_major, Some(&tx))
             .await
@@ -1140,9 +1144,9 @@ async fn update_config(
     cache_directory: Option<String>,
     client_id: Option<String>,
     selected_version: Option<String>,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<(), String> {
-    let mut aurora = state.lock().await;
+    let mut aurora = state.write().await;
     if let Some(policy) = download_source {
         aurora.set_download_source(parse_download_source_policy(&policy)?);
     }
@@ -1178,8 +1182,8 @@ async fn update_config(
 
 /// 设置游戏目录（`.minecraft`）并落盘。
 #[tauri::command]
-async fn set_game_directory(path: String, state: State<'_, Mutex<Aurora>>) -> Result<(), String> {
-    let mut aurora = state.lock().await;
+async fn set_game_directory(path: String, state: State<'_, RwLock<Aurora>>) -> Result<(), String> {
+    let mut aurora = state.write().await;
     aurora.set_game_directory(PathBuf::from(path));
     aurora.save_config().await.map_err(|e| e.to_string())?;
     Ok(())
@@ -1196,7 +1200,7 @@ async fn search_resources(
     sort: String,
     limit: u32,
     offset: u32,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<SearchResultDto, String> {
     let mut parsed_loaders = Vec::with_capacity(loaders.len());
     for loader in &loaders {
@@ -1213,7 +1217,7 @@ async fn search_resources(
     };
 
     let result = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora.search(&search_query).await.map_err(|e| e.to_string())?
     };
     Ok(search_result_dto(result))
@@ -1227,7 +1231,7 @@ async fn install_mod(
     platform: String,
     project_id: String,
     mod_version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<ModInstallOutcomeDto, String> {
     let target_platform = parse_platform(&platform)?;
 
@@ -1240,7 +1244,7 @@ async fn install_mod(
     });
 
     let outcome = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora
             .install_mod(&version_id, target_platform, &project_id, &mod_version_id, Some(&tx))
             .await
@@ -1263,9 +1267,9 @@ async fn install_mod(
 #[tauri::command]
 async fn list_mods(
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Vec<InstalledMod>, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora.list_mods(&version_id).await.map_err(|e| e.to_string())
 }
 
@@ -1275,9 +1279,9 @@ async fn set_mod_enabled(
     version_id: String,
     file_name: String,
     enabled: bool,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<String, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     let path = aurora
         .set_mod_enabled(&version_id, &file_name, enabled)
         .await
@@ -1292,9 +1296,9 @@ async fn set_mod_enabled(
 #[tauri::command]
 async fn get_version_settings(
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<VersionSettingsDto, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     let settings = aurora
         .version_settings(&version_id)
         .await
@@ -1314,9 +1318,9 @@ async fn get_version_settings(
 async fn set_version_settings(
     version_id: String,
     settings: VersionSettingsInput,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<VersionSettingsDto, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     let next = VersionSettings {
         description: settings.description,
         icon: settings.icon,
@@ -1353,7 +1357,7 @@ async fn list_mod_versions(
     project_id: String,
     game_versions: Vec<String>,
     loaders: Vec<String>,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Vec<ModVersionInfo>, String> {
     let target_platform = parse_platform(&platform)?;
     let mut parsed_loaders = Vec::with_capacity(loaders.len());
@@ -1361,7 +1365,7 @@ async fn list_mod_versions(
         parsed_loaders.push(parse_mod_loader(loader)?);
     }
 
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .list_mod_versions(
             target_platform,
@@ -1380,10 +1384,10 @@ async fn list_mod_versions(
 async fn match_instances(
     platform: String,
     project_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Vec<InstanceMatch>, String> {
     let target_platform = parse_platform(&platform)?;
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .match_instances(target_platform, &project_id)
         .await
@@ -1397,10 +1401,10 @@ async fn plan_install(
     platform: String,
     project_id: String,
     mod_version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<InstallPlan, String> {
     let target_platform = parse_platform(&platform)?;
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .plan_install(&version_id, target_platform, &project_id, &mod_version_id)
         .await
@@ -1414,12 +1418,12 @@ async fn plan_install(
 async fn identify_installed_mods(
     app: AppHandle,
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<usize, String> {
     emit_stage(&app, format!("正在反查 {version_id} 里未知来源的 Mod"));
 
     let added = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora
             .identify_installed_mods(&version_id)
             .await
@@ -1437,12 +1441,12 @@ async fn identify_installed_mods(
 async fn check_updates(
     app: AppHandle,
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Vec<UpdateCandidate>, String> {
     emit_stage(&app, format!("正在检查 {version_id} 的 Mod 更新"));
 
     let candidates = {
-        let aurora = state.lock().await;
+        let aurora = state.read().await;
         aurora
             .check_updates(&version_id)
             .await
@@ -1460,9 +1464,9 @@ async fn check_updates(
 #[tauri::command]
 async fn list_history(
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<History, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora.history(&version_id).await.map_err(|e| e.to_string())
 }
 
@@ -1470,9 +1474,9 @@ async fn list_history(
 #[tauri::command]
 async fn rollback_checks(
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Vec<RollbackCheck>, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .rollback_checks(&version_id)
         .await
@@ -1484,9 +1488,9 @@ async fn rollback_checks(
 async fn rollback(
     version_id: String,
     event_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<(), String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .rollback(&version_id, &event_id)
         .await
@@ -1495,8 +1499,8 @@ async fn rollback(
 
 /// 统计该实例 `.old` 备份占用的总字节数，供界面显式告知回滚能力的磁盘代价。
 #[tauri::command]
-async fn backup_size(version_id: String, state: State<'_, Mutex<Aurora>>) -> Result<u64, String> {
-    let aurora = state.lock().await;
+async fn backup_size(version_id: String, state: State<'_, RwLock<Aurora>>) -> Result<u64, String> {
+    let aurora = state.read().await;
     aurora
         .backup_size(&version_id)
         .await
@@ -1508,9 +1512,9 @@ async fn backup_size(version_id: String, state: State<'_, Mutex<Aurora>>) -> Res
 async fn diagnose_crash(
     version_id: String,
     log_text: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<CrashReport, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .diagnose_crash(&version_id, &log_text)
         .await
@@ -1521,9 +1525,9 @@ async fn diagnose_crash(
 #[tauri::command]
 async fn last_crash(
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Option<CrashReport>, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .last_crash(&version_id)
         .await
@@ -1537,9 +1541,9 @@ async fn last_crash(
 #[tauri::command]
 async fn list_ledger(
     version_id: String,
-    state: State<'_, Mutex<Aurora>>,
+    state: State<'_, RwLock<Aurora>>,
 ) -> Result<Ledger, String> {
-    let aurora = state.lock().await;
+    let aurora = state.read().await;
     aurora
         .ledger_store(&version_id)
         .load()
@@ -1555,7 +1559,7 @@ pub fn run() {
             // Aurora::load() 是异步，而 setup 是同步闭包；用 Tauri 运行时 block_on 构造后放进 state。
             // 构造失败（配置损坏等）直接冒泡终止启动，避免带着半初始化的门面继续跑。
             let aurora = tauri::async_runtime::block_on(Aurora::load())?;
-            app.manage(Mutex::new(aurora));
+            app.manage(RwLock::new(aurora));
             // 运行中的游戏槽（launch_game 存入 kill 句柄、stop_game 取用、监控任务收尾时摘除）。初始空。
             app.manage(RunningGame(Arc::new(Mutex::new(None))));
             Ok(())
