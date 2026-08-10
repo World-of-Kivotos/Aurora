@@ -12,6 +12,8 @@
 //! 3. 进度/事件走一条固定范式：命令内建一个 `tokio::mpsc` 通道作为门面的 [`EventSink`]，另起一个
 //!    转发任务把 [`CoreEvent`] 逐条 `emit` 成 Tauri 事件推给前端（见 `create_offline_account`）。
 
+mod logging;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -1766,8 +1768,8 @@ fn background_file_for(path: &str, current: Option<String>) -> Option<String> {
 
 /// 取图失败时的响应。
 ///
-/// 原因写进响应体：`<img>` 标签本身不会显示它，但 DevTools 的网络面板能看到——
-/// GUI 这边还没装 tracing subscriber，这是排查时唯一能留下的现场。
+/// 原因同时写进响应体与日志：`<img>` 标签本身不显示它，DevTools 的网络面板能看到，
+/// 而玩家报问题时手上只有日志文件。
 fn background_error(status: tauri::http::StatusCode, reason: String) -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder()
         .status(status)
@@ -1778,6 +1780,15 @@ fn background_error(status: tauri::http::StatusCode, reason: String) -> tauri::h
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 先装 subscriber 再做任何事：配置载入、数据目录探测这些最容易出问题的动作都在下面，
+    // 晚一步初始化，恰恰是最想看的那几行日志就丢了。
+    let log_path = logging::init();
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        log = ?log_path,
+        "Aurora 启动"
+    );
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         // 自更新与「装完重启」。签名校验由插件按 tauri.conf.json 里的 pubkey 做，
@@ -1822,10 +1833,13 @@ pub fn run() {
                         responder.respond(response);
                     }
                     // 越界文件名与「图被手动删了」都落这里，对 WebView 一律 404。
-                    Err(err) => responder.respond(background_error(
-                        tauri::http::StatusCode::NOT_FOUND,
-                        err.to_string(),
-                    )),
+                    Err(err) => {
+                        tracing::warn!(%file, error = %err, "背景图读取失败");
+                        responder.respond(background_error(
+                            tauri::http::StatusCode::NOT_FOUND,
+                            err.to_string(),
+                        ));
+                    }
                 }
             });
         })

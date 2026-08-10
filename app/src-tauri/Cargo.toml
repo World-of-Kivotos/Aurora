@@ -36,3 +36,12 @@ percent-encoding = "2"
 # 系统文件选择框。选背景图必须拿到磁盘绝对路径，而 <input type="file"> 在 WebView 里
 # 出于安全只给 File 对象、拿不到路径，所以这一步绕不开原生对话框。
 tauri-plugin-dialog = "2"
+# 日志：下层各 crate 只发事件，subscriber 在此层配置。开 time 特性是必须的——
+# 不开的话每行时间戳会打成 <unknown time>，一份没有时间的日志排查不了任何东西。
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
+# 数据目录定位：日志要和 config.json 落在同一处，便携模式下随 exe 走。
+aurora-base = { path = "../../crates/aurora-base" }
+
+[dev-dependencies]
+tempfile = "3"
