@@ -13,6 +13,7 @@ import { LaunchControl, type LaunchPhase } from "../components/LaunchControl";
 import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
 import { AlertIcon, RefreshIcon } from "../components/icons";
+import { useAppearance } from "../lib/appearance-context";
 import { pageItem } from "../lib/motion";
 import {
   createOfflineAccount,
@@ -46,9 +47,18 @@ function loaderText(v: InstalledVersionDto): string {
   return l.version ? `${l.kind} ${l.version}` : l.kind;
 }
 
+// 右下角那撮内容的两种形态。没有背景图时它就坐在纸底上，与改动前一模一样——
+// 不装背景的人不该因为这个功能看到任何变化。有图时收进一块不透明纸片，
+// 文字始终站在纸上，可读性与玩家选了什么图完全无关。
+const PLATE_BARE = "mt-auto flex flex-col items-end gap-6 pt-10";
+const PLATE_ON_PHOTO =
+  "mt-auto ml-auto flex flex-col items-end gap-6 rounded-[3px] bg-paper px-7 py-6 paper-on-photo";
+
 export function Home() {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { appearance } = useAppearance();
+  const onPhoto = appearance.background !== null;
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   // config 里选中的启动版本 id；入场随 load 拉取，决定「开始游戏」启动哪个（版本页设定）。
@@ -203,25 +213,34 @@ export function Home() {
   // 启动控件视觉阶段：命令在途=launching(写字爬升)，进程已起=spawned(补满并切 Stop)。
   const launchPhase: LaunchPhase = launching ? "launching" : running ? "spawned" : "idle";
 
+  const status = loading ? "读取中" : running ? "运行中" : canLaunch ? "准备就绪" : "未就绪";
+
   return (
     <>
-      <motion.div variants={pageItem}>
-        <PageHeader
-          title="主页"
-          subtitle="以选中的账户与版本启动游戏"
-          right={
-            <>
-              <div className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</div>
-              <div className="mt-1.5 font-mono text-[12px] tracking-[0.08em] text-ink/60 tabular-nums">
-                {loading ? "读取中" : running ? "运行中" : canLaunch ? "准备就绪" : "未就绪"}
-              </div>
-            </>
-          }
-        />
-      </motion.div>
+      {/* 有背景图时不画报头：「主页」这个标题的信息量为零（侧栏已经高亮着），
+          整版留给图更干净；真正有价值的状态字并进下面那块纸片。 */}
+      {!onPhoto && (
+        <motion.div variants={pageItem}>
+          <PageHeader
+            title="主页"
+            subtitle="以选中的账户与版本启动游戏"
+            right={
+              <>
+                <div className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</div>
+                <div className="mt-1.5 font-mono text-[12px] tracking-[0.08em] text-ink/60 tabular-nums">
+                  {status}
+                </div>
+              </>
+            }
+          />
+        </motion.div>
+      )}
 
       {error && (
-        <Card variants={pageItem} className="mb-6 flex items-center gap-4 border-danger/40">
+        <Card
+          variants={pageItem}
+          className={`mb-6 flex items-center gap-4 border-danger/40 ${onPhoto ? "paper-on-photo" : ""}`}
+        >
           <span className="text-danger [&_svg]:h-5 [&_svg]:w-5">
             <AlertIcon />
           </span>
@@ -234,7 +253,7 @@ export function Home() {
 
       {/* 崩溃横条：被动触发的止损入口，不常驻也不打断启动流程。完整诊断在实例卷宗页。 */}
       {crash && (
-        <motion.div variants={pageItem} className="mb-6">
+        <motion.div variants={pageItem} className={`mb-6 ${onPhoto ? "paper-on-photo" : ""}`}>
           <CrashBanner
             report={crash.report}
             versionId={crash.versionId}
@@ -246,7 +265,15 @@ export function Home() {
 
       {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}
       <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
-        <div className="mt-auto flex flex-col items-end gap-6 pt-10">
+        <div className={onPhoto ? PLATE_ON_PHOTO : PLATE_BARE}>
+          {onPhoto && (
+            <div className="flex items-baseline gap-2.5 self-end">
+              <span className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</span>
+              <span className="font-mono text-[12px] tracking-[0.08em] text-ink/60 tabular-nums">
+                {status}
+              </span>
+            </div>
+          )}
           {/* 版本信息：实例名(主，粗大) + MC版本 · 加载器 · Mod数(次，细小) */}
           {current ? (
             <div className="max-w-[460px] text-right">

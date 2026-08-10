@@ -47,6 +47,49 @@
 }
 
 /*
+ * 压在自定义背景图上的纸片。
+ *
+ * 这是「去阴影」那条规则唯一的例外，适用边界要说死：只有当一块纸面压在图片上时才允许投影，
+ * 纸对纸永远无影。理由不是审美——版面上纸与纸同处一个平面，没有高差就不该有影子；
+ * 而纸压在照片上是实打实的两个平面，杂志排版里图上压白块也必然带投影或出血边。
+ * 不加影子它看起来会像在图上「挖了个洞」，而不是「压在上面」。
+ */
+.paper-on-photo {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--color-ink) 8%, transparent),
+    0 10px 28px color-mix(in srgb, var(--color-ink) 14%, transparent);
+}
+
+/*
+ * 滑条：与 Toggle、Select、滚动条同一套取舍——原生外观在 WebView2 里是系统蓝，
+ * 与纸墨版面格格不入，所以整个接管。细轨 + 墨色圆钮，无刻度无数值气泡。
+ */
+.ink-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ink) 14%, transparent);
+  cursor: pointer;
+}
+.ink-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.ink-range::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.ink-range:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
+/*
  * 自定义滚动条：杜绝原生外观。细窄悬浮药丸，纸墨低调，无轨道无箭头。
  * WebView2 = Chromium，用 ::-webkit-scrollbar 完全接管（故不设 scrollbar-width，避免它反而禁用 webkit 定制）。
  * border + background-clip:padding-box 做出“悬浮内缩”的药丸滑块。

@@ -19,6 +19,7 @@ import {
   SaveIcon,
   SparkleIcon,
 } from "../components/icons";
+import { BackgroundPicker } from "../components/BackgroundPicker";
 import { useToast } from "../components/Toast";
 import { useMotionPref } from "../lib/motion-pref";
 import { pageItem, springs } from "../lib/motion";
@@ -921,6 +922,9 @@ export function Settings() {
               <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
             }
           />
+          <div className="border-t border-ink/9">
+            <BackgroundPicker />
+          </div>
         </Section>
       )}
 

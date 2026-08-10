@@ -606,3 +606,44 @@ export const switchGameDirectory = (path: string, name: string): Promise<void> =
 /** 走完初次设定：定下游戏目录、收下选中的其它文件夹，并把配置落盘。 */
 export const completeFirstRun = (gameDir: string, extras: NamedDirectory[]): Promise<void> =>
   invoke("complete_first_run", { gameDir, extras });
+
+// ---- 自定义背景 ----
+
+/** 当前外观设置。background 为 null 表示纯纸面。 */
+export interface AppearanceDto {
+  /** 当前背景在图库里的文件名。 */
+  background: string | null;
+  /** 当前背景的平均色，图加载完成前先铺它，避免闪白。 */
+  tint: string | null;
+  /** 纸色遮罩强度（百分比）。 */
+  veil: number;
+}
+
+/** 图库里的一张背景图。 */
+export interface BackgroundEntry {
+  file: string;
+  width: number;
+  height: number;
+  bytes: number;
+  is_current: boolean;
+}
+
+export const getAppearance = (): Promise<AppearanceDto> => invoke<AppearanceDto>("get_appearance");
+
+export const listBackgrounds = (): Promise<BackgroundEntry[]> =>
+  invoke<BackgroundEntry[]>("list_backgrounds");
+
+/** 导入一张外部图片并立刻设为当前背景。传的是磁盘绝对路径，由系统文件框给出。 */
+export const importBackground = (path: string): Promise<AppearanceDto> =>
+  invoke<AppearanceDto>("import_background", { path });
+
+/** 切换当前背景；传 null 回到纯纸面。 */
+export const setBackground = (file: string | null): Promise<AppearanceDto> =>
+  invoke<AppearanceDto>("set_background", { file });
+
+/** 从图库删掉一张图；删的是当前那张时自动回到纯纸面。 */
+export const removeBackground = (file: string): Promise<AppearanceDto> =>
+  invoke<AppearanceDto>("remove_background", { file });
+
+export const setBackgroundVeil = (veil: number): Promise<AppearanceDto> =>
+  invoke<AppearanceDto>("set_background_veil", { veil });

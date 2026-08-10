@@ -14,6 +14,7 @@ import { Versions } from "./pages/Versions";
 import { InstanceDetail } from "./pages/InstanceDetail";
 import { Download } from "./pages/Download";
 import { Settings } from "./pages/Settings";
+import { AppearanceProvider } from "./lib/appearance-context";
 import { isFirstRun } from "./lib/ipc";
 
 /** 启动闸门：探测中什么都不画，免得白屏一闪之后又跳向导。 */
@@ -38,20 +39,24 @@ export default function App() {
   if (phase === "probing") return null;
   if (phase === "first-run") return <FirstRunWizard onDone={() => setPhase("ready")} />;
 
+  // 外观 Provider 包在路由外：外壳要拿它渲染背景，设置页要改它，两处共用同一份状态，
+  // 设置页改完当场生效而不必等下次进主页重新拉。
   return (
-    <HashRouter>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route index element={<Home />} />
-          <Route path="account" element={<Account />} />
-          <Route path="versions" element={<Versions />} />
-          {/* 实例卷宗：id 即版本目录名，可能含空格与中文，路由参数天然承载不需要额外编码。 */}
-          <Route path="versions/:id" element={<InstanceDetail />} />
-          <Route path="download" element={<Download />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </HashRouter>
+    <AppearanceProvider>
+      <HashRouter>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route index element={<Home />} />
+            <Route path="account" element={<Account />} />
+            <Route path="versions" element={<Versions />} />
+            {/* 实例卷宗：id 即版本目录名，可能含空格与中文，路由参数天然承载不需要额外编码。 */}
+            <Route path="versions/:id" element={<InstanceDetail />} />
+            <Route path="download" element={<Download />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </HashRouter>
+    </AppearanceProvider>
   );
 }

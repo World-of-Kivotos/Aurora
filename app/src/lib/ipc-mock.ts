@@ -218,6 +218,30 @@ const DISCOVERABLE: { name: string; path: string }[] = [
   { name: "HMCL", path: "D:\\HMCL\\.minecraft" },
 ];
 
+// 外观：mock 内存态。默认给一张背景，好让浏览器里直接看到「图 + 纸片」那套版式；
+// 想看纯纸面的样子在设置页点「恢复纯纸面」即可。
+const BACKGROUNDS: {
+  file: string;
+  width: number;
+  height: number;
+  bytes: number;
+  is_current: boolean;
+}[] = [
+  { file: "雪山黄昏.jpg", width: 1920, height: 1080, bytes: 386_512, is_current: true },
+  { file: "海岸线.jpg", width: 1920, height: 1280, bytes: 512_904, is_current: false },
+  { file: "夜航.jpg", width: 1600, height: 900, bytes: 271_338, is_current: false },
+];
+
+const APPEARANCE: { background: string | null; tint: string | null; veil: number } = {
+  background: "雪山黄昏.jpg",
+  tint: "#4a6274",
+  veil: 0,
+};
+
+function appearanceDto() {
+  return { ...APPEARANCE };
+}
+
 /** 与后端同口径的路径比较：Windows 不分大小写，且抹平斜杠与结尾分隔符。 */
 function samePath(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
@@ -853,6 +877,47 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     }
     FIRST_RUN.pending = false;
     return undefined as T;
+  }
+  // 外观：浏览器里也要能试出「有背景/没背景」两种版式，所以这几条同样维护内存态。
+  if (cmd === "get_appearance") {
+    return appearanceDto() as T;
+  }
+  if (cmd === "list_backgrounds") {
+    return BACKGROUNDS.map((b) => ({ ...b, is_current: b.file === APPEARANCE.background })) as T;
+  }
+  if (cmd === "import_background") {
+    // 真实实现会把图复制进图库并转码；mock 只按路径末段编一个条目。
+    const path = (_args?.path as string) ?? "新背景.png";
+    const stem = path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "新背景";
+    const file = `${stem}.jpg`;
+    if (!BACKGROUNDS.some((b) => b.file === file)) {
+      BACKGROUNDS.push({ file, width: 1920, height: 1080, bytes: 412_336, is_current: false });
+    }
+    APPEARANCE.background = file;
+    APPEARANCE.tint = "#4a6274";
+    return appearanceDto() as T;
+  }
+  if (cmd === "set_background") {
+    const file = (_args?.file as string | null) ?? null;
+    APPEARANCE.background = file;
+    APPEARANCE.tint = file ? "#4a6274" : null;
+    return appearanceDto() as T;
+  }
+  if (cmd === "remove_background") {
+    const file = _args?.file as string;
+    const kept = BACKGROUNDS.filter((b) => b.file !== file);
+    BACKGROUNDS.length = 0;
+    BACKGROUNDS.push(...kept);
+    if (APPEARANCE.background === file) {
+      APPEARANCE.background = null;
+      APPEARANCE.tint = null;
+    }
+    return appearanceDto() as T;
+  }
+  if (cmd === "set_background_veil") {
+    // 与后端同样钳到上限，否则浏览器里能拖出后端根本不接受的值。
+    APPEARANCE.veil = Math.min(Math.max(_args?.veil as number, 0), 60);
+    return appearanceDto() as T;
   }
   if (cmd === "get_version_settings") {
     return resolveVersionSettings(_args?.versionId as string) as T;

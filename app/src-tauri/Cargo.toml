@@ -33,3 +33,6 @@ tauri-plugin-process = "2"
 # 背景图协议的路径解码：文件名可含中文与空格，WebView 发来的是 percent-encoded 形式。
 # 已在 Tauri 依赖树里（url crate 依赖它），显式声明不额外增加编译量。
 percent-encoding = "2"
+# 系统文件选择框。选背景图必须拿到磁盘绝对路径，而 <input type="file"> 在 WebView 里
+# 出于安全只给 File 对象、拿不到路径，所以这一步绕不开原生对话框。
+tauri-plugin-dialog = "2"

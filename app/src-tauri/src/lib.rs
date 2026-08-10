@@ -1784,6 +1784,8 @@ pub fn run() {
         // 私钥只存在于 CI 的 secret 里，本机与仓库都不该有。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 选背景图要拿磁盘绝对路径，WebView 里的 <input type="file"> 给不了，只能走原生对话框。
+        .plugin(tauri_plugin_dialog::init())
         // 自定义背景的取图通道。走专用协议而不是开放 assetProtocol：后者要放开一整片本地路径
         // 才能读到图库目录，而这里只暴露「图库里的一张图」这一件事，文件名还要过门面的越界校验。
         .register_asynchronous_uri_scheme_protocol(BACKGROUND_SCHEME, |ctx, request, responder| {
