@@ -26,6 +26,7 @@
 //! ```
 
 pub mod auth;
+pub mod background;
 pub mod compat;
 pub mod config;
 pub mod crashdiag;
@@ -47,8 +48,12 @@ pub mod updates;
 pub mod versions;
 
 // ---- 门面自身的公开类型 ----
+pub use background::{BACKGROUNDS_DIR, BackgroundEntry};
 pub use compat::{Compatibility, InstanceMatch, classify};
-pub use config::{AuroraConfig, ConfigStore, DownloadSourcePolicy, MemorySettings, NamedDirectory};
+pub use config::{
+    AppearanceSettings, AuroraConfig, BackgroundRef, ConfigStore, DownloadSourcePolicy,
+    MAX_BACKGROUND_VEIL, MemorySettings, NamedDirectory,
+};
 pub use crashdiag::{CrashReport, CrashSuspect};
 pub use deps::{InstallPlan, PlannedItem};
 pub use error::{CoreError, Result};

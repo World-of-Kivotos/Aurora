@@ -80,6 +80,23 @@ pub enum CoreError {
     /// 该操作在当前平台不受支持（微软登录凭据加密仅限 Windows）。
     #[error("该操作在当前平台不受支持（微软登录的凭据加密仅限 Windows）")]
     PlatformUnsupported,
+
+    /// 背景图库的文件读写失败。
+    #[error("读写背景图 {path} 失败")]
+    BackgroundIo {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// 背景图无法解码（格式不支持或文件损坏）。
+    #[error("无法解析背景图 {path}：{reason}")]
+    BackgroundDecode { path: PathBuf, reason: String },
+    /// 背景文件名越界。文件名来自 WebView，越界即视为攻击面而不是笔误。
+    #[error("背景文件名 {file} 不合法：只接受图库目录下的单个文件名")]
+    BackgroundName { file: String },
+    /// 指定的背景不在图库里。
+    #[error("图库里没有背景 {file}")]
+    BackgroundNotFound { file: String },
 }
 
 /// 门面层 `Result` 别名，下游用 `#[from] aurora_core::CoreError` 冒泡。

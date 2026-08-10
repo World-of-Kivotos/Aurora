@@ -30,3 +30,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 tauri-plugin-updater = "2"
 # 更新装完要重启进程才能生效，重启走 process 插件。
 tauri-plugin-process = "2"
+# 背景图协议的路径解码：文件名可含中文与空格，WebView 发来的是 percent-encoded 形式。
+# 已在 Tauri 依赖树里（url crate 依赖它），显式声明不额外增加编译量。
+percent-encoding = "2"

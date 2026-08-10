@@ -94,6 +94,36 @@ impl Default for MemorySettings {
     }
 }
 
+/// 界面外观设置。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppearanceSettings {
+    /// 当前背景；`None` 表示纯纸面——不装背景的人看到的仍是原来那个极简启动屏。
+    pub background: Option<BackgroundRef>,
+    /// 背景之上的纸色遮罩强度（百分比，0 到 [`MAX_BACKGROUND_VEIL`]）。
+    ///
+    /// 文字都落在不透明纸片上，可读性本不依赖它；这是给花图留的退路——
+    /// 玩家的壁纸什么样都有，压一层纸色能把整屏观感拉回来。
+    pub background_veil: u8,
+}
+
+/// 纸色遮罩的上限。再高纸色就把图盖没了，那不如直接不设背景。
+pub const MAX_BACKGROUND_VEIL: u8 = 60;
+
+/// 指向背景图库里的一张图。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundRef {
+    /// `<数据目录>/backgrounds/` 下的文件名。
+    ///
+    /// 存文件名而不是绝对路径：数据目录随安装位置走（便携优先），
+    /// 存绝对路径的话把整个 Aurora 文件夹搬到另一台机器，背景立刻断链。
+    pub file: String,
+    /// 导入时算出的平均色 `#rrggbb`。
+    ///
+    /// 图经自定义协议加载有延迟，前端先铺这个纯色再把图淡进来，避免开机闪一下白。
+    pub tint: String,
+}
+
 /// 全局配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -125,6 +155,9 @@ pub struct AuroraConfig {
     pub cache_directory: Option<PathBuf>,
     /// 找不到匹配 Java 时是否自动下载 Mojang 运行时。
     pub auto_download_java: bool,
+    /// 界面外观（自定义背景）。
+    #[serde(default)]
+    pub appearance: AppearanceSettings,
 }
 
 /// 一条带名字的目录。名字是给人看的（「PCL2」「官方启动器」），路径才是身份。
@@ -148,6 +181,7 @@ impl Default for AuroraConfig {
             selected_version: None,
             cache_directory: None,
             auto_download_java: true,
+            appearance: AppearanceSettings::default(),
         }
     }
 }

@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aurora_core::{
-    detect_crash, Account, AccountType, AggregateResult, Aurora, CoreEvent, CrashReport,
+    detect_crash, Account, AccountType, AggregateResult, Aurora, BackgroundEntry, CoreEvent, CrashReport,
     DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, History, InstallPlan,
     InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
     LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemorySettings, ModLoader,
@@ -1642,6 +1642,140 @@ async fn list_ledger(
         .map_err(|e| e.to_string())
 }
 
+// ===== 自定义背景 =====
+
+/// 背景图协议名。Windows 上 WebView 看到的是 `http://aurora-bg.localhost/...`。
+const BACKGROUND_SCHEME: &str = "aurora-bg";
+
+/// 当前背景的固定路径。前端拼 `?v=<戳>` 让 WebView 缓存失效。
+const BACKGROUND_CURRENT_PATH: &str = "/current";
+
+/// 图库单张图的路径前缀，后接 percent-encoded 文件名。
+const BACKGROUND_LIBRARY_PREFIX: &str = "/library/";
+
+/// 界面外观 DTO。
+#[derive(Serialize)]
+struct AppearanceDto {
+    /// 当前背景的文件名；null 表示纯纸面。
+    background: Option<String>,
+    /// 当前背景的平均色，供图加载完成前铺底，避免闪白。
+    tint: Option<String>,
+    /// 纸色遮罩强度（百分比）。
+    veil: u8,
+}
+
+fn appearance_dto(aurora: &Aurora) -> AppearanceDto {
+    let appearance = &aurora.config().appearance;
+    AppearanceDto {
+        background: appearance.background.as_ref().map(|b| b.file.clone()),
+        tint: appearance.background.as_ref().map(|b| b.tint.clone()),
+        veil: appearance.background_veil,
+    }
+}
+
+/// 读取当前外观设置。
+#[tauri::command]
+async fn get_appearance(state: State<'_, RwLock<Aurora>>) -> Result<AppearanceDto, String> {
+    let aurora = state.read().await;
+    Ok(appearance_dto(&aurora))
+}
+
+/// 列出背景图库。
+#[tauri::command]
+async fn list_backgrounds(
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<Vec<BackgroundEntry>, String> {
+    let aurora = state.read().await;
+    aurora.list_backgrounds().await.map_err(|e| e.to_string())
+}
+
+/// 导入一张外部图片并立刻设为当前背景。
+///
+/// 导入与启用合成一步：玩家点「选择图片」的唯一预期就是马上看到它，
+/// 分成两个命令只会让界面多一次往返和一个中间态。
+#[tauri::command]
+async fn import_background(
+    path: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<AppearanceDto, String> {
+    let mut aurora = state.write().await;
+    let imported = aurora
+        .import_background(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+    aurora
+        .set_background(Some(imported.file))
+        .map_err(|e| e.to_string())?;
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(appearance_dto(&aurora))
+}
+
+/// 切换当前背景；传 null 回到纯纸面。
+#[tauri::command]
+async fn set_background(
+    file: Option<String>,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<AppearanceDto, String> {
+    let mut aurora = state.write().await;
+    aurora.set_background(file).map_err(|e| e.to_string())?;
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(appearance_dto(&aurora))
+}
+
+/// 从图库删掉一张图。删的是当前那张时自动回到纯纸面。
+#[tauri::command]
+async fn remove_background(
+    file: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<AppearanceDto, String> {
+    let mut aurora = state.write().await;
+    aurora
+        .remove_background(&file)
+        .await
+        .map_err(|e| e.to_string())?;
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(appearance_dto(&aurora))
+}
+
+/// 设置纸色遮罩强度（超出上限自动钳住）。
+#[tauri::command]
+async fn set_background_veil(
+    veil: u8,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<AppearanceDto, String> {
+    let mut aurora = state.write().await;
+    aurora.set_background_veil(veil);
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(appearance_dto(&aurora))
+}
+
+/// 把协议请求的路径解析成图库文件名。
+///
+/// `/current` 查配置里的当前背景，`/library/<名>` 取指定那张。文件名经 percent 解码后
+/// 仍要过门面的图库校验——这里只负责还原字符串，越界判定是 `read_background` 的职责。
+fn background_file_for(path: &str, current: Option<String>) -> Option<String> {
+    if path == BACKGROUND_CURRENT_PATH {
+        return current;
+    }
+    let encoded = path.strip_prefix(BACKGROUND_LIBRARY_PREFIX)?;
+    let decoded = percent_encoding::percent_decode_str(encoded)
+        .decode_utf8()
+        .ok()?;
+    Some(decoded.into_owned())
+}
+
+/// 取图失败时的响应。
+///
+/// 原因写进响应体：`<img>` 标签本身不会显示它，但 DevTools 的网络面板能看到——
+/// GUI 这边还没装 tracing subscriber，这是排查时唯一能留下的现场。
+fn background_error(status: tauri::http::StatusCode, reason: String) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(reason.into_bytes())
+        .expect("文本响应必定可构造")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1650,6 +1784,49 @@ pub fn run() {
         // 私钥只存在于 CI 的 secret 里，本机与仓库都不该有。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 自定义背景的取图通道。走专用协议而不是开放 assetProtocol：后者要放开一整片本地路径
+        // 才能读到图库目录，而这里只暴露「图库里的一张图」这一件事，文件名还要过门面的越界校验。
+        .register_asynchronous_uri_scheme_protocol(BACKGROUND_SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_owned();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<RwLock<Aurora>>();
+                let aurora = state.read().await;
+                let current = aurora
+                    .config()
+                    .appearance
+                    .background
+                    .as_ref()
+                    .map(|b| b.file.clone());
+                let Some(file) = background_file_for(&path, current) else {
+                    // 没设背景时请求 /current 会走到这里，属于常态而非错误。
+                    responder.respond(background_error(
+                        tauri::http::StatusCode::NOT_FOUND,
+                        format!("路径 {path} 没有对应的背景图"),
+                    ));
+                    return;
+                };
+                match aurora.read_background(&file).await {
+                    Ok(bytes) => {
+                        let response = tauri::http::Response::builder()
+                            .header(tauri::http::header::CONTENT_TYPE, "image/jpeg")
+                            // 换图靠 URL 上的版本戳失效，内容本身按文件名不可变缓存。
+                            .header(
+                                tauri::http::header::CACHE_CONTROL,
+                                "max-age=31536000, immutable",
+                            )
+                            .body(bytes)
+                            .expect("图片响应必定可构造");
+                        responder.respond(response);
+                    }
+                    // 越界文件名与「图被手动删了」都落这里，对 WebView 一律 404。
+                    Err(err) => responder.respond(background_error(
+                        tauri::http::StatusCode::NOT_FOUND,
+                        err.to_string(),
+                    )),
+                }
+            });
+        })
         .setup(|app| {
             // Aurora::load() 是异步，而 setup 是同步闭包；用 Tauri 运行时 block_on 构造后放进 state。
             // 构造失败（配置损坏等）直接冒泡终止启动，避免带着半初始化的门面继续跑。
@@ -1701,8 +1878,65 @@ pub fn run() {
             backup_size,
             diagnose_crash,
             last_crash,
-            list_ledger
+            list_ledger,
+            get_appearance,
+            list_backgrounds,
+            import_background,
+            set_background,
+            remove_background,
+            set_background_veil
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_path_resolves_to_configured_background() {
+        assert_eq!(
+            background_file_for(BACKGROUND_CURRENT_PATH, Some("雪山.jpg".to_owned())),
+            Some("雪山.jpg".to_owned())
+        );
+        // 没设背景时 /current 无解，协议据此回 404 而不是去读一个空文件名。
+        assert_eq!(background_file_for(BACKGROUND_CURRENT_PATH, None), None);
+    }
+
+    #[test]
+    fn library_path_percent_decodes_filename() {
+        // WebView 发出的中文与空格都是 percent-encoded 的，不解码就读不到文件。
+        assert_eq!(
+            background_file_for("/library/%E9%9B%AA%E5%B1%B1.jpg", None),
+            Some("雪山.jpg".to_owned())
+        );
+        assert_eq!(
+            background_file_for("/library/my%20photo.jpg", None),
+            Some("my photo.jpg".to_owned())
+        );
+        // 未编码的普通名字照样能过。
+        assert_eq!(
+            background_file_for("/library/plain.jpg", None),
+            Some("plain.jpg".to_owned())
+        );
+    }
+
+    #[test]
+    fn unknown_paths_have_no_file() {
+        // 图库前缀之外的路径一概无解；越界判定仍由门面的 read_background 兜底。
+        for path in ["/", "/library", "/other/x.jpg", "/currentx"] {
+            assert_eq!(background_file_for(path, Some("雪山.jpg".to_owned())), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn library_path_decodes_traversal_verbatim_for_facade_to_reject() {
+        // 这里只还原字符串，不做安全判断——解出 `../config.json` 是对的，
+        // 挡下它是 read_background 的职责（见 aurora-core 的 resolve_in_library 测试）。
+        assert_eq!(
+            background_file_for("/library/..%2Fconfig.json", None),
+            Some("../config.json".to_owned())
+        );
+    }
 }
