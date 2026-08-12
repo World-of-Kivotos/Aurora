@@ -39,7 +39,9 @@ export function AppShell() {
           veil={appearance.veil}
         />
       )}
-      {/* 外壳一律 relative：背景是 absolute，静态兄弟节点会被它盖住，得靠定位把层序拉回来。 */}
+      {/* 背景是 absolute，静态兄弟节点会被它盖住，得靠定位把层序拉回来。
+          标题栏在自己的根元素上带 relative；侧栏则是靠下面这层 flex 行的 relative 一起抬起来，
+          删掉那个 relative 侧栏就会沉到图底下——它不是可有可无的布局类。 */}
       <Titlebar onPhoto={showPhoto} />
       <div className="relative flex min-h-0 flex-1">
         <Sidebar onPhoto={showPhoto} />
