@@ -5,7 +5,7 @@
 //
 // 浏览器（mock 开发环境）里没有这个协议，用一张内联 SVG 顶上，让版式在浏览器里也看得出效果。
 
-import { getAppearance, type AppearanceDto } from "./ipc";
+import { getAppearance, type AppearanceDto, type PlateZone } from "./ipc";
 
 /** 协议在 Windows WebView 里的形态。macOS/Linux 是 aurora-bg://localhost，但 Aurora 只出桌面 Windows。 */
 const ORIGIN = "http://aurora-bg.localhost";
@@ -45,7 +45,44 @@ export function libraryBackgroundUrl(file: string): string {
 }
 
 /** 外观设置为空时的形态，用作首屏渲染的初值。 */
-export const EMPTY_APPEARANCE: AppearanceDto = { background: null, tint: null, veil: 0 };
+export const EMPTY_APPEARANCE: AppearanceDto = {
+  background: null,
+  tint: null,
+  plate: null,
+  veil: 0,
+};
+
+/**
+ * 主页右下角那撮信息该怎么摆。
+ *
+ * - `ink`：字直接压在图上，满墨，不要纸片。
+ * - `plate`：这块图撑不住裸字，退回磨砂纸片。
+ */
+export type PlateMode = "ink" | "plate";
+
+/*
+ * 裸字的准入线。由 WCAG 反解得出，不是拍脑袋定的：
+ *
+ *   墨色字 #14161a 的相对亮度是 0.00797，要 (L + 0.05) / (0.00797 + 0.05) >= 4.5
+ *   解得 L >= 0.2109，映射到 0..255 就是 54。
+ *
+ * 但实际取 69，因为判据用的是 p10——按定义还有一成像素比它更暗，而那一成完全可能
+ * 正压在字底下。54 在 p10 处刚好压线 4.52:1，没有余量；69 对应 5.53:1，
+ * 把那条暗尾也兜进去。宁可多退回纸片，不能让字在某张图上恰好糊掉。
+ */
+const INK_NEEDS_AT_LEAST = 69;
+
+export function plateMode(plate: PlateZone | null): PlateMode {
+  // 没量过的图（本功能上线前导入的）一律上纸片：宁可多一块纸，也不拿没量过的图赌可读性。
+  // 玩家在设置页重新选一次这张图，后端就会补上取样，自动切到裸字。
+  if (plate === null) return "plate";
+  // 比的是偏暗那一端而不是均值：选了墨色字，怕的就是区域里最暗的部分。
+  // 明暗跨度大的角落 p10 一定低，自然落到纸片，不需要另设「多花算花」的阈值。
+  //
+  // 深色图本可以反过来用纸色字，这里没有做：那要连 LaunchControl 的 Start 字样与
+  // 朱红强调色一起反相，是另一套配色决策。没定之前深色图一律走纸片这条稳妥路径。
+  return plate.p10 >= INK_NEEDS_AT_LEAST ? "ink" : "plate";
+}
 
 /**
  * 背景图当前是否正在显示——外壳与浮层据此决定用不用磨砂纸。

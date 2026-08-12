@@ -609,12 +609,26 @@ export const completeFirstRun = (gameDir: string, extras: NamedDirectory[]): Pro
 
 // ---- 自定义背景 ----
 
+/**
+ * 主页右下角信息区背后那块图的亮度取样，两端都按 0..255 映射相对亮度 0..1。
+ *
+ * 存两端而不是均值：字压在图上能不能读，取决于最不利的那一端。
+ */
+export interface PlateZone {
+  /** 第 10 百分位（偏暗那端）。墨色字要过的是这一关。 */
+  p10: number;
+  /** 第 90 百分位（偏亮那端）。纸色字要过的是这一关。 */
+  p90: number;
+}
+
 /** 当前外观设置。background 为 null 表示纯纸面。 */
 export interface AppearanceDto {
   /** 当前背景在图库里的文件名。 */
   background: string | null;
   /** 当前背景的平均色，图加载完成前先铺它，避免闪白。 */
   tint: string | null;
+  /** 右下角信息区的亮度取样；null 表示这张图还没量过（本功能上线前导入的）。 */
+  plate: PlateZone | null;
   /** 纸色遮罩强度（百分比）。 */
   veil: number;
 }

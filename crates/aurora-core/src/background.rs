@@ -17,7 +17,7 @@ use image::imageops::FilterType;
 use image::ImageReader;
 use serde::Serialize;
 
-use crate::config::{BackgroundRef, MAX_BACKGROUND_VEIL};
+use crate::config::{BackgroundRef, PlateZone, MAX_BACKGROUND_VEIL};
 use crate::error::{CoreError, Result};
 use crate::facade::Aurora;
 
@@ -146,8 +146,14 @@ impl Aurora {
             return Err(CoreError::BackgroundNotFound { file });
         }
         // 平均色随图走，切换时重算：沿用上一张的 tint 会在加载间隙闪一下完全无关的颜色。
-        let tint = average_color(&path)?;
-        self.config_mut().appearance.background = Some(BackgroundRef { file, tint });
+        // 右下角取样一并重算，顺带把本功能上线前导入、plate 还是 None 的老图补上——
+        // 玩家重新选一次就自愈，不需要单独的迁移步骤。
+        let decoded = decode_image(&path)?;
+        self.config_mut().appearance.background = Some(BackgroundRef {
+            file,
+            tint: tint_of(&decoded),
+            plate: Some(plate_zone_of(&decoded)),
+        });
         Ok(())
     }
 
@@ -269,18 +275,23 @@ fn import_blocking(source: &Path, dir: &Path, stem: &str) -> Result<BackgroundRe
 
     // 从落盘后的 JPEG 重算而不是拿内存里那份：转码是有损的，两处各算各的会差出一两个色阶，
     // 于是同一张图在「刚导入」和「重新选中」时兜底色不同。tint 只有一个定义——磁盘上那张图的平均色。
-    let tint = average_color(&target)?;
+    // 右下角取样同理：字色要跟玩家真正看到的那张图对齐，而不是转码前的原图。
+    let stored = decode_image(&target)?;
     let file = target
         .file_name()
         .and_then(|n| n.to_str())
         .expect("刚写出的文件名由本函数拼出，必为合法 UTF-8")
         .to_owned();
-    Ok(BackgroundRef { file, tint })
+    Ok(BackgroundRef {
+        file,
+        tint: tint_of(&stored),
+        plate: Some(plate_zone_of(&stored)),
+    })
 }
 
-/// 读一张图并算平均色。
-fn average_color(path: &Path) -> Result<String> {
-    let decoded = ImageReader::open(path)
+/// 读一张图并解码。
+fn decode_image(path: &Path) -> Result<image::DynamicImage> {
+    ImageReader::open(path)
         .map_err(|source| CoreError::BackgroundIo {
             path: path.to_path_buf(),
             source,
@@ -294,8 +305,7 @@ fn average_color(path: &Path) -> Result<String> {
         .map_err(|source| CoreError::BackgroundDecode {
             path: path.to_path_buf(),
             reason: source.to_string(),
-        })?;
-    Ok(tint_of(&decoded))
+        })
 }
 
 /// 图的平均色，`#rrggbb`。
@@ -312,6 +322,89 @@ fn tint_of(image: &image::DynamicImage) -> String {
     }
     let n = small.pixels().len() as u32;
     format!("#{:02x}{:02x}{:02x}", r / n, g / n, b / n)
+}
+
+/// 右下角信息区在图上的取样范围，从右下角起算的宽、高比例。
+///
+/// 这两个数对着实际那块内容的尺寸来：它约占内容区的 24% 宽、29% 高，
+/// 经 object-fit: cover 折算回图上再留一点富余，就是下面这对值。
+///
+/// 取样区必须贴着实际显示的那块，不能图省事取一大片：取大了会把根本没有字压着的
+/// 图也算进来，一角亮一角暗的图会因此被判成「花」而白白退回纸片。
+///
+/// 仍是近似——cover 的裁切量随窗口长宽比变化，这里按常见的横向窗口取一个固定值。
+/// 极端比例（竖图配宽窗）下量到的与实际显示的会有偏差，那种情况本就不该指望自动配色，
+/// 两端分位数过不了准入线，自然退回纸片。
+const PLATE_ZONE_W: f32 = 0.28;
+const PLATE_ZONE_H: f32 = 0.34;
+
+/// sRGB 分量到线性值的查表，算 WCAG 相对亮度用。
+///
+/// 逐像素做 powf 太贵——取样区在 1920 宽的图上是几十万像素，而分量只有 256 种取值，
+/// 打表把幂运算从「每像素三次」压到「每张图 256 次」。
+fn srgb_linear_table() -> [f32; 256] {
+    let mut table = [0f32; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        let c = i as f32 / 255.0;
+        *slot = if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        };
+    }
+    table
+}
+
+/// 量右下角那块区域的亮度均值与离散度。
+fn plate_zone_of(image: &image::DynamicImage) -> PlateZone {
+    let rgb = image.to_rgb8();
+    let (w, h) = rgb.dimensions();
+    // saturating_sub 兜住 1x1 这类极小图：算出来的起点不会越过图的边界。
+    let x0 = w.saturating_sub(((w as f32) * PLATE_ZONE_W).ceil() as u32);
+    let y0 = h.saturating_sub(((h as f32) * PLATE_ZONE_H).ceil() as u32);
+
+    let table = srgb_linear_table();
+    // 直方图而不是把每个亮度值收进 Vec 再排序：分位数只需要计数，
+    // 256 个桶对「挑字色」这个用途绰绰有余，也免掉几十万元素的分配与排序。
+    let mut hist = [0u32; 256];
+    let mut count = 0u32;
+    for y in y0..h {
+        for x in x0..w {
+            let px = rgb.get_pixel(x, y).0;
+            let lin = 0.2126 * table[px[0] as usize]
+                + 0.7152 * table[px[1] as usize]
+                + 0.0722 * table[px[2] as usize];
+            let bucket = (lin * 255.0).round().clamp(0.0, 255.0) as usize;
+            hist[bucket] += 1;
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        // 空区域只可能来自尺寸为 0 的图，那种图根本进不了图库。给一对横跨全程的分位数，
+        // 让前端两种字色都判不达标、老实退回纸片，而不是随便挑一个。
+        return PlateZone { p10: 0, p90: 255 };
+    }
+
+    PlateZone {
+        p10: percentile(&hist, count, 0.10),
+        p90: percentile(&hist, count, 0.90),
+    }
+}
+
+/// 从亮度直方图里取分位数。
+fn percentile(hist: &[u32; 256], count: u32, q: f32) -> u8 {
+    // ceil 保证 q=0.9 时取的是「至少覆盖 90%」的那个桶，避免整图纯色时因为
+    // 目标计数落在 0 而直接返回 0 桶。
+    let target = ((count as f32) * q).ceil().max(1.0) as u32;
+    let mut seen = 0u32;
+    for (bucket, n) in hist.iter().enumerate() {
+        seen += n;
+        if seen >= target {
+            return bucket as u8;
+        }
+    }
+    255
 }
 
 #[cfg(test)]
@@ -340,6 +433,114 @@ mod tests {
             let diff = got.abs_diff(*want);
             assert!(diff <= 2, "{actual} 的第 {i} 个通道是 {got}，期望接近 {want}");
         }
+    }
+
+    /// 造一张上下两半异色的图：上半 `top`、下半 `bottom`。
+    fn split_image(w: u32, h: u32, top: [u8; 3], bottom: [u8; 3]) -> image::DynamicImage {
+        let mut img = RgbImage::new(w, h);
+        for (_, y, px) in img.enumerate_pixels_mut() {
+            *px = Rgb(if y < h / 2 { top } else { bottom });
+        }
+        image::DynamicImage::ImageRgb8(img)
+    }
+
+    fn solid_image(w: u32, h: u32, color: [u8; 3]) -> image::DynamicImage {
+        let mut img = RgbImage::new(w, h);
+        for px in img.pixels_mut() {
+            *px = Rgb(color);
+        }
+        image::DynamicImage::ImageRgb8(img)
+    }
+
+    #[test]
+    fn plate_zone_reads_luminance_of_solid_images() {
+        // 纯色图的两个分位数必须重合并贴到对应端点。
+        let black = plate_zone_of(&solid_image(200, 200, [0, 0, 0]));
+        assert_eq!((black.p10, black.p90), (0, 0));
+
+        let white = plate_zone_of(&solid_image(200, 200, [255, 255, 255]));
+        assert_eq!((white.p10, white.p90), (255, 255));
+
+        // 中灰按 WCAG 相对亮度算要比按 sRGB 数值算暗得多（伽马）：sRGB 128 的相对亮度
+        // 约 0.2159，即 55/255，而不是 128。断言这一点等于断言我们确实做了线性化，
+        // 而不是直接平均 sRGB 分量——去掉查表里的 powf 这条就会挂。
+        let mid = plate_zone_of(&solid_image(200, 200, [128, 128, 128]));
+        assert!(
+            (50..=60).contains(&mid.p10) && mid.p10 == mid.p90,
+            "sRGB 128 应落在 55 附近且纯色两端重合，实际 p10={} p90={}",
+            mid.p10,
+            mid.p90
+        );
+    }
+
+    /// 取样区必须只看右下角。
+    ///
+    /// 把 plate_zone_of 里的区域起点改成 0（即全图取样），这个断言就会挂：
+    /// 全图会同时含黑与白，而右下角实际是纯白。
+    #[test]
+    fn plate_zone_samples_only_bottom_right() {
+        let img = split_image(200, 200, [0, 0, 0], [255, 255, 255]);
+        let zone = plate_zone_of(&img);
+        assert_eq!(
+            (zone.p10, zone.p90),
+            (255, 255),
+            "取样区应完全落在下半的白色里"
+        );
+    }
+
+    /// 明暗各半的角落：两端必须分别贴到黑与白，这正是要退回纸片的那类图。
+    #[test]
+    fn plate_zone_reports_both_ends_on_split_backdrop() {
+        // 取样区是底部 45%，让分界落在图高的 80% 处，取样区内就同时含黑与白。
+        let (w, h) = (200u32, 200u32);
+        let mut img = RgbImage::new(w, h);
+        for (_, y, px) in img.enumerate_pixels_mut() {
+            *px = Rgb(if y < (h * 4) / 5 { [0, 0, 0] } else { [255, 255, 255] });
+        }
+        let zone = plate_zone_of(&image::DynamicImage::ImageRgb8(img));
+        assert_eq!(zone.p10, 0, "偏暗那端应落在黑上");
+        assert_eq!(zone.p90, 255, "偏亮那端应落在白上");
+    }
+
+    /// 少量高光不该把整块区域判死——用分位数而不是最大/最小值的理由。
+    #[test]
+    fn plate_zone_ignores_sparse_outliers() {
+        let (w, h) = (200u32, 200u32);
+        let mut img = RgbImage::new(w, h);
+        for px in img.pixels_mut() {
+            *px = Rgb([0, 0, 0]);
+        }
+        // 在取样区里点上约 2% 的纯白像素，远低于 p90 的 10% 门槛。
+        for y in (h / 2)..h {
+            for x in (w / 2)..w {
+                if (x + y) % 50 == 0 {
+                    img.put_pixel(x, y, Rgb([255, 255, 255]));
+                }
+            }
+        }
+        let zone = plate_zone_of(&image::DynamicImage::ImageRgb8(img));
+        assert_eq!(zone.p90, 0, "稀疏高光应被分位数滤掉，实际 p90={}", zone.p90);
+    }
+
+    #[test]
+    fn import_records_plate_zone() {
+        let tmp = tempfile::tempdir().expect("临时目录");
+        let dir = tmp.path();
+        // 上黑下白：导入后落盘的 JPEG 右下角仍应是白的。
+        let src = dir.join("split.png");
+        split_image(400, 400, [0, 0, 0], [255, 255, 255])
+            .save(&src)
+            .expect("写测试图");
+
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).expect("建目录");
+        let refe = import_blocking(&src, &out, "split").expect("导入");
+        let plate = refe.plate.expect("导入必须量出取样区");
+        assert!(
+            plate.p10 > 230,
+            "右下角是白的，偏暗那端也应接近满值，实际 p10={}",
+            plate.p10
+        );
     }
 
     /// 造一张纯色图落盘，返回路径。

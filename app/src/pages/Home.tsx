@@ -14,6 +14,7 @@ import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
 import { AlertIcon, RefreshIcon } from "../components/icons";
 import { useAppearance } from "../lib/appearance-context";
+import { plateMode } from "../lib/appearance";
 import { pageItem, springs } from "../lib/motion";
 import {
   createOfflineAccount,
@@ -47,15 +48,21 @@ function loaderText(v: InstalledVersionDto): string {
   return l.version ? `${l.kind} ${l.version}` : l.kind;
 }
 
-// 右下角那撮内容的两种形态。没有背景图时它就坐在纸底上，与改动前一模一样——
-// 不装背景的人不该因为这个功能看到任何变化。
+// 右下角那撮内容的几种形态。
 //
-// 有图时用磨砂纸而不是不透明纸片：外壳已经整体改磨砂，这块再保持全实心就会从版面里跳出来，
-// 那正是「像贴纸」的由来。改用同族材质才归队（错误块、崩溃横条与提示浮层同理，各自已跟上）。
-// 取更实的一档（92% 对 85%）：这里压着版本名与账户名，可读性不跟外壳共享下限。
-// 投影保留——纸压在照片上是实打实的两个平面，理由见 app.css 里 paper-on-photo 的注释。
+// 没有背景图时坐在纸底上，与改动前一模一样——不装背景的人不该因为这个功能看到任何变化。
+//
+// 有图时首选不要纸片：字直接压在图上，字色由后端量出的区域亮度决定（见 appearance.ts
+// 的 plateMode）。一块纸压在图上无论做得多透，都还是在图里挖了一块出来；
+// 真正融进去的做法是让字自己适应它压着的那片图。
+//
+// 图撑不住裸字时才退回磨砂纸片：区域明暗跨度大到墨色字与纸色字都到不了 4.5:1，
+// 或这张图是本功能上线前导入的、还没量过。那两种情况下纸片是唯一稳妥的兜底。
 const PLATE_BARE = "mt-auto flex flex-col items-end gap-6 pt-10";
-const PLATE_ON_PHOTO =
+// 裸字：不铺底，只靠字色。右对齐与间距沿用纸片那套，换形态时版位不跳。
+const PLATE_NAKED = "mt-auto ml-auto flex flex-col items-end gap-6 pt-10";
+// 兜底纸片。投影保留——纸压在照片上是实打实的两个平面，理由见 app.css 里 paper-on-photo 的注释。
+const PLATE_FROSTED =
   "mt-auto ml-auto flex flex-col items-end gap-6 rounded-[3px] paper-frost-strong px-7 py-6 paper-on-photo";
 
 export function Home() {
@@ -63,6 +70,16 @@ export function Home() {
   const navigate = useNavigate();
   const { appearance } = useAppearance();
   const onPhoto = appearance.background !== null;
+  // 有图时先问一句这块图撑不撑得住裸字。撑得住就不要纸片，字直接压上去。
+  const naked = onPhoto && plateMode(appearance.plate) === "ink";
+  /**
+   * 裸字模式一律满墨，层级交给字号与字重，不用灰度。
+   *
+   * 这是算出来的结论不是偏好：准入线只保证满墨达到 4.5:1，同一底色下 ink/70 只有 3.48:1、
+   * ink/50 掉到 2.39:1，就算底色亮到 p10=200，ink/50 也才 3.25:1。
+   * 在照片上拿灰度做层级，等于把一半信息做成读不出来的。
+   */
+  const fg = (shade: string) => (naked ? "text-ink" : shade);
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   // config 里选中的启动版本 id；入场随 load 拉取，决定「开始游戏」启动哪个（版本页设定）。
@@ -285,14 +302,14 @@ export function Home() {
 
       {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}
       <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
-        <div className={onPhoto ? PLATE_ON_PHOTO : PLATE_BARE}>
+        <div className={!onPhoto ? PLATE_BARE : naked ? PLATE_NAKED : PLATE_FROSTED}>
           {onPhoto && (
             <div className="flex items-baseline gap-2.5 self-end">
-              <span className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</span>
+              <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/40")}`}>状态</span>
               {/* 比报头里那份状态值深一档：ink/60 压在不透明纸上是 4.56:1，勉强过线，
                   而这里底下是 92% 磨砂，剩的余量不够，掉到 4.3 上下。只改这一处，
                   报头那份（无背景图时才渲染）保持原样，免得「装不装背景」变成两套字色。 */}
-              <span className="font-mono text-[12px] tracking-[0.08em] text-ink/65 tabular-nums">
+              <span className={`font-mono text-[12px] tracking-[0.08em] ${fg("text-ink/65")} tabular-nums`}>
                 {status}
               </span>
             </div>
@@ -304,13 +321,13 @@ export function Home() {
                 {current.id}
               </div>
               {versionMeta && (
-                <div className="mt-1 truncate font-mono text-[12px] tracking-[0.02em] text-ink/50">
+                <div className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/50")}`}>
                   {versionMeta}
                 </div>
               )}
             </div>
           ) : (
-            <div className="text-right text-[15px] font-bold text-ink/30">
+            <div className={`text-right text-[15px] font-bold ${fg("text-ink/30")}`}>
               {loading ? "读取中…" : "尚未安装版本"}
             </div>
           )}
@@ -321,14 +338,14 @@ export function Home() {
               <SkinHead uuid={account.uuid} name={account.name} size={44} />
               <div className="min-w-0 text-right">
                 <div className="truncate text-[16px] leading-tight font-extrabold">{account.name}</div>
-                <div className="mt-0.5 text-[11px] tracking-[0.1em] text-ink/45">
+                <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/45")}`}>
                   {ACCOUNT_TYPE_LABEL[account.account_type]}
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex flex-col items-end gap-2">
-              <span className="text-[13px] text-ink/45">
+              <span className={`text-[13px] ${fg("text-ink/45")}`}>
                 {loading ? "正在读取账户…" : "还没有账户"}
               </span>
               {!loading && (

@@ -232,9 +232,18 @@ const BACKGROUNDS: {
   { file: "夜航.jpg", width: 1600, height: 900, bytes: 271_338, is_current: false },
 ];
 
-const APPEARANCE: { background: string | null; tint: string | null; veil: number } = {
+// 浏览器预览里的占位图（appearance.ts 的 MOCK_IMAGE）右下角是暖浅灰，
+// 给一对偏亮且跨度小的分位数，让预览走「墨色字裸压在图上」这条分支——
+// 那是真机上最常见的一档，预览要能看出它长什么样。
+const APPEARANCE: {
+  background: string | null;
+  tint: string | null;
+  plate: { p10: number; p90: number } | null;
+  veil: number;
+} = {
   background: "雪山黄昏.jpg",
   tint: "#4a6274",
+  plate: { p10: 96, p90: 158 },
   veil: 0,
 };
 
@@ -895,12 +904,14 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     }
     APPEARANCE.background = file;
     APPEARANCE.tint = "#4a6274";
+    APPEARANCE.plate = { p10: 96, p90: 158 };
     return appearanceDto() as T;
   }
   if (cmd === "set_background") {
     const file = (_args?.file as string | null) ?? null;
     APPEARANCE.background = file;
     APPEARANCE.tint = file ? "#4a6274" : null;
+    APPEARANCE.plate = file ? { p10: 96, p90: 158 } : null;
     return appearanceDto() as T;
   }
   if (cmd === "remove_background") {
@@ -911,6 +922,7 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     if (APPEARANCE.background === file) {
       APPEARANCE.background = null;
       APPEARANCE.tint = null;
+      APPEARANCE.plate = null;
     }
     return appearanceDto() as T;
   }

@@ -1655,6 +1655,15 @@ const BACKGROUND_CURRENT_PATH: &str = "/current";
 /// 图库单张图的路径前缀，后接 percent-encoded 文件名。
 const BACKGROUND_LIBRARY_PREFIX: &str = "/library/";
 
+/// 主页右下角信息区背后那块图的亮度取样 DTO。两端都按 0..=255 映射相对亮度 0..=1。
+#[derive(Serialize)]
+struct PlateZoneDto {
+    /// 第 10 百分位（偏暗那端）。
+    p10: u8,
+    /// 第 90 百分位（偏亮那端）。
+    p90: u8,
+}
+
 /// 界面外观 DTO。
 #[derive(Serialize)]
 struct AppearanceDto {
@@ -1662,6 +1671,8 @@ struct AppearanceDto {
     background: Option<String>,
     /// 当前背景的平均色，供图加载完成前铺底，避免闪白。
     tint: Option<String>,
+    /// 右下角信息区的亮度取样；null 表示这张图还没量过（本功能上线前导入的）。
+    plate: Option<PlateZoneDto>,
     /// 纸色遮罩强度（百分比）。
     veil: u8,
 }
@@ -1671,6 +1682,14 @@ fn appearance_dto(aurora: &Aurora) -> AppearanceDto {
     AppearanceDto {
         background: appearance.background.as_ref().map(|b| b.file.clone()),
         tint: appearance.background.as_ref().map(|b| b.tint.clone()),
+        plate: appearance
+            .background
+            .as_ref()
+            .and_then(|b| b.plate.as_ref())
+            .map(|p| PlateZoneDto {
+                p10: p.p10,
+                p90: p.p90,
+            }),
         veil: appearance.background_veil,
     }
 }
