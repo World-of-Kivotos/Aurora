@@ -1,7 +1,7 @@
 // 版本管理：已安装实例列表 + 设为当前启动版本。单独成页，后续在此扩展实例详情（Mod / 存档 / 独立设置 / 诊断）。
 // 安装新版本在「下载」页；此页只管「管理已有的」。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { EmptyState } from "../components/EmptyState";
@@ -46,6 +46,11 @@ export function Versions() {
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Record<string, InstanceStats>>({});
+  // 任一时刻只有一行带徽标，单个 ref 就够。
+  const badgeRef = useRef<HTMLSpanElement>(null);
+  // 徽标是否走 layoutId 迁移。旧行滚出可视区时不走：内容区是 overflow-auto 的裁剪盒，
+  // 此时 layoutId 会让徽标从裁剪边缘窜进来，看到的是一道红色残影而不是「它从那儿移过来」。
+  const [migrateBadge, setMigrateBadge] = useState(true);
 
   const load = useCallback(async () => {
     setError(null);
@@ -92,8 +97,26 @@ export function Versions() {
   const broken = scan?.broken ?? [];
   const current = selected && versions.some((v) => v.id === selected) ? selected : (versions[0]?.id ?? null);
 
+  /**
+   * 旧徽标此刻是否完整落在滚动视口内。
+   *
+   * 目标行必然可见（用户刚点了它行内的按钮），所以只需判断来源行。
+   * 滚动容器是 AppShell 的 main，用 closest 就近找而不是写死选择器链，
+   * 免得外壳布局一动这里就悄悄失效。
+   */
+  const badgeInView = () => {
+    const el = badgeRef.current;
+    const scroller = el?.closest("main");
+    if (!el || !scroller) return false;
+    const badge = el.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    return badge.top >= box.top && badge.bottom <= box.bottom;
+  };
+
   const setAsCurrent = async (id: string) => {
     const prev = selected;
+    // 与 setSelected 同一批次，迁移决策在挂载新徽标的那次渲染里就已生效。
+    setMigrateBadge(badgeInView());
     setSelected(id);
     try {
       await updateConfig({ selectedVersion: id });
@@ -165,7 +188,8 @@ export function Versions() {
                           把「哪个版本会被启动」这个答案的转移变成看得见的过程，而不是瞬移后要自己找。 */}
                       {isCur && (
                         <motion.span
-                          layoutId="current-version-badge"
+                          ref={badgeRef}
+                          layoutId={migrateBadge ? "current-version-badge" : undefined}
                           transition={springs.soft}
                           className="shrink-0 rounded-[2px] bg-accent/12 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
                         >
