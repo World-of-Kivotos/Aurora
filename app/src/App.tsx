@@ -15,6 +15,7 @@ import { InstanceDetail } from "./pages/InstanceDetail";
 import { Download } from "./pages/Download";
 import { Settings } from "./pages/Settings";
 import { AppearanceProvider } from "./lib/appearance-context";
+import { ToastProvider } from "./components/Toast";
 import { isFirstRun } from "./lib/ipc";
 
 /** 启动闸门：探测中什么都不画，免得白屏一闪之后又跳向导。 */
@@ -44,18 +45,23 @@ export default function App() {
   return (
     <AppearanceProvider>
       <HashRouter>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<Home />} />
-            <Route path="account" element={<Account />} />
-            <Route path="versions" element={<Versions />} />
-            {/* 实例卷宗：id 即版本目录名，可能含空格与中文，路由参数天然承载不需要额外编码。 */}
-            <Route path="versions/:id" element={<InstanceDetail />} />
-            <Route path="download" element={<Download />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
+        {/* Toast 挂在 Router 与 AppearanceProvider 之内：它要按「当前是否压在背景图上」
+            换材质，两样都得读得到。所有 useToast 调用点都在下面的路由子树里，
+            初次设定向导不用 toast，因此下沉不影响任何调用方。 */}
+        <ToastProvider>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route index element={<Home />} />
+              <Route path="account" element={<Account />} />
+              <Route path="versions" element={<Versions />} />
+              {/* 实例卷宗：id 即版本目录名，可能含空格与中文，路由参数天然承载不需要额外编码。 */}
+              <Route path="versions/:id" element={<InstanceDetail />} />
+              <Route path="download" element={<Download />} />
+              <Route path="settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </ToastProvider>
       </HashRouter>
     </AppearanceProvider>
   );

@@ -9,6 +9,7 @@ import { Sidebar } from "./Sidebar";
 import { PageBackground } from "./PageBackground";
 import { pageContainer } from "../lib/motion";
 import { schedulePrefetch } from "../lib/prefetch";
+import { photoShowsOn } from "../lib/appearance";
 import { useAppearance } from "../lib/appearance-context";
 
 export function AppShell() {
@@ -17,8 +18,9 @@ export function AppShell() {
   // 背景只进主页。下载/版本/设置信息密度高，一张图压在下面只会让人找不着重点。
   // 封面用整版图、内页回到纸面，这条分工没变，变的只是图铺到哪儿为止。
   const onHome = location.pathname === "/";
-  // 外壳是否该改用磨砂。条件里带 background 判空：没装背景的人不该因为这个功能看到任何变化。
-  const showPhoto = onHome && appearance.background !== null;
+  // 外壳是否该改用磨砂。判定与 Toast 共用 photoShowsOn，避免两处规则漂移；
+  // 其中的 background 判空保证没装背景的人看不到任何变化。
+  const showPhoto = photoShowsOn(location.pathname, appearance.background);
 
   // 外壳挂载即在空闲期预取下载页各 tab 的首屏（后端对清单与搜索都没有缓存，
   // 不预取的话每次进下载页都要现等一次网络往返）。只跑一次，与路由无关。

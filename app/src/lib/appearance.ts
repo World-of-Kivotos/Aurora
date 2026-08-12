@@ -47,6 +47,17 @@ export function libraryBackgroundUrl(file: string): string {
 /** 外观设置为空时的形态，用作首屏渲染的初值。 */
 export const EMPTY_APPEARANCE: AppearanceDto = { background: null, tint: null, veil: 0 };
 
+/**
+ * 背景图当前是否正在显示——外壳与浮层据此决定用不用磨砂纸。
+ *
+ * 判定只在这里定义一次。外壳（AppShell）与 Toast 分处两棵子树、各自拿得到 pathname 与 appearance，
+ * 两边各写一遍是能跑，但「哪些页面铺图」这条规则一改就会漂移，
+ * 届时会出现外壳已经磨砂、右下角的提示却仍按无图渲染这种错配。
+ */
+export function photoShowsOn(pathname: string, background: string | null): boolean {
+  return pathname === "/" && background !== null;
+}
+
 /** 纸色遮罩上限，与后端的 MAX_BACKGROUND_VEIL 对齐。 */
 export const MAX_VEIL = 60;
 
