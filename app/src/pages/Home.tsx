@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
@@ -14,7 +14,7 @@ import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
 import { AlertIcon, RefreshIcon } from "../components/icons";
 import { useAppearance } from "../lib/appearance-context";
-import { pageItem } from "../lib/motion";
+import { pageItem, springs } from "../lib/motion";
 import {
   createOfflineAccount,
   currentAccount,
@@ -252,16 +252,26 @@ export function Home() {
       )}
 
       {/* 崩溃横条：被动触发的止损入口，不常驻也不打断启动流程。完整诊断在实例卷宗页。 */}
-      {crash && (
-        <motion.div variants={pageItem} className={`mb-6 ${onPhoto ? "paper-on-photo" : ""}`}>
-          <CrashBanner
-            report={crash.report}
-            versionId={crash.versionId}
-            onDismiss={() => setCrash(null)}
-            onOpenDetail={() => navigate(`/versions/${encodeURIComponent(crash.versionId)}`)}
-          />
-        </motion.div>
-      )}
+      {/* 玩家点「关闭」是止损动作的收尾，一条报警横条瞬间蒸发更像界面又出了故障，而不是「这次点击生效了」；
+          AnimatePresence 留出退场时间，让它淡着上滑走掉。外层这层纸在有背景图时自带投影
+          （app.css 的 paper-on-photo），必须与内层横条同步淡出，否则会先剩一圈没有主体的影子。 */}
+      <AnimatePresence>
+        {crash && (
+          <motion.div
+            variants={pageItem}
+            exit={{ opacity: 0, y: -8 }}
+            transition={springs.settle}
+            className={`mb-6 ${onPhoto ? "paper-on-photo" : ""}`}
+          >
+            <CrashBanner
+              report={crash.report}
+              versionId={crash.versionId}
+              onDismiss={() => setCrash(null)}
+              onOpenDetail={() => navigate(`/versions/${encodeURIComponent(crash.versionId)}`)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}
       <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
