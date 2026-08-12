@@ -184,25 +184,29 @@ export function Versions() {
                       <span className="font-mono">{loaderText(v)}</span>
                     </span>
                   </button>
-                  {/* 已是当前的行显示静态标记，避免出现一个点了没反应的按钮。 */}
-                  {isCur ? (
-                    <span
-                      aria-hidden="true"
-                      className="mr-1 shrink-0 px-2 text-accent [&_svg]:h-4 [&_svg]:w-4"
-                      title="已是当前启动版本"
-                    >
-                      <CheckIcon />
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => void setAsCurrent(v.id)}
-                      title="设为当前启动版本"
-                      className="mr-1 shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11px] font-bold text-ink/0 transition-colors group-hover:text-ink/45 hover:!text-accent focus-visible:text-ink/45 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-                    >
-                      设为当前
-                    </button>
-                  )}
+                  {/* 已是当前的行显示静态标记，避免出现一个点了没反应的按钮。
+                      槽位定宽：勾标记比「设为当前」窄约 28px，不定宽的话切换时左侧 flex-1 会跟着改宽，
+                      新旧两行的元数据列同时横跳，正好盖过徽标迁移那点平滑感。 */}
+                  <div className="mr-1 flex w-17 shrink-0 items-center justify-end">
+                    {isCur ? (
+                      <span
+                        aria-hidden="true"
+                        className="px-2 text-accent [&_svg]:h-4 [&_svg]:w-4"
+                        title="已是当前启动版本"
+                      >
+                        <CheckIcon />
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void setAsCurrent(v.id)}
+                        title="设为当前启动版本"
+                        className="cursor-pointer rounded-[2px] px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/45 hover:!text-accent focus-visible:text-ink/45 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                      >
+                        设为当前
+                      </button>
+                    )}
+                  </div>
                 </div>
               </li>
             );
