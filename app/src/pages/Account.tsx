@@ -3,7 +3,7 @@
 // IPC reject 一个字符串；本页作为最外层展示层用 try/catch → toast 暴露，绝不吞。
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { PageHeader } from "../components/PageHeader";
 import { Button } from "../components/Button";
@@ -12,7 +12,7 @@ import { SkinHead } from "../components/SkinHead";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { UserIcon, RefreshIcon, AlertIcon } from "../components/icons";
-import { pageItem } from "../lib/motion";
+import { pageItem, springs } from "../lib/motion";
 import {
   listAccounts,
   currentAccount,
@@ -279,45 +279,58 @@ export function Account() {
           <EmptyState icon={<UserIcon />} title="还没有账户，用下方入口添加一个开始游戏。" />
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {accounts.map((a) => {
-              const isCurrent = a.uuid === currentUuid;
-              return (
-                <div
-                  key={a.uuid}
-                  className={[
-                    "flex flex-col rounded-[3px] border bg-paper-sink p-4",
-                    isCurrent ? "border-ink" : "border-ink/10",
-                  ].join(" ")}
-                >
-                  <div className="flex items-center gap-3.5">
-                    <SkinHead uuid={a.uuid} name={a.name} size={44} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-[15px] font-bold">{a.name}</span>
-                        {isCurrent && (
-                          <span className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
-                            当前
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-0.5 text-[12px] text-ink/55">
-                        {TYPE_LABEL[a.account_type]}
+            {/* 删除账户后 load() 重取会让卡片凭空消失、栅格硬跳位；靠 AnimatePresence 与 layout 让退场和重排连续可见。 */}
+            <AnimatePresence initial={false}>
+              {accounts.map((a) => {
+                const isCurrent = a.uuid === currentUuid;
+                return (
+                  <motion.div
+                    key={a.uuid}
+                    layout
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.96 }}
+                    transition={springs.settle}
+                    className={[
+                      "flex flex-col rounded-[3px] border bg-paper-sink p-4",
+                      isCurrent ? "border-ink" : "border-ink/10",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <SkinHead uuid={a.uuid} name={a.name} size={44} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-[15px] font-bold">{a.name}</span>
+                          {/* 切换当前账户时徽标在两张卡片间共享，避免一边灭一边亮的瞬移感。 */}
+                          {isCurrent && (
+                            <motion.span
+                              layoutId="current-account-badge"
+                              transition={springs.soft}
+                              className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
+                            >
+                              当前
+                            </motion.span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-[12px] text-ink/55">
+                          {TYPE_LABEL[a.account_type]}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="mt-4 flex items-center gap-2">
-                    {!isCurrent && (
-                      <Button variant="secondary" onClick={() => setActive(a.uuid)}>
-                        设为当前
+                    <div className="mt-4 flex items-center gap-2">
+                      {!isCurrent && (
+                        <Button variant="secondary" onClick={() => setActive(a.uuid)}>
+                          设为当前
+                        </Button>
+                      )}
+                      <Button variant="secondary" onClick={() => setRemoveTarget(a)}>
+                        删除
                       </Button>
-                    )}
-                    <Button variant="secondary" onClick={() => setRemoveTarget(a)}>
-                      删除
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </div>
         )}
       </motion.div>
