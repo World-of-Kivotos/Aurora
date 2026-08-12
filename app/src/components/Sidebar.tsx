@@ -56,10 +56,14 @@ export function Sidebar({ onPhoto }: { onPhoto: boolean }) {
     <nav
       aria-label="主导航"
       className={[
-        "flex w-[196px] shrink-0 flex-col px-5 pt-6 pb-5",
-        // 有图时撤掉那道竖线：磨砂边界本身已经把侧栏与内容区分开了，
+        "flex w-[196px] shrink-0 flex-col border-r px-5 pt-6 pb-5 transition-colors",
+        // 有图时把那道竖线隐去：磨砂边界本身已经把侧栏与内容区分开了，
         // 再压一道墨线等于把刚抹平的那条缝重新描一遍。
-        onPhoto ? "paper-frost" : "border-r border-ink/10",
+        //
+        // 隐去用 border-transparent 而不是撤掉 border-r：外观设置要过一次 IPC 才回来，
+        // 首帧 background 必为 null，落到主页时 onPhoto 会由假翻真。若那时边框整条增删，
+        // 竖线是硬消失；保留占位只换颜色，配合 transition-colors 就是淡出。
+        onPhoto ? "paper-frost border-transparent" : "border-ink/10",
       ].join(" ")}
     >
       <div className="mb-9 flex items-center gap-2.5 pl-[6px]">
