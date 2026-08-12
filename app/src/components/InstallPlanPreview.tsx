@@ -74,7 +74,7 @@ function ChannelBadge({ channel }: { channel: ReleaseChannel }) {
     <span
       className={[
         "shrink-0 rounded-[2px] px-1.5 py-0.5",
-        preview ? "bg-accent/10 font-bold text-accent" : "bg-ink/[0.07] text-ink/45",
+        preview ? "bg-accent/10 font-bold text-accent" : "bg-ink/[0.07] text-ink/60",
       ].join(" ")}
     >
       {CHANNEL_LABEL[channel]}
@@ -142,7 +142,7 @@ function PlanRow({
         {isDependency ? (
           <span
             title={`因 ${requiredByLabel} 需要`}
-            className="max-w-[46%] shrink-0 truncate rounded-[2px] bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/55"
+            className="max-w-[46%] shrink-0 truncate rounded-[2px] bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60"
           >
             因 {requiredByLabel} 需要
           </span>
@@ -153,14 +153,14 @@ function PlanRow({
         )}
       </div>
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-ink/45">
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-ink/60">
         <span className="font-mono tabular-nums">{v.version_number}</span>
         <ChannelBadge channel={v.release_channel} />
         <span className="font-mono tabular-nums">
           {v.file_size === null ? "大小未知" : formatBytes(v.file_size)}
         </span>
         {skipped && (
-          <span className="inline-flex items-center gap-1 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-ink/55">
+          <span className="inline-flex items-center gap-1 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-ink/60">
             <CheckIcon size={11} />
             已满足，将跳过
           </span>
@@ -237,9 +237,9 @@ export function InstallPlanPreview({
   return (
     <section aria-label="安装计划" aria-busy={loading} className="flex min-w-0 flex-col">
       <header className="mb-3 flex items-baseline gap-3">
-        <h2 className="shrink-0 text-[10px] font-bold tracking-[0.2em] text-ink/40">安装计划</h2>
-        <span className="min-w-0 truncate text-[12px] text-ink/45">落位到 {versionId}</span>
-        <span className="ml-auto shrink-0 font-mono text-[12px] text-ink/40 tabular-nums">
+        <h2 className="shrink-0 text-[10px] font-bold tracking-[0.2em] text-ink/60">安装计划</h2>
+        <span className="min-w-0 truncate text-[12px] text-ink/60">落位到 {versionId}</span>
+        <span className="ml-auto shrink-0 font-mono text-[12px] text-ink/60 tabular-nums">
           {plan === null ? "" : `${plan.items.length} 项`}
         </span>
       </header>
@@ -281,14 +281,14 @@ export function InstallPlanPreview({
             {plan.skipped.length > 0 && (
               <section className="mt-4 rounded-[3px] border border-ink/12 px-3.5 py-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-ink/40 [&_svg]:h-[15px] [&_svg]:w-[15px]">
+                  <span className="text-ink/30 [&_svg]:h-[15px] [&_svg]:w-[15px]">
                     <AlertIcon />
                   </span>
-                  <h3 className="text-[10px] font-bold tracking-[0.2em] text-ink/45">未自动处理</h3>
+                  <h3 className="text-[10px] font-bold tracking-[0.2em] text-ink/60">未自动处理</h3>
                 </div>
                 <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
                   {plan.skipped.map((note, i) => (
-                    <li key={`${i}-${note}`} className="flex gap-2 text-[12.5px] leading-snug text-ink/65">
+                    <li key={`${i}-${note}`} className="flex gap-2 text-[12.5px] leading-snug text-ink/60">
                       <span aria-hidden="true" className="shrink-0 text-ink/30">
                         -
                       </span>
@@ -306,7 +306,7 @@ export function InstallPlanPreview({
         <div className="min-w-0">
           <p className="text-[13px] leading-tight font-bold text-ink">{footerText}</p>
           {summary.satisfied > 0 && (
-            <p className="mt-1 text-[11px] text-ink/45">
+            <p className="mt-1 text-[11px] text-ink/60">
               另有 {summary.satisfied} 项已装同版本，将跳过
             </p>
           )}

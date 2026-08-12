@@ -27,7 +27,7 @@ function WinButton({
         "grid h-[28px] w-[34px] cursor-pointer place-items-center rounded-[3px] transition-colors",
         // 磨砂放到 65% 之后 ink/50 只剩 2.57，跌破非文字对比的 3:1；加粗到 ink/70 得 3.93。
         // 这一档是磨砂能放这么透的前提，不是可选的润色。
-        onPhoto ? "text-ink/70" : "text-ink/50",
+        onPhoto ? "text-ink/70" : "text-ink/60",
         "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
         danger ? "hover:bg-accent hover:text-paper-on" : "hover:bg-ink/6 hover:text-ink",
       ].join(" ")}
@@ -54,7 +54,7 @@ export function Titlebar({ onPhoto }: { onPhoto: boolean }) {
         <SparkleIcon size={12} className="text-accent" />
         <span
           className={`text-[10.5px] font-extrabold tracking-[0.3em] ${
-            onPhoto ? "text-ink/75" : "text-ink/55"
+            onPhoto ? "text-ink/75" : "text-ink/60"
           }`}
         >
           AURORA

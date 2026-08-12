@@ -66,7 +66,7 @@ const TABS: { key: TabKey; label: string; icon: typeof CubeIcon }[] = [
 const CTRL = "h-10";
 
 const inputCls =
-  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/35 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 const ISOLATION_OPTIONS: { value: IsolationOverride; label: string }[] = [
   { value: "follow_global", label: "跟随全局" },
@@ -123,7 +123,7 @@ function SearchField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`${CTRL} w-full rounded-[3px] border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/35 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
+        className={`${CTRL} w-full rounded-[3px] border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
       />
     </div>
   );
@@ -156,7 +156,7 @@ function Segmented<T extends string>({
             aria-pressed={on}
             className={[
               "relative h-full cursor-pointer rounded-[2px] px-3 text-[13px] font-bold transition-colors",
-              on ? "text-paper-on" : "text-ink/45 hover:text-ink/75",
+              on ? "text-paper-on" : "text-ink/60 hover:text-ink/75",
             ].join(" ")}
           >
             {on && (
@@ -179,7 +179,7 @@ function Tag({ children, tone = "plain" }: { children: ReactNode; tone?: "plain"
   const cls =
     tone === "accent"
       ? "bg-accent/12 text-accent"
-      : "bg-ink/[0.07] text-ink/55";
+      : "bg-ink/[0.07] text-ink/60";
   return (
     <span className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-semibold ${cls}`}>
       {children}
@@ -190,8 +190,8 @@ function Tag({ children, tone = "plain" }: { children: ReactNode; tone?: "plain"
 function SectionTitle({ title, note }: { title: string; note?: string }) {
   return (
     <h2 className="mb-3 flex items-baseline gap-3">
-      <span className="text-[11px] font-bold tracking-[0.22em] text-ink/40">{title}</span>
-      {note && <span className="text-[12px] text-ink/35">{note}</span>}
+      <span className="text-[11px] font-bold tracking-[0.22em] text-ink/60">{title}</span>
+      {note && <span className="text-[12px] text-ink/60">{note}</span>}
     </h2>
   );
 }
@@ -241,10 +241,10 @@ function CrashBanner({ report }: { report: CrashReport }) {
       ].join(" ")}
     >
       <div className="flex items-center gap-3">
-        <span className={alarming ? "text-danger" : "text-ink/40"}>
+        <span className={alarming ? "text-danger" : "text-ink/60"}>
           <AlertIcon size={18} />
         </span>
-        <span className={`flex-1 text-[13px] ${alarming ? "text-danger" : "text-ink/65"}`}>
+        <span className={`flex-1 text-[13px] ${alarming ? "text-danger" : "text-ink/60"}`}>
           {alarming
             ? `上次运行的日志里读出 ${findings} 条线索`
             : "上次运行的日志已归档，未读出已知的异常线索"}
@@ -262,7 +262,7 @@ function CrashBanner({ report }: { report: CrashReport }) {
       </div>
 
       {report.log_path && (
-        <p className="mt-2 truncate font-mono text-[11px] text-ink/35" title={report.log_path}>
+        <p className="mt-2 truncate font-mono text-[11px] text-ink/60" title={report.log_path}>
           {report.log_path}
         </p>
       )}
@@ -285,11 +285,11 @@ function CrashBanner({ report }: { report: CrashReport }) {
                         <span className="text-[14px] font-bold text-ink">{d.summary}</span>
                         <Tag>{d.category}</Tag>
                       </div>
-                      <p className="mt-1 text-[12.5px] text-ink/65">{d.advice}</p>
+                      <p className="mt-1 text-[12.5px] text-ink/60">{d.advice}</p>
                       {d.detail && (
-                        <p className="mt-1 font-mono text-[11.5px] text-ink/50">{d.detail}</p>
+                        <p className="mt-1 font-mono text-[11.5px] text-ink/60">{d.detail}</p>
                       )}
-                      <p className="mt-1 truncate font-mono text-[11px] text-ink/35" title={d.matched}>
+                      <p className="mt-1 truncate font-mono text-[11px] text-ink/60" title={d.matched}>
                         {d.matched}
                       </p>
                     </li>
@@ -302,9 +302,9 @@ function CrashBanner({ report }: { report: CrashReport }) {
                   <SectionTitle title="日志指向的文件" />
                   <ul className="m-0 list-none p-0">
                     {report.suspects.map((s) => (
-                      <li key={s.mod_id} className="py-1 text-[13px] text-ink/70">
+                      <li key={s.mod_id} className="py-1 text-[13px] text-ink/75">
                         日志指向 <span className="font-mono">{s.file_name ?? s.mod_id}</span>
-                        {s.file_name && <span className="ml-2 text-[11.5px] text-ink/40">{s.mod_id}</span>}
+                        {s.file_name && <span className="ml-2 text-[11.5px] text-ink/60">{s.mod_id}</span>}
                       </li>
                     ))}
                   </ul>
@@ -403,8 +403,8 @@ function OverviewTab({
         </div>
 
         <div className="mt-3 flex items-baseline gap-3">
-          <span className="shrink-0 text-[11px] font-bold tracking-[0.18em] text-ink/35">工作目录</span>
-          <span className="min-w-0 flex-1 font-mono text-[12px] break-all text-ink/70">
+          <span className="shrink-0 text-[11px] font-bold tracking-[0.18em] text-ink/60">工作目录</span>
+          <span className="min-w-0 flex-1 font-mono text-[12px] break-all text-ink/75">
             {settings.working_dir}
           </span>
         </div>
@@ -490,11 +490,11 @@ function OverviewTab({
               <Skeleton className="ml-auto h-9 w-20" />
             </div>
           ) : updatableCount === 0 ? (
-            <p className="text-[13px] text-ink/55">暂无待处理项。</p>
+            <p className="text-[13px] text-ink/60">暂无待处理项。</p>
           ) : (
             <ul className="m-0 list-none p-0">
               <li className="flex items-center justify-between gap-4">
-                <span className="text-[14px] text-ink/80">
+                <span className="text-[14px] text-ink/75">
                   <span className="font-bold tabular-nums">{updatableCount}</span> 个 Mod 可更新
                 </span>
                 <Button variant="secondary" icon={<DownloadIcon size={15} />} onClick={onGoUpdates}>
@@ -658,16 +658,16 @@ function ContentTab({ versionId, rows, filter, onFilterChange, onReload }: Conte
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                     <span
-                      className={`truncate text-[15px] font-bold ${r.mod.enabled ? "text-ink" : "text-ink/40"}`}
+                      className={`truncate text-[15px] font-bold ${r.mod.enabled ? "text-ink" : "text-ink/60"}`}
                     >
                       {title}
                     </span>
-                    {meta?.version && <span className="text-[12px] text-ink/45">{meta.version}</span>}
+                    {meta?.version && <span className="text-[12px] text-ink/60">{meta.version}</span>}
                     {meta && <Tag>{meta.loader}</Tag>}
                     {r.update && <Tag tone="accent">可更新 {r.update.latest.version_number}</Tag>}
                   </div>
 
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-ink/40">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-ink/60">
                     <span className="truncate font-mono">{r.mod.file_name}</span>
                     {r.entry ? (
                       <>
@@ -677,7 +677,7 @@ function ContentTab({ versionId, rows, filter, onFilterChange, onReload }: Conte
                       </>
                     ) : (
                       <>
-                        <span className="text-ink/50">来源未知</span>
+                        <span className="text-ink/60">来源未知</span>
                         <button
                           type="button"
                           onClick={() => void identify()}
@@ -800,16 +800,16 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                     <span className="text-[15px] font-bold">{EVENT_LABEL[e.kind]}</span>
-                    <span className="font-mono text-[12px] text-ink/45 tabular-nums">{fmtTime(e.at)}</span>
-                    {detail && <span className="font-mono text-[12px] text-ink/55">{detail}</span>}
+                    <span className="font-mono text-[12px] text-ink/60 tabular-nums">{fmtTime(e.at)}</span>
+                    {detail && <span className="font-mono text-[12px] text-ink/60">{detail}</span>}
                   </div>
                   {files.length > 0 && (
-                    <p className="mt-1 font-mono text-[11.5px] break-all text-ink/45">
+                    <p className="mt-1 font-mono text-[11.5px] break-all text-ink/60">
                       {files.join("、")}
                     </p>
                   )}
                   {check && !check.can_rollback && check.reason && (
-                    <p className="mt-1 text-[11.5px] text-ink/40">{check.reason}</p>
+                    <p className="mt-1 text-[11.5px] text-ink/60">{check.reason}</p>
                   )}
                 </div>
 
@@ -834,7 +834,7 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
         <span className="text-[13px] text-ink/60">
           备份占用 <span className="font-mono font-bold text-ink tabular-nums">{fmtBytes(backupBytes)}</span>
         </span>
-        <span className="text-[12px] text-ink/35">
+        <span className="text-[12px] text-ink/60">
           {rollbackable.length > 0
             ? `${rollbackable.length} 个事件仍可回滚`
             : "当前没有可回滚的事件"}
@@ -1052,14 +1052,14 @@ export function InstanceDetail() {
           <button
             type="button"
             onClick={() => navigate("/versions")}
-            className="shrink-0 cursor-pointer text-[12px] font-semibold text-ink/40 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            className="shrink-0 cursor-pointer text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           >
             版本
           </button>
           <h1 className="truncate text-[20px] font-extrabold tracking-[-0.01em] tabular-nums">
             {versionId}
           </h1>
-          <span className="shrink-0 text-[12px] text-ink/35">实例卷宗</span>
+          <span className="shrink-0 text-[12px] text-ink/60">实例卷宗</span>
         </div>
         <button
           type="button"
@@ -1067,7 +1067,7 @@ export function InstanceDetail() {
             void load();
             void loadUpdates();
           }}
-          className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] font-semibold text-ink/45 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
+          className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
         >
           <RefreshIcon />
           刷新
@@ -1101,7 +1101,7 @@ export function InstanceDetail() {
               className={[
                 "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
-                on ? "font-extrabold text-ink" : "font-semibold text-ink/40 hover:text-ink/70",
+                on ? "font-extrabold text-ink" : "font-semibold text-ink/60 hover:text-ink/75",
               ].join(" ")}
             >
               <Icon size={16} />

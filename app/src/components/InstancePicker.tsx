@@ -131,7 +131,7 @@ function modsDirOf(workingDir: string): string {
 
 // 非正式通道必须显眼：玩家有权知道自己在装预览版。
 function channelTone(channel: ReleaseChannel): string {
-  return channel === "release" ? "text-ink/45" : "text-accent";
+  return channel === "release" ? "text-ink/60" : "text-accent";
 }
 
 export function InstancePicker({
@@ -367,22 +367,22 @@ export function InstancePicker({
     <>
       <div className="mr-auto min-w-0 text-left">
         {!selected ? (
-          <span className="text-[12px] text-ink/45">未选中实例</span>
+          <span className="text-[12px] text-ink/60">未选中实例</span>
         ) : settingErr ? (
           <span className="text-[12px] break-words text-danger">
             读取工作目录失败：{settingErr}
           </span>
         ) : !setting ? (
-          <span className="text-[12px] text-ink/45">正在解析工作目录…</span>
+          <span className="text-[12px] text-ink/60">正在解析工作目录…</span>
         ) : (
           <>
             <div
-              className="truncate font-mono text-[12px] text-ink/70"
+              className="truncate font-mono text-[12px] text-ink/75"
               title={modsDirOf(setting.working_dir)}
             >
               将写入 {modsDirOf(setting.working_dir)}
             </div>
-            <div className="mt-0.5 text-[11px] text-ink/45">
+            <div className="mt-0.5 text-[11px] text-ink/60">
               {setting.isolated
                 ? setting.forced_by_local_data
                   ? "版本隔离：开（该版本目录下已有本地数据，强制隔离）"
@@ -470,10 +470,10 @@ export function InstancePicker({
               .map((g) => (
                 <section key={g.tier} className="mb-4 last:mb-0">
                   <header className="mb-2 flex items-baseline gap-2">
-                    <h3 className="m-0 text-[11px] font-bold tracking-[0.18em] text-ink/45">
+                    <h3 className="m-0 text-[11px] font-bold tracking-[0.18em] text-ink/60">
                       {g.label}
                     </h3>
-                    <span className="text-[11px] text-ink/30">{g.note}</span>
+                    <span className="text-[11px] text-ink/60">{g.note}</span>
                   </header>
                   <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
                     {g.items.map((m) => {
@@ -511,7 +511,7 @@ export function InstancePicker({
                             </span>
                             <span
                               className={`mt-0.5 truncate font-mono text-[10.5px] tabular-nums ${
-                                on ? "text-paper-on/55" : "text-ink/45"
+                                on ? "text-paper-on/55" : "text-ink/60"
                               }`}
                             >
                               MC {m.mc_version} · {loaderText(m.loaders)}
@@ -539,7 +539,7 @@ export function InstancePicker({
             {selected && (
               <>
                 <div className="rounded-[3px] border border-ink/12 bg-paper-sink p-4">
-                  <div className="text-[10px] font-bold tracking-[0.2em] text-ink/40">
+                  <div className="text-[10px] font-bold tracking-[0.2em] text-ink/60">
                     将安装的版本
                   </div>
 
@@ -561,32 +561,32 @@ export function InstancePicker({
                         </span>
                       </div>
                       <div
-                        className="mt-1 truncate font-mono text-[12px] text-ink/55"
+                        className="mt-1 truncate font-mono text-[12px] text-ink/60"
                         title={selectedVersion.version_number}
                       >
                         {selectedVersion.version_number}
                       </div>
                       <dl className="mt-3 mb-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[12px]">
-                        <dt className="text-ink/40">MC 版本</dt>
+                        <dt className="text-ink/60">MC 版本</dt>
                         <dd className="m-0 min-w-0 text-ink/75">
                           {gameVersionText(selectedVersion.game_versions)}
                         </dd>
-                        <dt className="text-ink/40">加载器</dt>
+                        <dt className="text-ink/60">加载器</dt>
                         <dd className="m-0 min-w-0 text-ink/75">
                           {loaderText(selectedVersion.loaders)}
                         </dd>
-                        <dt className="text-ink/40">文件</dt>
+                        <dt className="text-ink/60">文件</dt>
                         <dd
                           className="m-0 min-w-0 truncate font-mono text-ink/75"
                           title={selectedVersion.file_name}
                         >
                           {selectedVersion.file_name}
                         </dd>
-                        <dt className="text-ink/40">大小</dt>
+                        <dt className="text-ink/60">大小</dt>
                         <dd className="m-0 min-w-0 text-ink/75 tabular-nums">
                           {formatSize(selectedVersion.file_size)}
                         </dd>
-                        <dt className="text-ink/40">发布</dt>
+                        <dt className="text-ink/60">发布</dt>
                         <dd className="m-0 min-w-0 text-ink/75 tabular-nums">
                           {selectedVersion.date_published
                             ? selectedVersion.date_published.slice(0, 10)
@@ -613,13 +613,13 @@ export function InstancePicker({
                       <button
                         type="button"
                         onClick={() => setShowAllVersions((v) => !v)}
-                        className="cursor-pointer text-[11px] text-ink/45 underline-offset-2 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        className="cursor-pointer text-[11px] text-ink/60 underline-offset-2 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                       >
                         {showAllVersions ? "只看配得上的" : "显示全部版本"}
                       </button>
                     )}
                     {requiredDeps > 0 && (
-                      <span className="text-[11px] text-ink/45">
+                      <span className="text-[11px] text-ink/60">
                         {requiredDeps} 项必需依赖会随本次安装一并装入
                       </span>
                     )}
@@ -656,7 +656,7 @@ export function InstancePicker({
                               </Button>
                             </div>
                           ) : ranked.length === 0 ? (
-                            <p className="m-0 text-[12px] text-ink/50">
+                            <p className="m-0 text-[12px] text-ink/60">
                               {showAllVersions
                                 ? "该工程在平台上没有可用版本。"
                                 : "没有配得上这个实例的版本。点上方「显示全部版本」可自行挑一个强装。"}
@@ -707,7 +707,7 @@ export function InstancePicker({
                                             ? "text-paper-on/60"
                                             : vTier === "mismatch"
                                               ? "text-danger/80"
-                                              : "text-ink/40"
+                                              : "text-ink/60"
                                         }`}
                                       >
                                         {TIER_BADGE[vTier]}
@@ -715,7 +715,7 @@ export function InstancePicker({
                                     </span>
                                     <span
                                       className={`mt-0.5 w-full truncate text-[11px] ${
-                                        picked ? "text-paper-on/55" : "text-ink/45"
+                                        picked ? "text-paper-on/55" : "text-ink/60"
                                       }`}
                                     >
                                       {gameVersionText(v.game_versions)} · {loaderText(v.loaders)}
@@ -737,7 +737,7 @@ export function InstancePicker({
                       <AlertIcon size={15} />
                       仍然安装的代价
                     </div>
-                    <p className="mt-1.5 mb-0 text-[12.5px] leading-relaxed text-ink/70">
+                    <p className="mt-1.5 mb-0 text-[12.5px] leading-relaxed text-ink/75">
                       {selected.compatibility.reason}
                       。文件会照常写进 mods 目录，但游戏大概率加载不了它，也可能让这个实例启动即崩溃。
                       要撤销得回到 Mod 管理里停用或删除该文件。

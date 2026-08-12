@@ -87,11 +87,11 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
         className="w-full max-w-[560px]"
       >
         <div className="mb-7">
-          <div className="text-[11px] font-bold tracking-[0.22em] text-ink/40">初次设定</div>
+          <div className="text-[11px] font-bold tracking-[0.22em] text-ink/60">初次设定</div>
           <h1 className="mt-2 text-[26px] leading-tight font-extrabold tracking-[-0.01em]">
             游戏文件放在哪
           </h1>
-          <p className="mt-2 text-[13px] leading-relaxed text-ink/55">
+          <p className="mt-2 text-[13px] leading-relaxed text-ink/60">
             版本、存档与 Mod 都会落在这个目录里。之后可以在设置里随时改，也能添加更多文件夹。
           </p>
         </div>
@@ -113,7 +113,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
         ) : (
           <>
             <label className="block">
-              <span className="text-[12px] font-bold text-ink/55">游戏目录</span>
+              <span className="text-[12px] font-bold text-ink/60">游戏目录</span>
               <input
                 type="text"
                 value={dirInput}
@@ -128,7 +128,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
                 <button
                   type="button"
                   onClick={() => setDirInput(defaultDir ?? "")}
-                  className="mt-1.5 cursor-pointer text-[11px] text-ink/45 underline-offset-2 transition-colors hover:text-ink hover:underline"
+                  className="mt-1.5 cursor-pointer text-[11px] text-ink/60 underline-offset-2 transition-colors hover:text-ink hover:underline"
                 >
                   用回默认位置
                 </button>
@@ -138,12 +138,12 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
             {found.length > 0 && (
               <div className="mt-7">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-[12px] font-bold text-ink/55">发现了其它启动器的文件夹</span>
-                  <span className="font-mono text-[11px] text-ink/35 tabular-nums">
+                  <span className="text-[12px] font-bold text-ink/60">发现了其它启动器的文件夹</span>
+                  <span className="font-mono text-[11px] text-ink/60 tabular-nums">
                     {adopted.size}/{found.length}
                   </span>
                 </div>
-                <p className="mt-1 text-[12px] leading-relaxed text-ink/45">
+                <p className="mt-1 text-[12px] leading-relaxed text-ink/60">
                   收下之后可以直接切过去玩，里面的存档和 Mod 不会被移动，也不会被改。
                 </p>
                 <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0">
@@ -163,7 +163,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
                               : "border-ink/10 bg-paper-sink hover:border-ink/35",
                           ].join(" ")}
                         >
-                          <span className={on ? "text-paper-on" : "text-ink/25"}>
+                          <span className={on ? "text-paper-on" : "text-ink/30"}>
                             <CheckIcon size={15} />
                           </span>
                           <span className="min-w-0 flex-1">
@@ -172,7 +172,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
                             </span>
                             <span
                               className={`mt-0.5 block truncate font-mono text-[11px] ${
-                                on ? "text-paper-on/55" : "text-ink/45"
+                                on ? "text-paper-on/55" : "text-ink/60"
                               }`}
                             >
                               {d.path}
@@ -191,7 +191,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
                 <span className="shrink-0 text-ink/30">
                   <LayersIcon size={18} />
                 </span>
-                <span className="text-[12.5px] text-ink/55">
+                <span className="text-[12.5px] text-ink/60">
                   没有找到其它启动器的文件夹。之后可以在设置里手动添加。
                 </span>
               </div>
@@ -206,7 +206,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
               >
                 {saving ? "正在准备" : "开始使用"}
               </Button>
-              <span className="text-[11.5px] text-ink/40">目录不存在会自动创建</span>
+              <span className="text-[11.5px] text-ink/60">目录不存在会自动创建</span>
             </div>
           </>
         )}

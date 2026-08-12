@@ -34,7 +34,7 @@ const TYPE_LABEL: Record<AccountType, string> = {
 };
 
 const INPUT_CLS =
-  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink/40 hover:border-ink/40 focus:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink/60 hover:border-ink/40 focus:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 interface TextFieldProps {
   label: string;
@@ -48,7 +48,7 @@ function TextField({ label, value, onChange, type = "text", placeholder }: TextF
   const id = useId();
   return (
     <label htmlFor={id} className="block">
-      <span className="mb-1.5 block text-[12.5px] font-bold text-ink/70">{label}</span>
+      <span className="mb-1.5 block text-[12.5px] font-bold text-ink/75">{label}</span>
       <input
         id={id}
         type={type}
@@ -274,7 +274,7 @@ export function Account() {
             </div>
           </div>
         ) : accounts === null ? (
-          <p className="font-mono text-[12px] tracking-[0.06em] text-ink/50">正在读取账户…</p>
+          <p className="font-mono text-[12px] tracking-[0.06em] text-ink/60">正在读取账户…</p>
         ) : accounts.length === 0 ? (
           <EmptyState icon={<UserIcon />} title="还没有账户，用下方入口添加一个开始游戏。" />
         ) : (
@@ -312,7 +312,7 @@ export function Account() {
                             </motion.span>
                           )}
                         </div>
-                        <div className="mt-0.5 text-[12px] text-ink/55">
+                        <div className="mt-0.5 text-[12px] text-ink/60">
                           {TYPE_LABEL[a.account_type]}
                         </div>
                       </div>
@@ -336,7 +336,7 @@ export function Account() {
       </motion.div>
 
       <motion.div variants={pageItem} className="mt-9">
-        <h2 className="mb-4 text-[12px] font-bold tracking-[0.16em] text-ink/40">添加账户</h2>
+        <h2 className="mb-4 text-[12px] font-bold tracking-[0.16em] text-ink/60">添加账户</h2>
         <div className="flex flex-wrap gap-3">
           <Button
             variant="primary"
@@ -367,7 +367,7 @@ export function Account() {
       >
         {deviceCode ? (
           <div>
-            <p className="text-[13.5px] text-ink/70">
+            <p className="text-[13.5px] text-ink/75">
               在浏览器打开下方网址，并输入配对码完成登录：
             </p>
             <div className="mt-3 rounded-[3px] border border-ink/12 bg-paper-sink px-4 py-3 text-center">
@@ -376,7 +376,7 @@ export function Account() {
               </div>
             </div>
             <div className="mt-4 flex flex-col gap-2.5">
-              <div className="font-mono text-[13px] break-all text-ink/70">
+              <div className="font-mono text-[13px] break-all text-ink/75">
                 {deviceCode.verification_uri}
               </div>
               <div>
@@ -385,7 +385,7 @@ export function Account() {
                 </Button>
               </div>
             </div>
-            <p className="mt-4 text-[12.5px] text-ink/55">{deviceCode.message}</p>
+            <p className="mt-4 text-[12.5px] text-ink/60">{deviceCode.message}</p>
           </div>
         ) : (
           <p className="text-[13.5px] text-ink/60">正在向微软申请配对码，请稍候…</p>
@@ -463,7 +463,7 @@ export function Account() {
           </>
         }
       >
-        <p className="text-[14px] text-ink/80">
+        <p className="text-[14px] text-ink/75">
           确定删除账户
           <span className="font-bold text-ink">「{removeTarget?.name}」</span>
           吗？此操作不可撤销。

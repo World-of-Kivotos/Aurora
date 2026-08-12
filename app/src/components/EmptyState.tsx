@@ -12,7 +12,7 @@ interface EmptyStateProps {
 export function EmptyState({ icon, title, action }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-start gap-4 py-4">
-      <span className="text-ink/26 [&_svg]:h-8 [&_svg]:w-8">{icon}</span>
+      <span className="text-ink/30 [&_svg]:h-8 [&_svg]:w-8">{icon}</span>
       <p className="text-[14px] text-ink/60">{title}</p>
       {action && (
         <Button variant="secondary" onClick={action.onClick} disabled={action.disabled}>

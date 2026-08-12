@@ -93,7 +93,7 @@ function SearchField({
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onEnter?.()}
         placeholder={placeholder}
-        className={`${CTRL} w-full rounded-[3px] border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/35 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
+        className={`${CTRL} w-full rounded-[3px] border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
       />
     </div>
   );
@@ -123,7 +123,7 @@ function Segmented<T extends string>({
             aria-pressed={on}
             className={[
               "relative h-full cursor-pointer rounded-[2px] px-3 text-[13px] font-bold transition-colors",
-              on ? "text-paper-on" : "text-ink/45 hover:text-ink/75",
+              on ? "text-paper-on" : "text-ink/60 hover:text-ink/75",
             ].join(" ")}
           >
             {on && (
@@ -246,7 +246,7 @@ function VersionTab() {
           className="w-[300px] shrink-0"
         />
         <Segmented value={kind} onChange={setKind} options={KIND_OPTIONS} ariaLabel="版本类型" />
-        <span className="ml-auto shrink-0 font-mono text-[12px] text-ink/40 tabular-nums">
+        <span className="ml-auto shrink-0 font-mono text-[12px] text-ink/60 tabular-nums">
           {manifest
             ? matched.length > VERSION_LIMIT
               ? `${matched.length} 个匹配 · 显示前 ${VERSION_LIMIT}`
@@ -267,7 +267,7 @@ function VersionTab() {
           >
             <div className="mb-4 flex items-center gap-4 rounded-[3px] border border-ink bg-paper-sink px-4 py-3">
               <div className="min-w-0">
-                <div className="text-[10px] font-bold tracking-[0.2em] text-ink/40">即将安装</div>
+                <div className="text-[10px] font-bold tracking-[0.2em] text-ink/60">即将安装</div>
                 <div className="mt-0.5 truncate text-[21px] leading-tight font-extrabold tabular-nums">{pick}</div>
               </div>
               <div className="ml-auto w-[150px] shrink-0">
@@ -342,7 +342,7 @@ function VersionTab() {
                     )}
                   </span>
                   <span
-                    className={`mt-1 font-mono text-[11px] tabular-nums ${active ? "text-paper-on/55" : "text-ink/40"}`}
+                    className={`mt-1 font-mono text-[11px] tabular-nums ${active ? "text-paper-on/55" : "text-ink/60"}`}
                   >
                     {v.release_time.slice(0, 10)}
                   </span>
@@ -427,12 +427,12 @@ function ResourceCard({
       <div className="flex min-w-0 flex-1 flex-col self-stretch">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-[15px] leading-tight font-extrabold">{hit.title}</span>
-          {hit.author && <span className="shrink-0 text-[11px] text-ink/40">{hit.author}</span>}
+          {hit.author && <span className="shrink-0 text-[11px] text-ink/60">{hit.author}</span>}
         </div>
-        <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-ink/55">{hit.description}</p>
+        <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-ink/60">{hit.description}</p>
         {/* mt-auto 把元信息压到卡片底部：同一行左右卡片的这条线因此始终齐平，与描述占一行还是两行无关。
             nowrap + 只留一个分类，避免标签换行把卡片撑出参差。 */}
-        <div className="mt-auto flex flex-nowrap items-center gap-2.5 overflow-hidden pt-2 text-[11px] whitespace-nowrap text-ink/40">
+        <div className="mt-auto flex flex-nowrap items-center gap-2.5 overflow-hidden pt-2 text-[11px] whitespace-nowrap text-ink/60">
           <span className="inline-flex shrink-0 items-center gap-1 font-mono tabular-nums">
             <DownloadIcon size={12} />
             {fmtCount(hit.downloads)}
@@ -647,7 +647,7 @@ export function Download() {
     <>
       <motion.div variants={pageItem} className="mb-5 flex items-baseline gap-4">
         <h1 className="text-[20px] font-extrabold tracking-[-0.01em]">下载</h1>
-        <span className="text-[12px] text-ink/35">游戏版本、Mod 与各类资源</span>
+        <span className="text-[12px] text-ink/60">游戏版本、Mod 与各类资源</span>
       </motion.div>
 
       {/* 分段 tab：选中下划线用共享 layoutId，切换时在标签之间滑过去而不是闪现。 */}
@@ -664,7 +664,7 @@ export function Download() {
               className={[
                 "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
-                on ? "font-extrabold text-ink" : "font-semibold text-ink/40 hover:text-ink/70",
+                on ? "font-extrabold text-ink" : "font-semibold text-ink/60 hover:text-ink/75",
               ].join(" ")}
             >
               <Icon size={16} />

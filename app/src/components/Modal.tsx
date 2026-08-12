@@ -94,13 +94,13 @@ export function Modal({
                   type="button"
                   onClick={onClose}
                   aria-label="关闭"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[2px] text-ink/50 transition-colors hover:bg-ink/8 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[2px] text-ink/60 transition-colors hover:bg-ink/8 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   <WinCloseIcon size={18} />
                 </button>
               </header>
             )}
-            <div className="overflow-y-auto px-6 py-5 text-[14px] text-ink/80">{children}</div>
+            <div className="overflow-y-auto px-6 py-5 text-[14px] text-ink/75">{children}</div>
             {footer && (
               <footer className="flex items-center justify-end gap-3 border-t border-ink/12 px-6 py-4">
                 {footer}

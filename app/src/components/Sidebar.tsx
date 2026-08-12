@@ -44,7 +44,7 @@ function NavRow({ to, label, end, onPhoto }: NavDef & { onPhoto: boolean }) {
                 ? "font-extrabold text-ink"
                 : // 磨砂 65% 下 ink/55 只有 2.86，连正文门槛的一半余量都没有；ink/80 得 4.82。
                   // 这一档是磨砂能放这么透的前提，删掉它就必须把 paper-frost 推回 83% 以上。
-                  `font-semibold group-hover:text-ink ${onPhoto ? "text-ink/80" : "text-ink/55"}`,
+                  `font-semibold group-hover:text-ink ${onPhoto ? "text-ink/80" : "text-ink/60"}`,
             ].join(" ")}
           >
             {label}

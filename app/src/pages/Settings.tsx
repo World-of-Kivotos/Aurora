@@ -46,7 +46,7 @@ import {
 } from "../lib/ipc";
 
 const inputCls =
-  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/35 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 /**
  * 带内嵌提交按钮的输入框：按钮压在输入框右侧内部，不再与输入框并排。
@@ -93,7 +93,7 @@ function InputWithAction({
         className={[
           "absolute top-1 right-1 bottom-1 inline-flex shrink-0 cursor-pointer items-center gap-1.5",
           "rounded-[2px] px-3 text-[13px] font-bold whitespace-nowrap",
-          "bg-ink/[0.07] text-ink/70 transition-colors hover:bg-ink hover:text-paper-on",
+          "bg-ink/[0.07] text-ink/75 transition-colors hover:bg-ink hover:text-paper-on",
           "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
           "disabled:pointer-events-none disabled:opacity-45",
         ].join(" ")}
@@ -142,7 +142,7 @@ const JAVA_SOURCE_LABEL: Record<JavaInstallationDto["source"], string> = {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <motion.div variants={pageItem} className="mt-7 first:mt-0">
-      <h2 className="mb-3 text-[11px] font-bold tracking-[0.22em] text-ink/40">{title}</h2>
+      <h2 className="mb-3 text-[11px] font-bold tracking-[0.22em] text-ink/60">{title}</h2>
       <Card>{children}</Card>
     </motion.div>
   );
@@ -501,7 +501,7 @@ export function Settings() {
               className={[
                 "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                on ? "font-extrabold text-ink" : "font-semibold text-ink/40 hover:text-ink/70",
+                on ? "font-extrabold text-ink" : "font-semibold text-ink/60 hover:text-ink/75",
               ].join(" ")}
             >
               <Icon size={16} />
@@ -521,7 +521,7 @@ export function Settings() {
       {configLoading && (
         <motion.div variants={pageItem}>
           <Card>
-            <p className="py-2 text-[13.5px] text-ink/55">载入配置中…</p>
+            <p className="py-2 text-[13.5px] text-ink/60">载入配置中…</p>
           </Card>
         </motion.div>
       )}
@@ -535,7 +535,7 @@ export function Settings() {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-[14px] font-bold text-danger">配置载入失败</div>
-                <p className="mt-1 text-[13px] break-words text-ink/70">{configError}</p>
+                <p className="mt-1 text-[13px] break-words text-ink/75">{configError}</p>
                 <div className="mt-3">
                   <Button variant="secondary" icon={<RefreshIcon size={16} />} onClick={() => void loadConfig()}>
                     重试
@@ -664,7 +664,7 @@ export function Settings() {
                                   {!d.available && (
                                     <span
                                       title="这个位置现在访问不到（盘没挂或已被删除），记录仍然保留"
-                                      className="shrink-0 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/45"
+                                      className="shrink-0 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/60"
                                     >
                                       不可达
                                     </span>
@@ -672,7 +672,7 @@ export function Settings() {
                                 </span>
                                 <span
                                   className={`mt-0.5 block truncate font-mono text-[11px] ${
-                                    d.available ? "text-ink/45" : "text-ink/30"
+                                    d.available ? "text-ink/60" : "text-ink/60"
                                   }`}
                                 >
                                   {d.path}
@@ -685,7 +685,7 @@ export function Settings() {
                                     onClick={() => void switchDir(d.path, d.name)}
                                     disabled={dirsBusy || !d.available}
                                     title={d.available ? undefined : "位置访问不到，无法切过去"}
-                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     切换
                                   </button>
@@ -693,7 +693,7 @@ export function Settings() {
                                     type="button"
                                     onClick={() => void removeDir(d.path)}
                                     disabled={dirsBusy}
-                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/40 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     移除
                                   </button>
@@ -705,13 +705,13 @@ export function Settings() {
 
                         {discovered.length > 0 && (
                           <div className="mt-3 rounded-[3px] border border-ink/10 bg-paper-sink px-3 py-2.5">
-                            <div className="text-[12px] font-bold text-ink/55">发现未记录的文件夹</div>
+                            <div className="text-[12px] font-bold text-ink/60">发现未记录的文件夹</div>
                             <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
                               {discovered.map((d) => (
                                 <li key={d.path} className="flex items-center gap-3">
                                   <span className="min-w-0 flex-1">
                                     <span className="block truncate text-[12.5px] font-bold">{d.name}</span>
-                                    <span className="block truncate font-mono text-[11px] text-ink/45">
+                                    <span className="block truncate font-mono text-[11px] text-ink/60">
                                       {d.path}
                                     </span>
                                   </span>
@@ -719,7 +719,7 @@ export function Settings() {
                                     type="button"
                                     onClick={() => void adoptDir(d.name, d.path)}
                                     disabled={dirsBusy}
-                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     添加
                                   </button>
@@ -731,8 +731,8 @@ export function Settings() {
                       </div>
 
                       <div className="py-[18px] last:pb-0">
-                        <div className="text-[12.5px] text-ink/45">数据目录</div>
-                        <div className="mt-1 font-mono text-[12px] break-all text-ink/55">{config.data_dir}</div>
+                        <div className="text-[12.5px] text-ink/60">数据目录</div>
+                        <div className="mt-1 font-mono text-[12px] break-all text-ink/60">{config.data_dir}</div>
                       </div>
                     </Section>
 
@@ -743,7 +743,7 @@ export function Settings() {
                           <span
                             className={[
                               "rounded-[2px] px-2 py-0.5 text-[11px] font-bold tracking-[0.08em]",
-                              config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/50",
+                              config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/60",
                             ].join(" ")}
                           >
                             {config.has_client_id ? "已配置" : "未配置"}
@@ -813,7 +813,7 @@ export function Settings() {
                     </div>
 
                     {update?.kind === "available" && update.notes && (
-                      <p className="mt-3 mb-0 rounded-[3px] bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/70">
+                      <p className="mt-3 mb-0 rounded-[3px] bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/75">
                         {update.notes}
                       </p>
                     )}
@@ -850,7 +850,7 @@ export function Settings() {
                               if (e.key === "Enter") e.currentTarget.blur();
                             }}
                           />
-                          <span className="text-ink/35">/</span>
+                          <span className="text-ink/60">/</span>
                           <input
                             type="number"
                             min={0}
@@ -912,14 +912,14 @@ export function Settings() {
                       </Button>
                     </div>
 
-                    {javaLoading && <p className="py-2 text-[13.5px] text-ink/55">扫描本机 Java…</p>}
+                    {javaLoading && <p className="py-2 text-[13.5px] text-ink/60">扫描本机 Java…</p>}
 
                     {!javaLoading && javaError && (
                       <div className="flex items-start gap-3 py-1">
                         <span className="text-danger">
                           <AlertIcon size={18} />
                         </span>
-                        <p className="text-[13px] break-words text-ink/70">{javaError}</p>
+                        <p className="text-[13px] break-words text-ink/75">{javaError}</p>
                       </div>
                     )}
 
@@ -937,9 +937,9 @@ export function Settings() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-[14px] font-bold tabular-nums">Java {j.version.major}</span>
-                                <span className="font-mono text-[11px] text-ink/45">{j.version.raw}</span>
+                                <span className="font-mono text-[11px] text-ink/60">{j.version.raw}</span>
                               </div>
-                              <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/50">{j.path}</div>
+                              <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/60">{j.path}</div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
                               <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">

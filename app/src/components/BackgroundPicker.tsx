@@ -180,7 +180,7 @@ export function BackgroundPicker() {
       </div>
 
       {!canPickFile() && (
-        <p className="mt-2.5 text-[12px] text-ink/45">
+        <p className="mt-2.5 text-[12px] text-ink/60">
           浏览器预览模式下无法调用系统文件框，请在安装后的启动器里选图。
         </p>
       )}
@@ -197,7 +197,7 @@ export function BackgroundPicker() {
       {/* 占位文案只在「从没拿到过图库」时出现。reload() 每次都会置 loading，若增删后整棵 ul 随之卸载，
           AnimatePresence 就没有对象可 diff，退场与补位全部作废（Account 页同理，那边靠 accounts === null 区分）。 */}
       {loading && library.length === 0 ? (
-        <p className="mt-4 text-[12.5px] text-ink/45">正在读取图库…</p>
+        <p className="mt-4 text-[12.5px] text-ink/60">正在读取图库…</p>
       ) : library.length === 0 ? (
         <div className="mt-4">
           <EmptyState
@@ -246,7 +246,7 @@ export function BackgroundPicker() {
                       <div className="truncate text-[12.5px] font-bold" title={entry.file}>
                         {entry.file}
                       </div>
-                      <div className="mt-0.5 font-mono text-[11px] text-ink/50 tabular-nums">
+                      <div className="mt-0.5 font-mono text-[11px] text-ink/60 tabular-nums">
                         {sizeText(entry)}
                       </div>
                     </div>
@@ -327,7 +327,7 @@ export function BackgroundPicker() {
         <div className="mt-5 flex items-center gap-4 border-t border-ink/9 pt-4">
           <div className="min-w-0">
             <div className="text-[13.5px] font-bold">柔化</div>
-            <div className="mt-0.5 text-[12px] text-ink/55">图太花时压一层纸色</div>
+            <div className="mt-0.5 text-[12px] text-ink/60">图太花时压一层纸色</div>
           </div>
           <input
             type="range"

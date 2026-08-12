@@ -37,7 +37,7 @@ const CHANNEL_LABEL: Record<ReleaseChannel, string> = {
 
 // 预发布通道借用 accent 描边示警：这是少数「玩家不知情就会踩坑」的场景，值得用掉一次强调色。
 const CHANNEL_CLASS: Record<ReleaseChannel, string> = {
-  release: "bg-ink/[0.07] text-ink/55",
+  release: "bg-ink/[0.07] text-ink/60",
   beta: "border border-accent/40 text-accent",
   alpha: "border border-accent/40 text-accent",
 };
@@ -162,12 +162,12 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
           aria-checked={headState === "mixed" ? "mixed" : headState === "on"}
           onClick={toggleAll}
           disabled={busy}
-          className={`${CTRL} inline-flex cursor-pointer items-center gap-2.5 rounded-[3px] px-1 text-[13px] font-bold text-ink/70 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45`}
+          className={`${CTRL} inline-flex cursor-pointer items-center gap-2.5 rounded-[3px] px-1 text-[13px] font-bold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45`}
         >
           <CheckGlyph state={headState} />
           全选
         </button>
-        <span className="font-mono text-[12px] text-ink/40 tabular-nums">
+        <span className="font-mono text-[12px] text-ink/60 tabular-nums">
           {candidates.length} 个可更新
         </span>
         <Button
@@ -223,10 +223,10 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
 
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-[14px] leading-tight font-extrabold">{c.file_name}</span>
-                  <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-ink/45 tabular-nums">
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-ink/60 tabular-nums">
                     <span className="truncate line-through decoration-ink/30">{c.current_version_id}</span>
                     <span aria-hidden="true">{"->"}</span>
-                    <span className="truncate font-bold text-ink/70">{c.latest.version_number}</span>
+                    <span className="truncate font-bold text-ink/75">{c.latest.version_number}</span>
                     <span>{fmtDate(c.latest.date_published)}</span>
                   </span>
                 </span>
@@ -238,7 +238,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
                 </span>
 
                 {updated && (
-                  <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-ink/55">
+                  <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-ink/60">
                     <CheckIcon size={13} />
                     已更新
                   </span>
@@ -266,7 +266,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
                     <span className="text-[13px] font-bold text-ink">
                       更新中 第 {running.index} / {running.total} 个
                     </span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink/50">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink/60">
                       {running.fileName}
                     </span>
                   </div>
@@ -321,26 +321,26 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
           </>
         }
       >
-        <p className="text-[13.5px] text-ink/70">
+        <p className="text-[13.5px] text-ink/75">
           即将更新 {picked.length} 个 Mod。更新是「换掉正在用的文件」，请先了解三件事：
         </p>
         <ol className="mt-3 mb-0 flex list-none flex-col gap-2.5 p-0 text-[13.5px] leading-relaxed">
           <li className="flex gap-2.5">
-            <span className="shrink-0 font-mono font-bold text-ink/35">1</span>
+            <span className="shrink-0 font-mono font-bold text-ink/60">1</span>
             <span>新版可能与旧存档或其它 Mod 不兼容，轻则功能异常，重则存档读不出来。</span>
           </li>
           <li className="flex gap-2.5">
-            <span className="shrink-0 font-mono font-bold text-ink/35">2</span>
+            <span className="shrink-0 font-mono font-bold text-ink/60">2</span>
             <span>
               正在玩整合包时不建议自行更新单个 Mod——整合包作者锁定的版本组合一旦被打破，很容易连锁崩溃。
             </span>
           </li>
           <li className="flex gap-2.5">
-            <span className="shrink-0 font-mono font-bold text-ink/35">3</span>
+            <span className="shrink-0 font-mono font-bold text-ink/60">3</span>
             <span>动手前建议先备份存档（saves 目录），出问题时才有退路。</span>
           </li>
         </ol>
-        <p className="mt-3.5 mb-0 text-[12.5px] text-ink/45">
+        <p className="mt-3.5 mb-0 text-[12.5px] text-ink/60">
           旧文件会以 .old 保留在原目录并记入变更历史，可在历史记录里回滚。
         </p>
       </Modal>

@@ -135,12 +135,12 @@ export function Versions() {
       <motion.div variants={pageItem} className="mb-6 flex items-baseline justify-between">
         <div className="flex items-baseline gap-4">
           <h1 className="text-[20px] font-extrabold tracking-[-0.01em]">版本</h1>
-          <span className="text-[12px] text-ink/35">管理已安装的实例，点进查看内容与变更史</span>
+          <span className="text-[12px] text-ink/60">管理已安装的实例，点进查看内容与变更史</span>
         </div>
         <button
           type="button"
           onClick={() => void load()}
-          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink/45 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
         >
           <RefreshIcon />
           刷新
@@ -183,7 +183,7 @@ export function Versions() {
                       <span className="truncate text-[21px] font-bold tracking-[-0.01em] tabular-nums">
                         {s.base}
                       </span>
-                      {s.sfx && <span className="shrink-0 text-[14px] font-semibold text-ink/35">{s.sfx}</span>}
+                      {s.sfx && <span className="shrink-0 text-[14px] font-semibold text-ink/60">{s.sfx}</span>}
                       {/* 与侧栏当前项竖规同一套语言：layoutId 让徽标从旧行滑到新行，
                           把「哪个版本会被启动」这个答案的转移变成看得见的过程，而不是瞬移后要自己找。 */}
                       {isCur && (
@@ -197,7 +197,7 @@ export function Versions() {
                         </motion.span>
                       )}
                     </span>
-                    <span className="flex shrink-0 items-center gap-4 text-[12px] text-ink/40">
+                    <span className="flex shrink-0 items-center gap-4 text-[12px] text-ink/60">
                       {st && st.mods > 0 && (
                         <span className="inline-flex items-center gap-1">
                           <PackageIcon size={13} />
@@ -225,7 +225,7 @@ export function Versions() {
                         type="button"
                         onClick={() => void setAsCurrent(v.id)}
                         title="设为当前启动版本"
-                        className="cursor-pointer rounded-[2px] px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/45 hover:!text-accent focus-visible:text-ink/45 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                        className="cursor-pointer rounded-[2px] px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/60 hover:!text-accent focus-visible:text-ink/60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
                       >
                         设为当前
                       </button>

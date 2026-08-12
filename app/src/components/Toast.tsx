@@ -29,7 +29,7 @@ const AUTO_DISMISS_MS = 3500;
 
 // kind → 边框与文字色（纸墨体系内的三档，仅 error 借用 danger 墨点）。与压不压在图上无关。
 const kindTone: Record<ToastKind, string> = {
-  info: "border-ink/16 text-ink/85",
+  info: "border-ink/16 text-ink/75",
   success: "border-ink text-paper-on",
   error: "border-danger text-danger",
 };

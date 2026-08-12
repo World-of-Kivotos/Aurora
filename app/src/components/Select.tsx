@@ -124,7 +124,7 @@ export function Select<T extends string>({
           className ?? "",
         ].join(" ")}
       >
-        <span className={selected ? "text-ink" : "text-ink/45"}>
+        <span className={selected ? "text-ink" : "text-ink/60"}>
           {selected ? selected.label : placeholder}
         </span>
         <svg
@@ -137,7 +137,7 @@ export function Select<T extends string>({
           strokeLinecap="round"
           strokeLinejoin="round"
           aria-hidden="true"
-          className={["shrink-0 text-ink/45 transition-transform", open ? "rotate-180" : ""].join(" ")}
+          className={["shrink-0 text-ink/60 transition-transform", open ? "rotate-180" : ""].join(" ")}
         >
           <path d="m6 9 6 6 6-6" />
         </svg>
@@ -167,7 +167,7 @@ export function Select<T extends string>({
                   onClick={() => commit(i)}
                   className={[
                     "flex cursor-pointer items-center justify-between rounded-[2px] px-3 py-2 text-[14px]",
-                    isHigh ? "bg-ink text-paper-on" : "text-ink/80",
+                    isHigh ? "bg-ink text-paper-on" : "text-ink/75",
                   ].join(" ")}
                 >
                   <span>{opt.label}</span>

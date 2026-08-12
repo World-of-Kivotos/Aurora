@@ -20,7 +20,7 @@ const base =
 const variants: Record<Variant, string> = {
   primary: "bg-ink px-5 py-[13px] text-[15px] tracking-[0.06em] text-paper-on hover:bg-accent",
   secondary:
-    "border border-ink/16 px-4 py-2.5 text-[13px] tracking-[0.04em] text-ink/80 hover:border-ink hover:text-ink",
+    "border border-ink/16 px-4 py-2.5 text-[13px] tracking-[0.04em] text-ink/75 hover:border-ink hover:text-ink",
 };
 
 export function Button({ variant = "secondary", icon, children, className, ...rest }: ButtonProps) {

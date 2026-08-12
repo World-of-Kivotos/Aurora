@@ -85,9 +85,9 @@ export function CrashBanner({
               {/* 空诊断不是异常，是「日志里没有已知特征」这个真实结论，如实说出来而不是拿空串糊过去。 */}
               {primary ? primary.summary : "游戏异常退出，日志里没有匹配到已知的崩溃特征"}
             </p>
-            <span className="shrink-0 truncate text-[12px] text-ink/40">{versionId}</span>
+            <span className="shrink-0 truncate text-[12px] text-ink/60">{versionId}</span>
           </div>
-          {primary && <p className="mt-1.5 text-[13px] leading-relaxed text-ink/65">{primary.advice}</p>}
+          {primary && <p className="mt-1.5 text-[13px] leading-relaxed text-ink/60">{primary.advice}</p>}
         </div>
       </div>
 
@@ -101,11 +101,11 @@ export function CrashBanner({
                 key={`${suspect.mod_id}:${file ?? ""}`}
                 className="flex items-center justify-between gap-3 rounded-[3px] bg-paper-sink px-3 py-1"
               >
-                <span className="flex min-w-0 flex-1 items-baseline gap-2 text-[13px] text-ink/70">
+                <span className="flex min-w-0 flex-1 items-baseline gap-2 text-[13px] text-ink/75">
                   <span className="shrink-0">日志指向</span>
                   <span className="truncate font-extrabold text-ink">{file ?? suspect.mod_id}</span>
                   {/* 卷宗对不上文件时只能报 mod id，此时没有可禁用的目标，说清楚而不是给个点不动的按钮。 */}
-                  {!file && <span className="shrink-0 text-[12px] text-ink/45">（卷宗未对上文件）</span>}
+                  {!file && <span className="shrink-0 text-[12px] text-ink/60">（卷宗未对上文件）</span>}
                 </span>
                 {file && (
                   <Button
@@ -121,7 +121,7 @@ export function CrashBanner({
               </li>
             );
           })}
-          {overflow > 0 && <li className="px-3 pt-0.5 text-[12.5px] text-ink/45">等 {overflow} 个</li>}
+          {overflow > 0 && <li className="px-3 pt-0.5 text-[12.5px] text-ink/60">等 {overflow} 个</li>}
         </ul>
       )}
 
@@ -132,7 +132,7 @@ export function CrashBanner({
         <Button variant="secondary" className="h-10" onClick={onDismiss}>
           关闭
         </Button>
-        {extraDiagnoses > 0 && <span className="text-[12.5px] text-ink/45">另有 {extraDiagnoses} 条诊断</span>}
+        {extraDiagnoses > 0 && <span className="text-[12.5px] text-ink/60">另有 {extraDiagnoses} 条诊断</span>}
       </div>
     </motion.section>
   );

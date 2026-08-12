@@ -15,7 +15,7 @@ export function PageHeader({ title, subtitle, right }: PageHeaderProps) {
     <header className="mb-6 flex items-baseline justify-between gap-6">
       <div className="flex min-w-0 items-baseline gap-4">
         <h1 className="shrink-0 text-[20px] font-extrabold tracking-[-0.01em]">{title}</h1>
-        {subtitle && <span className="truncate text-[12px] text-ink/35">{subtitle}</span>}
+        {subtitle && <span className="truncate text-[12px] text-ink/60">{subtitle}</span>}
       </div>
       {right && <div className="shrink-0 text-right">{right}</div>}
     </header>
