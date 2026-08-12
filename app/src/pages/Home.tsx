@@ -74,14 +74,23 @@ export function Home() {
   const mode = onPhoto ? plateMode(appearance.plate, appearance.veil) : "plate";
   const naked = mode !== "plate";
   /**
-   * 裸字模式一律满墨，层级交给字号与字重，不用灰度。
+   * 裸字模式下的字色。`shade` 是纸片模式沿用的原色阶，`tier` 是它在层级里的档位。
    *
-   * 这是算出来的结论不是偏好：准入线只保证满墨达到 4.5:1，同一底色下 ink/70 只有 3.48:1、
-   * ink/50 掉到 2.39:1，就算底色亮到 p10=200，ink/50 也才 3.25:1。
-   * 在照片上拿灰度做层级，等于把一半信息做成读不出来的。
+   * 两种裸字档的余量天差地别，不能套同一套规则：
+   * 满墨字压在浅色图上，准入线只保证满强度达到 4.5:1——同一底色下 ink/70 仅 3.48:1、
+   * ink/50 仅 2.39:1，就算底色亮到 p10=200，ink/50 也才 3.25:1，所以这一档只能全满墨，
+   * 层级交给字号与字重。
+   * 纸色字压在压暗后的深色图上则宽裕得多：满白 8.80、85% 得 6.91、70% 仍有 5.29，
+   * 三级都过得了 4.5，层级该还回来就还回来，全篇一个白只会读成一张扁平清单。
    */
-  const fg = (shade: string) =>
-    mode === "ink" ? "text-ink" : mode === "paperOn" ? "text-paper-on" : shade;
+  const fg = (shade: string, tier: "mid" | "weak") =>
+    mode === "ink"
+      ? "text-ink"
+      : mode === "paperOn"
+        ? tier === "mid"
+          ? "text-paper-on/85"
+          : "text-paper-on/70"
+        : shade;
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   // config 里选中的启动版本 id；入场随 load 拉取，决定「开始游戏」启动哪个（版本页设定）。
@@ -307,11 +316,11 @@ export function Home() {
         <div className={!onPhoto ? PLATE_BARE : naked ? PLATE_NAKED : PLATE_FROSTED}>
           {onPhoto && (
             <div className="flex items-baseline gap-2.5 self-end">
-              <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/40")}`}>状态</span>
+              <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/40", "weak")}`}>状态</span>
               {/* 比报头里那份状态值深一档：ink/60 压在不透明纸上是 4.56:1，勉强过线，
                   而这里底下是 92% 磨砂，剩的余量不够，掉到 4.3 上下。只改这一处，
                   报头那份（无背景图时才渲染）保持原样，免得「装不装背景」变成两套字色。 */}
-              <span className={`font-mono text-[12px] tracking-[0.08em] ${fg("text-ink/65")} tabular-nums`}>
+              <span className={`font-mono text-[12px] tracking-[0.08em] ${fg("text-ink/65", "mid")} tabular-nums`}>
                 {status}
               </span>
             </div>
@@ -323,13 +332,13 @@ export function Home() {
                 {current.id}
               </div>
               {versionMeta && (
-                <div className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/50")}`}>
+                <div className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/50", "mid")}`}>
                   {versionMeta}
                 </div>
               )}
             </div>
           ) : (
-            <div className={`text-right text-[15px] font-bold ${fg("text-ink/30")}`}>
+            <div className={`text-right text-[15px] font-bold ${fg("text-ink/30", "weak")}`}>
               {loading ? "读取中…" : "尚未安装版本"}
             </div>
           )}
@@ -340,14 +349,14 @@ export function Home() {
               <SkinHead uuid={account.uuid} name={account.name} size={44} />
               <div className="min-w-0 text-right">
                 <div className="truncate text-[16px] leading-tight font-extrabold">{account.name}</div>
-                <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/45")}`}>
+                <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/45", "weak")}`}>
                   {ACCOUNT_TYPE_LABEL[account.account_type]}
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex flex-col items-end gap-2">
-              <span className={`text-[13px] ${fg("text-ink/45")}`}>
+              <span className={`text-[13px] ${fg("text-ink/45", "weak")}`}>
                 {loading ? "正在读取账户…" : "还没有账户"}
               </span>
               {!loading && (

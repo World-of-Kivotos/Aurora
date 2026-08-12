@@ -61,8 +61,13 @@ export const EMPTY_APPEARANCE: AppearanceDto = {
  */
 export type PlateMode = "ink" | "paperOn" | "plate";
 
-/** 压暗层在最浓处的墨色不透明度。与 app.css 的 .plate-scrim 必须一致。 */
-export const SCRIM_ALPHA = 0.4;
+/**
+ * 压暗层的亮度系数。与 app.css 里 .plate-scrim 的 brightness() 必须是同一个数。
+ *
+ * 是等比压暗照片本身，不是铺一层墨色——铺墨会把彩色照片洗成灰，
+ * 而等比缩放保留色彩关系，同样观感代价下给的对比度还更高。
+ */
+export const SCRIM_BRIGHTNESS = 0.5;
 
 /**
  * 裸字要达到的对比度，比 AA 的 4.5 高一档。
@@ -74,7 +79,6 @@ export const SCRIM_ALPHA = 0.4;
 const NAKED_TARGET = 5.5;
 
 // 三个关键色的等效灰阶（sRGB 0..255）与相对亮度。都是近中性色，按灰阶做合成估算误差可忽略。
-const INK_SRGB = 22;
 const PAPER_SRGB = 242;
 const L_INK = 0.007971;
 const L_PAPER_ON = 0.905855;
@@ -103,10 +107,11 @@ function composite(base: number, over: number, alpha: number): number {
  * 柔化会把底色提亮，直接拿原图的取样值判会高估深色图的可用性——
  * 玩家把柔化一拉，浅色字就该失效了，判定必须跟着变。
  */
-function effectiveLuma(sampled: number, veil: number, scrim: number): number {
+function effectiveLuma(sampled: number, veil: number, dim: number): number {
   const afterImage = srgbOf(sampled / 255);
   const afterVeil = composite(afterImage, PAPER_SRGB, veil / 100);
-  return lumaOf(composite(afterVeil, INK_SRGB, scrim));
+  // CSS 的 brightness() 是对 sRGB 各通道等比缩放，这里照同一口径算。
+  return lumaOf(afterVeil * dim);
 }
 
 export function plateMode(plate: PlateZone | null, veil: number): PlateMode {
@@ -117,12 +122,12 @@ export function plateMode(plate: PlateZone | null, veil: number): PlateMode {
   // 比的都是最不利的那一端而不是均值：满墨字怕最暗处，纸色字怕最亮处。
   // 明暗跨度大的角落两头都过不了，自然落到纸片，不需要另设「多花算花」的阈值。
   //
-  // 满墨字这一档不铺压暗层——压暗只会让深色字更难读，所以 scrim 传 0。
-  const darkEnd = effectiveLuma(plate.p10, veil, 0);
+  // 满墨字这一档不压暗——压暗只会让深色字更难读，所以系数给 1（原样）。
+  const darkEnd = effectiveLuma(plate.p10, veil, 1);
   if ((darkEnd + 0.05) / (L_INK + 0.05) >= NAKED_TARGET) return "ink";
 
   // 纸色字这一档底下垫压暗层，把最亮那一成拉进达标区。
-  const brightEnd = effectiveLuma(plate.p90, veil, SCRIM_ALPHA);
+  const brightEnd = effectiveLuma(plate.p90, veil, SCRIM_BRIGHTNESS);
   if ((L_PAPER_ON + 0.05) / (brightEnd + 0.05) >= NAKED_TARGET) return "paperOn";
 
   return "plate";

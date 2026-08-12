@@ -5,7 +5,7 @@
 // 常数写错、合成顺序写反都测不出来——两边一起错，断言照样通过。
 
 import { describe, expect, it } from "vitest";
-import { plateMode, SCRIM_ALPHA, type PlateMode } from "./appearance";
+import { plateMode, SCRIM_BRIGHTNESS, type PlateMode } from "./appearance";
 import type { PlateZone } from "./ipc";
 
 // ---- 独立实现的 WCAG 口径，作为判定的对照物 ----
@@ -27,19 +27,19 @@ function contrast(a: number, b: number): number {
 const L_INK = lumaOfSrgb(22);
 const L_PAPER_ON = 0.905855;
 const PAPER_SRGB = 242;
-const INK_SRGB = 22;
 
 /** 取样值经柔化、压暗两层后的实际底色亮度。顺序必须是 图 -> 柔化 -> 压暗。 */
-function backdrop(sampled: number, veil: number, scrim: number): number {
+function backdrop(sampled: number, veil: number, dim: number): number {
   const image = srgbOfLuma(sampled / 255);
   const veiled = PAPER_SRGB * (veil / 100) + image * (1 - veil / 100);
-  return lumaOfSrgb(INK_SRGB * scrim + veiled * (1 - scrim));
+  // 压暗是 CSS brightness()，对 sRGB 各通道等比缩放。
+  return lumaOfSrgb(veiled * dim);
 }
 
 /** 某一档在最不利端实际拿到的对比度。 */
 function achieved(mode: PlateMode, zone: PlateZone, veil: number): number {
-  if (mode === "ink") return contrast(backdrop(zone.p10, veil, 0), L_INK);
-  if (mode === "paperOn") return contrast(backdrop(zone.p90, veil, SCRIM_ALPHA), L_PAPER_ON);
+  if (mode === "ink") return contrast(backdrop(zone.p10, veil, 1), L_INK);
+  if (mode === "paperOn") return contrast(backdrop(zone.p90, veil, SCRIM_BRIGHTNESS), L_PAPER_ON);
   throw new Error("plate 档没有裸字，不该问它对比度");
 }
 
@@ -71,11 +71,17 @@ describe("plateMode", () => {
     expect(achieved("paperOn", real, 0)).toBeGreaterThan(6);
   });
 
-  it("柔化会提亮底色，深色图因此失去纸色裸字资格", () => {
+  it("柔化会提亮底色，判定必须跟着变而不是无视它", () => {
+    // 柔化是压在图上的纸色层。判定若不把它算进去，整条滑条上档位会纹丝不动，
+    // 玩家拉满柔化后底色早已够亮，却还在按深色图渲染。
+    //
+    // 不钉死「在第几档翻」——那个点会随压暗手段调整而漂移，钉死只会让测试变成阻力。
+    // 要守住的是「柔化确实参与了判定」这个不变量。
     const dark: PlateZone = { p10: 4, p90: 66 };
+    const seen = new Set<PlateMode>();
+    for (let veil = 0; veil <= 60; veil += 5) seen.add(plateMode(dark, veil));
+    expect(seen.size).toBeGreaterThan(1);
     expect(plateMode(dark, 0)).toBe("paperOn");
-    // 柔化是压在图上的纸色层。判定若不把它算进去，玩家一拉滑条浅色字就该失效却仍在用。
-    expect(plateMode(dark, 40)).not.toBe("paperOn");
   });
 
   it("柔化拉满后底色足够亮，深色图反过来可用满墨", () => {
