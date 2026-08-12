@@ -3,7 +3,7 @@
 // 游戏目录与 client_id 走显性按钮。错误一律 toast(String(e),"error")，不吞不掩盖。
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
@@ -547,432 +547,442 @@ export function Settings() {
         </motion.div>
       )}
 
-      {config && (
-        <>
-          {tab === "launcher" && (
-          <Section title="下载与更新">
-            <Row
-              title="下载源策略"
-              desc="下载游戏文件时官方源与镜像源的取舍"
-              control={
-                <div className="w-[240px]">
-                  <Select
-                    ariaLabel="下载源策略"
-                    value={config.download_source}
-                    options={DOWNLOAD_SOURCE_OPTIONS}
-                    onChange={(v) => void save({ downloadSource: v }, (c) => ({ ...c, download_source: v }))}
-                  />
-                </div>
-              }
-            />
-            <Row
-              title="版本列表源"
-              desc="拉取版本清单（manifest）时的来源策略"
-              control={
-                <div className="w-[240px]">
-                  <Select
-                    ariaLabel="版本列表源"
-                    value={config.version_list_source}
-                    options={DOWNLOAD_SOURCE_OPTIONS}
-                    onChange={(v) => void save({ versionListSource: v }, (c) => ({ ...c, version_list_source: v }))}
-                  />
-                </div>
-              }
-            />
-            <Row
-              title="下载并发数"
-              desc="同时进行的下载任务上限"
-              control={
-                <input
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  aria-label="下载并发数"
-                  className={`${inputCls} w-24 text-right tabular-nums`}
-                  value={concurrencyInput}
-                  onChange={(e) => setConcurrencyInput(e.target.value)}
-                  onBlur={commitConcurrency}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                  }}
-                />
-              }
-            />
-          </Section>
-          )}
+      {/* 页签正文改成淡入淡出：切页签只是换内容不是换页面，与 Download / InstanceDetail 用同一套过渡语言，整片瞬切会让人以为页面被重载。 */}
+      {/* 外层 pageItem 让整片正文作为一个单元参与页面 stagger：AnimatePresence 的 initial={false} 会连带压掉内部 Section 的首屏入场。 */}
+      <motion.div variants={pageItem} className="mt-7">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={springs.tap}
+          >
+            {tab === "launcher" && (
+              <>
+                {config && (
+                  <>
+                    <Section title="下载与更新">
+                      <Row
+                        title="下载源策略"
+                        desc="下载游戏文件时官方源与镜像源的取舍"
+                        control={
+                          <div className="w-[240px]">
+                            <Select
+                              ariaLabel="下载源策略"
+                              value={config.download_source}
+                              options={DOWNLOAD_SOURCE_OPTIONS}
+                              onChange={(v) => void save({ downloadSource: v }, (c) => ({ ...c, download_source: v }))}
+                            />
+                          </div>
+                        }
+                      />
+                      <Row
+                        title="版本列表源"
+                        desc="拉取版本清单（manifest）时的来源策略"
+                        control={
+                          <div className="w-[240px]">
+                            <Select
+                              ariaLabel="版本列表源"
+                              value={config.version_list_source}
+                              options={DOWNLOAD_SOURCE_OPTIONS}
+                              onChange={(v) => void save({ versionListSource: v }, (c) => ({ ...c, version_list_source: v }))}
+                            />
+                          </div>
+                        }
+                      />
+                      <Row
+                        title="下载并发数"
+                        desc="同时进行的下载任务上限"
+                        control={
+                          <input
+                            type="number"
+                            min={1}
+                            inputMode="numeric"
+                            aria-label="下载并发数"
+                            className={`${inputCls} w-24 text-right tabular-nums`}
+                            value={concurrencyInput}
+                            onChange={(e) => setConcurrencyInput(e.target.value)}
+                            onBlur={commitConcurrency}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                            }}
+                          />
+                        }
+                      />
+                    </Section>
 
-          {tab === "game" && (
-          <Section title="运行时">
-            <Row
-              title="内存分配（MB）"
-              desc="最大 / 最小堆内存，最小留空表示不限制"
-              control={
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    aria-label="最大内存 MB"
-                    className={`${inputCls} w-24 text-right tabular-nums`}
-                    value={maxMemInput}
-                    onChange={(e) => setMaxMemInput(e.target.value)}
-                    onBlur={commitMemory}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") e.currentTarget.blur();
-                    }}
-                  />
-                  <span className="text-ink/35">/</span>
-                  <input
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    aria-label="最小内存 MB"
-                    placeholder="不限"
-                    className={`${inputCls} w-24 text-right tabular-nums`}
-                    value={minMemInput}
-                    onChange={(e) => setMinMemInput(e.target.value)}
-                    onBlur={commitMemory}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") e.currentTarget.blur();
-                    }}
-                  />
-                </div>
-              }
-            />
-            <Row
-              title="版本隔离档位"
-              desc="决定哪些版本使用独立的存档与配置目录"
-              control={
-                <div className="w-[240px]">
-                  <Select
-                    ariaLabel="版本隔离档位"
-                    value={config.isolation_policy}
-                    options={ISOLATION_OPTIONS}
-                    onChange={(v) => void save({ isolationPolicy: v }, (c) => ({ ...c, isolation_policy: v }))}
-                  />
-                </div>
-              }
-            />
-          </Section>
-          )}
-
-          {tab === "launcher" && (
-          <Section title="目录">
-            <div className="border-b border-ink/9 py-[18px] first:pt-0">
-              <div className="text-[15px] font-bold">游戏目录</div>
-              <div className="mt-1 text-[12.5px] text-ink/60">.minecraft 所在位置，变更后需重新扫描版本</div>
-              <div className="mt-3">
-                <InputWithAction
-                  label="游戏目录"
-                  value={gameDirInput}
-                  onChange={setGameDirInput}
-                  onSubmit={() => void applyGameDir()}
-                  actionLabel="应用"
-                  pendingLabel="应用中"
-                  pending={savingGameDir}
-                />
-              </div>
-            </div>
-            <div className="border-b border-ink/9 py-[18px]">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="text-[15px] font-bold">文件夹列表</div>
-                  <div className="mt-1 text-[12.5px] text-ink/60">
-                    可以并存多个 .minecraft，点「切换」把某个设为当前；移除只删记录，不动磁盘文件
-                  </div>
-                </div>
-                <Button
-                  variant="secondary"
-                  className="shrink-0"
-                  icon={<RefreshIcon size={15} />}
-                  onClick={() => void loadDirs()}
-                  disabled={dirsBusy}
-                >
-                  重新探测
-                </Button>
-              </div>
-
-              <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0">
-                {dirs.map((d) => (
-                  <li
-                    key={d.path}
-                    className="flex items-center gap-3 rounded-[3px] border border-ink/10 bg-paper px-3 py-2.5"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-[13.5px] font-bold">{d.name}</span>
-                        {d.is_current && (
-                          <span className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
-                            当前
-                          </span>
-                        )}
-                        {!d.available && (
-                          <span
-                            title="这个位置现在访问不到（盘没挂或已被删除），记录仍然保留"
-                            className="shrink-0 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/45"
+                    <Section title="目录">
+                      <div className="border-b border-ink/9 py-[18px] first:pt-0">
+                        <div className="text-[15px] font-bold">游戏目录</div>
+                        <div className="mt-1 text-[12.5px] text-ink/60">.minecraft 所在位置，变更后需重新扫描版本</div>
+                        <div className="mt-3">
+                          <InputWithAction
+                            label="游戏目录"
+                            value={gameDirInput}
+                            onChange={setGameDirInput}
+                            onSubmit={() => void applyGameDir()}
+                            actionLabel="应用"
+                            pendingLabel="应用中"
+                            pending={savingGameDir}
+                          />
+                        </div>
+                      </div>
+                      <div className="border-b border-ink/9 py-[18px]">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <div className="text-[15px] font-bold">文件夹列表</div>
+                            <div className="mt-1 text-[12.5px] text-ink/60">
+                              可以并存多个 .minecraft，点「切换」把某个设为当前；移除只删记录，不动磁盘文件
+                            </div>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            className="shrink-0"
+                            icon={<RefreshIcon size={15} />}
+                            onClick={() => void loadDirs()}
+                            disabled={dirsBusy}
                           >
-                            不可达
-                          </span>
+                            重新探测
+                          </Button>
+                        </div>
+
+                        <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0">
+                          {dirs.map((d) => (
+                            <li
+                              key={d.path}
+                              className="flex items-center gap-3 rounded-[3px] border border-ink/10 bg-paper px-3 py-2.5"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2">
+                                  <span className="truncate text-[13.5px] font-bold">{d.name}</span>
+                                  {d.is_current && (
+                                    <span className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
+                                      当前
+                                    </span>
+                                  )}
+                                  {!d.available && (
+                                    <span
+                                      title="这个位置现在访问不到（盘没挂或已被删除），记录仍然保留"
+                                      className="shrink-0 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/45"
+                                    >
+                                      不可达
+                                    </span>
+                                  )}
+                                </span>
+                                <span
+                                  className={`mt-0.5 block truncate font-mono text-[11px] ${
+                                    d.available ? "text-ink/45" : "text-ink/30"
+                                  }`}
+                                >
+                                  {d.path}
+                                </span>
+                              </span>
+                              {!d.is_current && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => void switchDir(d.path, d.name)}
+                                    disabled={dirsBusy || !d.available}
+                                    title={d.available ? undefined : "位置访问不到，无法切过去"}
+                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                  >
+                                    切换
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void removeDir(d.path)}
+                                    disabled={dirsBusy}
+                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/40 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
+                                  >
+                                    移除
+                                  </button>
+                                </>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+
+                        {discovered.length > 0 && (
+                          <div className="mt-3 rounded-[3px] border border-ink/10 bg-paper-sink px-3 py-2.5">
+                            <div className="text-[12px] font-bold text-ink/55">发现未记录的文件夹</div>
+                            <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
+                              {discovered.map((d) => (
+                                <li key={d.path} className="flex items-center gap-3">
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-[12.5px] font-bold">{d.name}</span>
+                                    <span className="block truncate font-mono text-[11px] text-ink/45">
+                                      {d.path}
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void adoptDir(d.name, d.path)}
+                                    disabled={dirsBusy}
+                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                  >
+                                    添加
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         )}
-                      </span>
-                      <span
-                        className={`mt-0.5 block truncate font-mono text-[11px] ${
-                          d.available ? "text-ink/45" : "text-ink/30"
-                        }`}
-                      >
-                        {d.path}
-                      </span>
-                    </span>
-                    {!d.is_current && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void switchDir(d.path, d.name)}
-                          disabled={dirsBusy || !d.available}
-                          title={d.available ? undefined : "位置访问不到，无法切过去"}
-                          className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
-                        >
-                          切换
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void removeDir(d.path)}
-                          disabled={dirsBusy}
-                          className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/40 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
-                        >
-                          移除
-                        </button>
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                      </div>
 
-              {discovered.length > 0 && (
-                <div className="mt-3 rounded-[3px] border border-ink/10 bg-paper-sink px-3 py-2.5">
-                  <div className="text-[12px] font-bold text-ink/55">发现未记录的文件夹</div>
-                  <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
-                    {discovered.map((d) => (
-                      <li key={d.path} className="flex items-center gap-3">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12.5px] font-bold">{d.name}</span>
-                          <span className="block truncate font-mono text-[11px] text-ink/45">
-                            {d.path}
+                      <div className="py-[18px] last:pb-0">
+                        <div className="text-[12.5px] text-ink/45">数据目录</div>
+                        <div className="mt-1 font-mono text-[12px] break-all text-ink/55">{config.data_dir}</div>
+                      </div>
+                    </Section>
+
+                    <Section title="账户凭据">
+                      <div className="py-[18px] first:pt-0 last:pb-0">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="text-[15px] font-bold">微软 client_id</div>
+                          <span
+                            className={[
+                              "rounded-[2px] px-2 py-0.5 text-[11px] font-bold tracking-[0.08em]",
+                              config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/50",
+                            ].join(" ")}
+                          >
+                            {config.has_client_id ? "已配置" : "未配置"}
                           </span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => void adoptDir(d.name, d.path)}
-                          disabled={dirsBusy}
-                          className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/55 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
-                        >
-                          添加
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            <div className="py-[18px] last:pb-0">
-              <div className="text-[12.5px] text-ink/45">数据目录</div>
-              <div className="mt-1 font-mono text-[12px] break-all text-ink/55">{config.data_dir}</div>
-            </div>
-          </Section>
-          )}
-
-          {tab === "launcher" && (
-          <Section title="账户凭据">
-            <div className="py-[18px] first:pt-0 last:pb-0">
-              <div className="flex items-center justify-between gap-4">
-                <div className="text-[15px] font-bold">微软 client_id</div>
-                <span
-                  className={[
-                    "rounded-[2px] px-2 py-0.5 text-[11px] font-bold tracking-[0.08em]",
-                    config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/50",
-                  ].join(" ")}
-                >
-                  {config.has_client_id ? "已配置" : "未配置"}
-                </span>
-              </div>
-              <div className="mt-1 text-[12.5px] text-ink/60">
-                自定义 Azure 应用的 client_id，用于微软正版登录；出于安全不回显已保存的值
-              </div>
-              <div className="mt-3">
-                <InputWithAction
-                  label="微软 client_id"
-                  placeholder={config.has_client_id ? "输入以覆盖现有 client_id" : "输入 client_id"}
-                  value={clientIdInput}
-                  onChange={setClientIdInput}
-                  onSubmit={() => void applyClientId()}
-                  actionLabel="保存"
-                  pendingLabel="保存中"
-                  pending={savingClientId}
-                />
-              </div>
-            </div>
-          </Section>
-          )}
-        </>
-      )}
-
-      {tab === "game" && (
-      <Section title="Java 运行时">
-        {config && (
-          <Row
-            title="自动下载 Java"
-            desc="启动缺少匹配运行时时自动获取对应 JRE"
-            control={
-              <Toggle
-                ariaLabel="自动下载 Java"
-                checked={config.auto_download_java}
-                onChange={(v) => void save({ autoDownloadJava: v }, (c) => ({ ...c, auto_download_java: v }))}
-              />
-            }
-          />
-        )}
-        <div className="border-b border-ink/9 py-[18px]">
-          <div className="mb-3 flex items-center justify-between gap-4">
-            <div className="text-[15px] font-bold">本机检测</div>
-            <Button
-              variant="secondary"
-              icon={<RefreshIcon size={16} />}
-              onClick={() => void loadJava()}
-              disabled={javaLoading}
-            >
-              {javaLoading ? "扫描中…" : "重新扫描"}
-            </Button>
-          </div>
-
-          {javaLoading && <p className="py-2 text-[13.5px] text-ink/55">扫描本机 Java…</p>}
-
-          {!javaLoading && javaError && (
-            <div className="flex items-start gap-3 py-1">
-              <span className="text-danger">
-                <AlertIcon size={18} />
-              </span>
-              <p className="text-[13px] break-words text-ink/70">{javaError}</p>
-            </div>
-          )}
-
-          {!javaLoading && !javaError && javas && javas.length === 0 && (
-            <EmptyState icon={<PackageIcon />} title="未检测到本机 Java" />
-          )}
-
-          {!javaLoading && !javaError && javas && javas.length > 0 && (
-            <ul className="flex flex-col gap-2">
-              {javas.map((j) => (
-                <li
-                  key={j.path}
-                  className="flex items-center justify-between gap-4 rounded-[2px] border border-ink/9 bg-paper px-3.5 py-2.5"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[14px] font-bold tabular-nums">Java {j.version.major}</span>
-                      <span className="font-mono text-[11px] text-ink/45">{j.version.raw}</span>
-                    </div>
-                    <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/50">{j.path}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
-                      {j.is_64bit ? "64 位" : "32 位"}
-                    </span>
-                    <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
-                      {JAVA_SOURCE_LABEL[j.source]}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="pt-[18px]">
-          <div className="text-[15px] font-bold">下载运行时</div>
-          <div className="mt-1 text-[12.5px] text-ink/60">按主版本号获取由启动器托管的 JRE（如 8 / 17 / 21）</div>
-          <div className="mt-3 flex items-center gap-2.5">
-            <input
-              type="number"
-              min={1}
-              inputMode="numeric"
-              aria-label="Java 主版本号"
-              className={`${inputCls} w-28 text-right tabular-nums`}
-              value={javaMajorInput}
-              onChange={(e) => setJavaMajorInput(e.target.value)}
-              disabled={installing}
-            />
-            <Button variant="primary" onClick={() => void doInstallJava()} disabled={installing}>
-              {installing ? "安装中…" : "下载运行时"}
-            </Button>
-          </div>
-          {installing && coreStatus && (
-            <p className="mt-2.5 font-mono text-[12px] break-words text-ink/60">{coreStatus}</p>
-          )}
-        </div>
-      </Section>
-      )}
-
-      {tab === "launcher" && (
-        <Section title="界面">
-          <Row
-            title="减少动态效果"
-            desc="降低或关闭界面动画（防晕动 / 低性能设备）"
-            control={
-              <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
-            }
-          />
-          <div className="border-t border-ink/9">
-            <BackgroundPicker />
-          </div>
-        </Section>
-      )}
-
-      {tab === "launcher" && (
-        <Section title="关于">
-          <div className="py-[18px] first:pt-0 last:pb-0">
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <div className="text-[15px] font-bold">启动器更新</div>
-                <div className="mt-1 text-[12.5px] text-ink/60">{updateHint}</div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2.5">
-                {update?.kind === "available" ? (
-                  <Button
-                    variant="primary"
-                    icon={<DownloadIcon size={16} />}
-                    onClick={() => void doInstallUpdate()}
-                    disabled={updating}
-                  >
-                    {updating ? "更新中" : `更新到 ${update.version}`}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="secondary"
-                    icon={<RefreshIcon size={16} />}
-                    onClick={() => void doCheckUpdate()}
-                    disabled={checking || update?.kind === "unsupported"}
-                  >
-                    {checking ? "检查中" : "检查更新"}
-                  </Button>
+                        </div>
+                        <div className="mt-1 text-[12.5px] text-ink/60">
+                          自定义 Azure 应用的 client_id，用于微软正版登录；出于安全不回显已保存的值
+                        </div>
+                        <div className="mt-3">
+                          <InputWithAction
+                            label="微软 client_id"
+                            placeholder={config.has_client_id ? "输入以覆盖现有 client_id" : "输入 client_id"}
+                            value={clientIdInput}
+                            onChange={setClientIdInput}
+                            onSubmit={() => void applyClientId()}
+                            actionLabel="保存"
+                            pendingLabel="保存中"
+                            pending={savingClientId}
+                          />
+                        </div>
+                      </div>
+                    </Section>
+                  </>
                 )}
-              </div>
-            </div>
 
-            {update?.kind === "available" && update.notes && (
-              <p className="mt-3 mb-0 rounded-[3px] bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/70">
-                {update.notes}
-              </p>
+                <Section title="界面">
+                  <Row
+                    title="减少动态效果"
+                    desc="降低或关闭界面动画（防晕动 / 低性能设备）"
+                    control={
+                      <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
+                    }
+                  />
+                  <div className="border-t border-ink/9">
+                    <BackgroundPicker />
+                  </div>
+                </Section>
+
+                <Section title="关于">
+                  <div className="py-[18px] first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-[15px] font-bold">启动器更新</div>
+                        <div className="mt-1 text-[12.5px] text-ink/60">{updateHint}</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2.5">
+                        {update?.kind === "available" ? (
+                          <Button
+                            variant="primary"
+                            icon={<DownloadIcon size={16} />}
+                            onClick={() => void doInstallUpdate()}
+                            disabled={updating}
+                          >
+                            {updating ? "更新中" : `更新到 ${update.version}`}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            icon={<RefreshIcon size={16} />}
+                            onClick={() => void doCheckUpdate()}
+                            disabled={checking || update?.kind === "unsupported"}
+                          >
+                            {checking ? "检查中" : "检查更新"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {update?.kind === "available" && update.notes && (
+                      <p className="mt-3 mb-0 rounded-[3px] bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/70">
+                        {update.notes}
+                      </p>
+                    )}
+
+                    {updating && (
+                      <p className="mt-2.5 font-mono text-[12px] text-ink/60 tabular-nums">
+                        {updateProgress}
+                      </p>
+                    )}
+                  </div>
+                </Section>
+              </>
             )}
 
-            {updating && (
-              <p className="mt-2.5 font-mono text-[12px] text-ink/60 tabular-nums">
-                {updateProgress}
-              </p>
+            {tab === "game" && (
+              <>
+                {config && (
+                  <Section title="运行时">
+                    <Row
+                      title="内存分配（MB）"
+                      desc="最大 / 最小堆内存，最小留空表示不限制"
+                      control={
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            inputMode="numeric"
+                            aria-label="最大内存 MB"
+                            className={`${inputCls} w-24 text-right tabular-nums`}
+                            value={maxMemInput}
+                            onChange={(e) => setMaxMemInput(e.target.value)}
+                            onBlur={commitMemory}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                            }}
+                          />
+                          <span className="text-ink/35">/</span>
+                          <input
+                            type="number"
+                            min={0}
+                            inputMode="numeric"
+                            aria-label="最小内存 MB"
+                            placeholder="不限"
+                            className={`${inputCls} w-24 text-right tabular-nums`}
+                            value={minMemInput}
+                            onChange={(e) => setMinMemInput(e.target.value)}
+                            onBlur={commitMemory}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                            }}
+                          />
+                        </div>
+                      }
+                    />
+                    <Row
+                      title="版本隔离档位"
+                      desc="决定哪些版本使用独立的存档与配置目录"
+                      control={
+                        <div className="w-[240px]">
+                          <Select
+                            ariaLabel="版本隔离档位"
+                            value={config.isolation_policy}
+                            options={ISOLATION_OPTIONS}
+                            onChange={(v) => void save({ isolationPolicy: v }, (c) => ({ ...c, isolation_policy: v }))}
+                          />
+                        </div>
+                      }
+                    />
+                  </Section>
+                )}
+
+                <Section title="Java 运行时">
+                  {config && (
+                    <Row
+                      title="自动下载 Java"
+                      desc="启动缺少匹配运行时时自动获取对应 JRE"
+                      control={
+                        <Toggle
+                          ariaLabel="自动下载 Java"
+                          checked={config.auto_download_java}
+                          onChange={(v) => void save({ autoDownloadJava: v }, (c) => ({ ...c, auto_download_java: v }))}
+                        />
+                      }
+                    />
+                  )}
+                  <div className="border-b border-ink/9 py-[18px]">
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <div className="text-[15px] font-bold">本机检测</div>
+                      <Button
+                        variant="secondary"
+                        icon={<RefreshIcon size={16} />}
+                        onClick={() => void loadJava()}
+                        disabled={javaLoading}
+                      >
+                        {javaLoading ? "扫描中…" : "重新扫描"}
+                      </Button>
+                    </div>
+
+                    {javaLoading && <p className="py-2 text-[13.5px] text-ink/55">扫描本机 Java…</p>}
+
+                    {!javaLoading && javaError && (
+                      <div className="flex items-start gap-3 py-1">
+                        <span className="text-danger">
+                          <AlertIcon size={18} />
+                        </span>
+                        <p className="text-[13px] break-words text-ink/70">{javaError}</p>
+                      </div>
+                    )}
+
+                    {!javaLoading && !javaError && javas && javas.length === 0 && (
+                      <EmptyState icon={<PackageIcon />} title="未检测到本机 Java" />
+                    )}
+
+                    {!javaLoading && !javaError && javas && javas.length > 0 && (
+                      <ul className="flex flex-col gap-2">
+                        {javas.map((j) => (
+                          <li
+                            key={j.path}
+                            className="flex items-center justify-between gap-4 rounded-[2px] border border-ink/9 bg-paper px-3.5 py-2.5"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[14px] font-bold tabular-nums">Java {j.version.major}</span>
+                                <span className="font-mono text-[11px] text-ink/45">{j.version.raw}</span>
+                              </div>
+                              <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/50">{j.path}</div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
+                                {j.is_64bit ? "64 位" : "32 位"}
+                              </span>
+                              <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
+                                {JAVA_SOURCE_LABEL[j.source]}
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="pt-[18px]">
+                    <div className="text-[15px] font-bold">下载运行时</div>
+                    <div className="mt-1 text-[12.5px] text-ink/60">按主版本号获取由启动器托管的 JRE（如 8 / 17 / 21）</div>
+                    <div className="mt-3 flex items-center gap-2.5">
+                      <input
+                        type="number"
+                        min={1}
+                        inputMode="numeric"
+                        aria-label="Java 主版本号"
+                        className={`${inputCls} w-28 text-right tabular-nums`}
+                        value={javaMajorInput}
+                        onChange={(e) => setJavaMajorInput(e.target.value)}
+                        disabled={installing}
+                      />
+                      <Button variant="primary" onClick={() => void doInstallJava()} disabled={installing}>
+                        {installing ? "安装中…" : "下载运行时"}
+                      </Button>
+                    </div>
+                    {installing && coreStatus && (
+                      <p className="mt-2.5 font-mono text-[12px] break-words text-ink/60">{coreStatus}</p>
+                    )}
+                  </div>
+                </Section>
+              </>
             )}
-          </div>
-        </Section>
-      )}
+          </motion.div>
+        </AnimatePresence>
+      </motion.div>
     </>
   );
 }
