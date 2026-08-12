@@ -1697,6 +1697,14 @@ fn appearance_dto(aurora: &Aurora) -> AppearanceDto {
 /// 读取当前外观设置。
 #[tauri::command]
 async fn get_appearance(state: State<'_, RwLock<Aurora>>) -> Result<AppearanceDto, String> {
+    // 先给老配置补上缺失的取样数据。放在读取外观这一步而不是等玩家重新选图：
+    // 那种「顺带补上」的迁移只对恰好去点了那一下的人生效，等于没做。
+    {
+        let mut aurora = state.write().await;
+        if aurora.backfill_plate_zone() {
+            aurora.save_config().await.map_err(|e| e.to_string())?;
+        }
+    }
     let aurora = state.read().await;
     Ok(appearance_dto(&aurora))
 }

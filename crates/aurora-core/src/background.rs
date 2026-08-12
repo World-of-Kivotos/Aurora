@@ -157,6 +157,47 @@ impl Aurora {
         Ok(())
     }
 
+    /// 给当前背景补上缺失的取样数据，返回是否真的补了（调用方据此决定要不要落盘）。
+    ///
+    /// 本功能上线前导入的图，配置里没有 plate，前端遇到 None 会退回纸片。原打算靠
+    /// 「玩家重新选一次图」顺带补上，但那不成立：没人会为了一个自己都不知道的功能去点那一下，
+    /// 结果就是老用户永远看不到这个特性。所以改成读取外观时按需补一次。
+    ///
+    /// 只在缺失时解码，补完落盘，之后再不触发，稳态下零开销。
+    pub fn backfill_plate_zone(&mut self) -> bool {
+        let Some(bg) = self.config().appearance.background.as_ref() else {
+            return false;
+        };
+        if bg.plate.is_some() {
+            return false;
+        }
+        let file = bg.file.clone();
+
+        // 取不到图就维持 None，让前端继续用纸片那条兜底，而不是把整个外观读取搞失败——
+        // 这是应用外壳的渲染路径，一张壁纸读不出来不该让界面失去背景设置。
+        // 但也不能无声吞掉：记一条 warn，排查时能看见。
+        let path = match resolve_in_library(&self.backgrounds_dir(), &file) {
+            Ok(path) => path,
+            Err(err) => {
+                tracing::warn!(%file, %err, "补取样时解析图库路径失败，维持未量状态");
+                return false;
+            }
+        };
+        let decoded = match decode_image(&path) {
+            Ok(decoded) => decoded,
+            Err(err) => {
+                tracing::warn!(%file, %err, "补取样时解码失败，维持未量状态");
+                return false;
+            }
+        };
+
+        let zone = plate_zone_of(&decoded);
+        if let Some(bg) = self.config_mut().appearance.background.as_mut() {
+            bg.plate = Some(zone);
+        }
+        true
+    }
+
     /// 从图库删掉一张图。删的是当前那张时顺带回到纯纸面。
     pub async fn remove_background(&mut self, file: &str) -> Result<()> {
         let path = resolve_in_library(&self.backgrounds_dir(), file)?;
@@ -520,6 +561,61 @@ mod tests {
         }
         let zone = plate_zone_of(&image::DynamicImage::ImageRgb8(img));
         assert_eq!(zone.p90, 0, "稀疏高光应被分位数滤掉，实际 p90={}", zone.p90);
+    }
+
+    /// 老配置（plate 为 None）必须能在不重新选图的前提下自动补上。
+    #[tokio::test]
+    async fn backfill_fills_missing_plate_zone() {
+        let tmp = tempfile::tempdir().expect("临时目录");
+        let mut aurora = aurora_at(tmp.path());
+        let dir = aurora.backgrounds_dir();
+        std::fs::create_dir_all(&dir).expect("建图库目录");
+        // 亮图：补完之后取样值应当偏亮。
+        write_solid(&dir, "亮.jpg", 300, 300, [240, 240, 240]);
+
+        // 模拟旧版本写下的配置：有 background，但没量过。
+        aurora.config_mut().appearance.background = Some(BackgroundRef {
+            file: "亮.jpg".to_owned(),
+            tint: "#f0f0f0".to_owned(),
+            plate: None,
+        });
+
+        assert!(aurora.backfill_plate_zone(), "缺失时应当补上并返回 true");
+        let plate = aurora
+            .config()
+            .appearance
+            .background
+            .as_ref()
+            .and_then(|b| b.plate.clone())
+            .expect("补完必须有值");
+        assert!(plate.p10 > 200, "亮图的偏暗端也该偏亮，实际 {}", plate.p10);
+
+        // 幂等：已经量过就不再动，避免每次读取外观都白解码一次并反复落盘。
+        assert!(!aurora.backfill_plate_zone(), "已有取样时应当返回 false");
+    }
+
+    /// 图丢了不该把外观读取拖垮，只维持未量状态。
+    #[tokio::test]
+    async fn backfill_tolerates_missing_file() {
+        let tmp = tempfile::tempdir().expect("临时目录");
+        let mut aurora = aurora_at(tmp.path());
+        aurora.config_mut().appearance.background = Some(BackgroundRef {
+            file: "并不存在.jpg".to_owned(),
+            tint: "#000000".to_owned(),
+            plate: None,
+        });
+        assert!(!aurora.backfill_plate_zone(), "取不到图应当返回 false 而不是 panic");
+        assert!(
+            aurora
+                .config()
+                .appearance
+                .background
+                .as_ref()
+                .expect("背景仍在")
+                .plate
+                .is_none(),
+            "补不上时应维持 None，而不是写入一个编出来的值"
+        );
     }
 
     #[test]
