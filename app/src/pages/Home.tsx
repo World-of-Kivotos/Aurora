@@ -240,10 +240,15 @@ export function Home() {
         </motion.div>
       )}
 
+      {/* 有图时同样改磨砂纸。paper-frost-strong 与 Card 自带的 bg-paper-sink 都设背景，
+          前者是无层（unlayered）自定义类、后者在 Tailwind 的 utilities 层里，
+          按 CSS Cascade 5 无层样式无条件胜出，结果是确定的而不是碰运气。
+          注：这里的 border-danger/40 目前是失效的（被 Card 基类的 border-ink/9 压掉，
+          同层同特异性、按生成顺序判负），那是既有缺陷，要给 Card 加 tone 才治得了，本次未动。 */}
       {error && (
         <Card
           variants={pageItem}
-          className={`mb-6 flex items-center gap-4 border-danger/40 ${onPhoto ? "paper-on-photo" : ""}`}
+          className={`mb-6 flex items-center gap-4 border-danger/40 ${onPhoto ? "paper-frost-strong paper-on-photo" : ""}`}
         >
           <span className="text-danger [&_svg]:h-5 [&_svg]:w-5">
             <AlertIcon />
@@ -268,6 +273,7 @@ export function Home() {
             className={`mb-6 ${onPhoto ? "paper-on-photo" : ""}`}
           >
             <CrashBanner
+              onPhoto={onPhoto}
               report={crash.report}
               versionId={crash.versionId}
               onDismiss={() => setCrash(null)}

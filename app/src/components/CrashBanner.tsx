@@ -16,6 +16,8 @@ interface CrashBannerProps {
   onDismiss: () => void;
   /** 跳实例卷宗页的诊断区。 */
   onOpenDetail: () => void;
+  /** 是否浮在背景图上。由调用方下发而不是自己读外观，免得与外壳的判定漂移。 */
+  onPhoto: boolean;
 }
 
 // 横条只铺最靠前的几个可疑文件，其余交给详情页——它是止损入口不是完整清单。
@@ -29,7 +31,13 @@ const disableLabel: Record<DisableState, string> = {
   done: "已禁用",
 };
 
-export function CrashBanner({ report, versionId, onDismiss, onOpenDetail }: CrashBannerProps) {
+export function CrashBanner({
+  report,
+  versionId,
+  onDismiss,
+  onOpenDetail,
+  onPhoto,
+}: CrashBannerProps) {
   const { toast } = useToast();
   // 稀疏表：只记录动过的文件，没碰过的按 idle 处理。
   const [states, setStates] = useState<Record<string, DisableState | undefined>>({});
@@ -61,7 +69,13 @@ export function CrashBanner({ report, versionId, onDismiss, onOpenDetail }: Cras
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={springs.settle}
-      className="rounded-[3px] border border-danger bg-paper p-4"
+      // 有图时改用磨砂：外壳整体是磨砂之后，一块全实心的纸就成了整窗唯一不透光的东西，
+      // 那正是「像贴纸」的由来。取更实的 92% 一档而不是外壳的 85%——这是报警面板，
+      // danger 文字压在它上面仍有 6.83:1（实心 paper-sink 基线是 7.65:1），可读性没让步。
+      className={[
+        "rounded-[3px] border border-danger p-4",
+        onPhoto ? "paper-frost-strong" : "bg-paper",
+      ].join(" ")}
     >
       <div className="flex items-start gap-3">
         <AlertIcon size={20} className="mt-px shrink-0 text-danger" />
