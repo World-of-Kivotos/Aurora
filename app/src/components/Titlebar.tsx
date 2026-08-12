@@ -32,11 +32,18 @@ function WinButton({
   );
 }
 
-export function Titlebar() {
+export function Titlebar({ onPhoto }: { onPhoto: boolean }) {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-[38px] shrink-0 items-center pr-2 pl-4 select-none"
+      className={[
+        "relative flex h-[38px] shrink-0 items-center pr-2 pl-4 select-none",
+        // 铺了图就改磨砂：让图透上来而不是拿一条不透明纸带把它切掉。
+        // 不做成全透明是因为关闭键 hover 是朱红，压在偏红的图上会直接读不出来。
+        onPhoto ? "paper-frost" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       <div data-tauri-drag-region className="flex h-full flex-1 items-center gap-2">
         <SparkleIcon size={12} className="text-accent" />

@@ -51,11 +51,16 @@ function NavRow({ to, label, end }: NavDef) {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ onPhoto }: { onPhoto: boolean }) {
   return (
     <nav
       aria-label="主导航"
-      className="flex w-[196px] shrink-0 flex-col border-r border-ink/10 px-5 pt-6 pb-5"
+      className={[
+        "flex w-[196px] shrink-0 flex-col px-5 pt-6 pb-5",
+        // 有图时撤掉那道竖线：磨砂边界本身已经把侧栏与内容区分开了，
+        // 再压一道墨线等于把刚抹平的那条缝重新描一遍。
+        onPhoto ? "paper-frost" : "border-r border-ink/10",
+      ].join(" ")}
     >
       <div className="mb-9 flex items-center gap-2.5 pl-[6px]">
         <SparkleIcon size={22} className="text-ink" />

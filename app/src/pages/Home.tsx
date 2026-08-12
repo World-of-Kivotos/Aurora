@@ -48,11 +48,15 @@ function loaderText(v: InstalledVersionDto): string {
 }
 
 // 右下角那撮内容的两种形态。没有背景图时它就坐在纸底上，与改动前一模一样——
-// 不装背景的人不该因为这个功能看到任何变化。有图时收进一块不透明纸片，
-// 文字始终站在纸上，可读性与玩家选了什么图完全无关。
+// 不装背景的人不该因为这个功能看到任何变化。
+//
+// 有图时用磨砂纸而不是不透明纸片：外壳已经整体改磨砂，这块再保持全实心，
+// 它就成了整窗唯一一块不透光的东西，那正是「像贴纸」的由来。改用同族材质才归队。
+// 取更实的一档（92% 对 78%）：这里压着版本名与账户名，可读性不跟外壳共享下限。
+// 投影保留——纸压在照片上是实打实的两个平面，理由见 app.css 里 paper-on-photo 的注释。
 const PLATE_BARE = "mt-auto flex flex-col items-end gap-6 pt-10";
 const PLATE_ON_PHOTO =
-  "mt-auto ml-auto flex flex-col items-end gap-6 rounded-[3px] bg-paper px-7 py-6 paper-on-photo";
+  "mt-auto ml-auto flex flex-col items-end gap-6 rounded-[3px] paper-frost-strong px-7 py-6 paper-on-photo";
 
 export function Home() {
   const { toast } = useToast();
@@ -279,7 +283,10 @@ export function Home() {
           {onPhoto && (
             <div className="flex items-baseline gap-2.5 self-end">
               <span className="text-[10px] font-bold tracking-[0.22em] text-ink/40">状态</span>
-              <span className="font-mono text-[12px] tracking-[0.08em] text-ink/60 tabular-nums">
+              {/* 比报头里那份状态值深一档：ink/60 压在不透明纸上是 4.56:1，勉强过线，
+                  而这里底下是 92% 磨砂，剩的余量不够，掉到 4.3 上下。只改这一处，
+                  报头那份（无背景图时才渲染）保持原样，免得「装不装背景」变成两套字色。 */}
+              <span className="font-mono text-[12px] tracking-[0.08em] text-ink/65 tabular-nums">
                 {status}
               </span>
             </div>
