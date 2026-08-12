@@ -313,7 +313,18 @@ export function Home() {
 
       {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}
       <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
-        <div className={!onPhoto ? PLATE_BARE : naked ? PLATE_NAKED : PLATE_FROSTED}>
+        <div
+          className={
+            !onPhoto
+              ? PLATE_BARE
+              : naked
+                ? // 基色定在容器上而不是逐个节点写。版本名与账户名本来就没写颜色类、
+                  // 靠继承 body 的墨色，压在深色图上直接看不见——逐处去补是治标，
+                  // 往后谁再加一行不写颜色的文字就会重犯。定在容器上，新增节点自动就是对的。
+                  `${PLATE_NAKED} ${mode === "paperOn" ? "text-paper-on" : "text-ink"}`
+                : PLATE_FROSTED
+          }
+        >
           {onPhoto && (
             <div className="flex items-baseline gap-2.5 self-end">
               <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/40", "weak")}`}>状态</span>
