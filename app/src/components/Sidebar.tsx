@@ -21,7 +21,7 @@ const TOP: NavDef[] = [
 
 const BOTTOM: NavDef[] = [{ to: "/settings", label: "设置" }];
 
-function NavRow({ to, label, end }: NavDef) {
+function NavRow({ to, label, end, onPhoto }: NavDef & { onPhoto: boolean }) {
   return (
     <NavLink
       to={to}
@@ -40,7 +40,11 @@ function NavRow({ to, label, end }: NavDef) {
           <span
             className={[
               "text-[15px] tracking-[0.02em] transition-colors",
-              isActive ? "font-extrabold text-ink" : "font-semibold text-ink/55 group-hover:text-ink",
+              isActive
+                ? "font-extrabold text-ink"
+                : // 磨砂 65% 下 ink/55 只有 2.86，连正文门槛的一半余量都没有；ink/80 得 4.82。
+                  // 这一档是磨砂能放这么透的前提，删掉它就必须把 paper-frost 推回 83% 以上。
+                  `font-semibold group-hover:text-ink ${onPhoto ? "text-ink/80" : "text-ink/55"}`,
             ].join(" ")}
           >
             {label}
@@ -74,14 +78,14 @@ export function Sidebar({ onPhoto }: { onPhoto: boolean }) {
       <ul className="flex flex-col gap-0.5">
         {TOP.map((it) => (
           <li key={it.to}>
-            <NavRow {...it} />
+            <NavRow {...it} onPhoto={onPhoto} />
           </li>
         ))}
       </ul>
 
       <div className="mt-auto">
         {BOTTOM.map((it) => (
-          <NavRow key={it.to} {...it} />
+          <NavRow key={it.to} {...it} onPhoto={onPhoto} />
         ))}
       </div>
     </nav>
