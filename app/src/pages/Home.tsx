@@ -71,7 +71,8 @@ export function Home() {
   const { appearance } = useAppearance();
   const onPhoto = appearance.background !== null;
   // 有图时先问一句这块图撑不撑得住裸字。撑得住就不要纸片，字直接压上去。
-  const naked = onPhoto && plateMode(appearance.plate) === "ink";
+  const mode = onPhoto ? plateMode(appearance.plate, appearance.veil) : "plate";
+  const naked = mode !== "plate";
   /**
    * 裸字模式一律满墨，层级交给字号与字重，不用灰度。
    *
@@ -79,7 +80,8 @@ export function Home() {
    * ink/50 掉到 2.39:1，就算底色亮到 p10=200，ink/50 也才 3.25:1。
    * 在照片上拿灰度做层级，等于把一半信息做成读不出来的。
    */
-  const fg = (shade: string) => (naked ? "text-ink" : shade);
+  const fg = (shade: string) =>
+    mode === "ink" ? "text-ink" : mode === "paperOn" ? "text-paper-on" : shade;
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   // config 里选中的启动版本 id；入场随 load 拉取，决定「开始游戏」启动哪个（版本页设定）。
@@ -358,6 +360,7 @@ export function Home() {
 
           {/* 主操作：手写体 Aurora 启动动效（竖线扫左 → 按真实进度写字 → 进程起+2s → Stop）。日志后台存。 */}
           <LaunchControl
+            onDark={mode === "paperOn"}
             phase={launchPhase}
             disabled={!canLaunch}
             onStart={() => void handlePlay()}

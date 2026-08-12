@@ -13,6 +13,13 @@ export type LaunchPhase = "idle" | "launching" | "spawned";
 interface LaunchControlProps {
   phase: LaunchPhase;
   disabled?: boolean;
+  /**
+   * 是否压在偏暗的图上。为真时 Start/Stop 字样翻成纸色，否则墨色字会直接沉进图里。
+   *
+   * 只翻字样。竖线与手写笔迹保持朱红——它们是形状不是文字，在暗底上认得出，
+   * 而朱红是这个界面唯一的强调色，连它一起反相等于把品牌痕迹从启动键上抹掉。
+   */
+  onDark?: boolean;
   onStart: () => void;
   onStop: () => void;
 }
@@ -31,7 +38,7 @@ function easeOut(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-export function LaunchControl({ phase, disabled, onStart, onStop }: LaunchControlProps) {
+export function LaunchControl({ phase, disabled, onStart, onStop, onDark }: LaunchControlProps) {
   const pathRef = useRef<SVGPathElement>(null);
   const rafRef = useRef<number | null>(null);
   const tl = useRef({ start: 0, spawnedAt: 0, completeAt: 0, holdTimer: 0, lastP: 0 });
@@ -128,14 +135,14 @@ export function LaunchControl({ phase, disabled, onStart, onStop }: LaunchContro
     >
       {/* Start / Stop：块体字，右对齐 */}
       <span
-        className={`absolute inset-y-0 right-3 flex items-center text-[46px] leading-none font-extrabold tracking-[-0.02em] text-ink transition-[color,opacity] duration-200 group-hover:text-accent ${
+        className={`absolute inset-y-0 right-3 flex items-center text-[46px] leading-none font-extrabold tracking-[-0.02em] ${onDark ? "text-paper-on" : "text-ink"} transition-[color,opacity] duration-200 group-hover:text-accent ${
           view === "idle" ? "opacity-100" : "opacity-0"
         }`}
       >
         Start
       </span>
       <span
-        className={`absolute inset-y-0 right-3 flex items-center text-[46px] leading-none font-extrabold tracking-[-0.02em] text-ink transition-[color,opacity] duration-200 group-hover:text-accent ${
+        className={`absolute inset-y-0 right-3 flex items-center text-[46px] leading-none font-extrabold tracking-[-0.02em] ${onDark ? "text-paper-on" : "text-ink"} transition-[color,opacity] duration-200 group-hover:text-accent ${
           view === "running" ? "opacity-100" : "opacity-0"
         }`}
       >

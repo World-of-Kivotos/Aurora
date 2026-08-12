@@ -9,7 +9,7 @@ import { Sidebar } from "./Sidebar";
 import { PageBackground } from "./PageBackground";
 import { pageContainer } from "../lib/motion";
 import { schedulePrefetch } from "../lib/prefetch";
-import { photoShowsOn } from "../lib/appearance";
+import { photoShowsOn, plateMode } from "../lib/appearance";
 import { useAppearance } from "../lib/appearance-context";
 
 export function AppShell() {
@@ -21,6 +21,8 @@ export function AppShell() {
   // 外壳是否该改用磨砂。判定与 Toast 共用 photoShowsOn，避免两处规则漂移；
   // 其中的 background 判空保证没装背景的人看不到任何变化。
   const showPhoto = photoShowsOn(location.pathname, appearance.background);
+  // 压暗层只为纸色裸字服务：满墨字与磨砂纸片那两档都不需要，铺了反而平白压暗一角。
+  const scrim = showPhoto && plateMode(appearance.plate, appearance.veil) === "paperOn";
 
   // 外壳挂载即在空闲期预取下载页各 tab 的首屏（后端对清单与搜索都没有缓存，
   // 不预取的话每次进下载页都要现等一次网络往返）。只跑一次，与路由无关。
@@ -37,6 +39,7 @@ export function AppShell() {
           file={appearance.background}
           tint={appearance.tint}
           veil={appearance.veil}
+          scrim={scrim}
         />
       )}
       {/* 背景是 absolute，静态兄弟节点会被它盖住，得靠定位把层序拉回来。

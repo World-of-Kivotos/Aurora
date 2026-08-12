@@ -55,33 +55,77 @@ export const EMPTY_APPEARANCE: AppearanceDto = {
 /**
  * 主页右下角那撮信息该怎么摆。
  *
- * - `ink`：字直接压在图上，满墨，不要纸片。
- * - `plate`：这块图撑不住裸字，退回磨砂纸片。
+ * - `ink`：字直接压在图上，满墨。图够亮时走这档，什么都不加。
+ * - `paperOn`：字直接压在图上，纸色，底下垫一层柔和压暗。图偏暗时走这档。
+ * - `plate`：这块图明暗跨度太大，两种字色都撑不住，退回磨砂纸片。
  */
-export type PlateMode = "ink" | "plate";
+export type PlateMode = "ink" | "paperOn" | "plate";
 
-/*
- * 裸字的准入线。由 WCAG 反解得出，不是拍脑袋定的：
+/** 压暗层在最浓处的墨色不透明度。与 app.css 的 .plate-scrim 必须一致。 */
+export const SCRIM_ALPHA = 0.4;
+
+/**
+ * 裸字要达到的对比度，比 AA 的 4.5 高一档。
  *
- *   墨色字 #14161a 的相对亮度是 0.00797，要 (L + 0.05) / (0.00797 + 0.05) >= 4.5
- *   解得 L >= 0.2109，映射到 0..255 就是 54。
- *
- * 但实际取 69，因为判据用的是 p10——按定义还有一成像素比它更暗，而那一成完全可能
- * 正压在字底下。54 在 p10 处刚好压线 4.52:1，没有余量；69 对应 5.53:1，
- * 把那条暗尾也兜进去。宁可多退回纸片，不能让字在某张图上恰好糊掉。
+ * 判据用的是 p10/p90，按定义两头各还有一成像素比它更差，而那一成完全可能正压在字底下。
+ * 压着 4.5 判等于把那条尾巴当不存在。多要一档余量，宁可多退回纸片，
+ * 也不能让字在某张图上恰好糊掉。
  */
-const INK_NEEDS_AT_LEAST = 69;
+const NAKED_TARGET = 5.5;
 
-export function plateMode(plate: PlateZone | null): PlateMode {
+// 三个关键色的等效灰阶（sRGB 0..255）与相对亮度。都是近中性色，按灰阶做合成估算误差可忽略。
+const INK_SRGB = 22;
+const PAPER_SRGB = 242;
+const L_INK = 0.007971;
+const L_PAPER_ON = 0.905855;
+
+/** sRGB 灰阶转相对亮度。 */
+function lumaOf(srgb: number): number {
+  const c = srgb / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/** 相对亮度还原成等效 sRGB 灰阶——上面那条传递函数的逆。 */
+function srgbOf(luma: number): number {
+  const c = luma <= 0.0031308 ? luma * 12.92 : 1.055 * luma ** (1 / 2.4) - 0.055;
+  return c * 255;
+}
+
+/** 把 `over` 以 alpha 压在 `base` 上（都按 sRGB 灰阶算）。 */
+function composite(base: number, over: number, alpha: number): number {
+  return over * alpha + base * (1 - alpha);
+}
+
+/**
+ * 取样值经过柔化与压暗两层之后，字实际落在的那层底色亮度。
+ *
+ * 顺序必须和 PageBackground 的图层顺序一致：图 -> 纸色柔化 -> 压暗。
+ * 柔化会把底色提亮，直接拿原图的取样值判会高估深色图的可用性——
+ * 玩家把柔化一拉，浅色字就该失效了，判定必须跟着变。
+ */
+function effectiveLuma(sampled: number, veil: number, scrim: number): number {
+  const afterImage = srgbOf(sampled / 255);
+  const afterVeil = composite(afterImage, PAPER_SRGB, veil / 100);
+  return lumaOf(composite(afterVeil, INK_SRGB, scrim));
+}
+
+export function plateMode(plate: PlateZone | null, veil: number): PlateMode {
   // 没量过的图（本功能上线前导入的）一律上纸片：宁可多一块纸，也不拿没量过的图赌可读性。
   // 玩家在设置页重新选一次这张图，后端就会补上取样，自动切到裸字。
   if (plate === null) return "plate";
-  // 比的是偏暗那一端而不是均值：选了墨色字，怕的就是区域里最暗的部分。
-  // 明暗跨度大的角落 p10 一定低，自然落到纸片，不需要另设「多花算花」的阈值。
+
+  // 比的都是最不利的那一端而不是均值：满墨字怕最暗处，纸色字怕最亮处。
+  // 明暗跨度大的角落两头都过不了，自然落到纸片，不需要另设「多花算花」的阈值。
   //
-  // 深色图本可以反过来用纸色字，这里没有做：那要连 LaunchControl 的 Start 字样与
-  // 朱红强调色一起反相，是另一套配色决策。没定之前深色图一律走纸片这条稳妥路径。
-  return plate.p10 >= INK_NEEDS_AT_LEAST ? "ink" : "plate";
+  // 满墨字这一档不铺压暗层——压暗只会让深色字更难读，所以 scrim 传 0。
+  const darkEnd = effectiveLuma(plate.p10, veil, 0);
+  if ((darkEnd + 0.05) / (L_INK + 0.05) >= NAKED_TARGET) return "ink";
+
+  // 纸色字这一档底下垫压暗层，把最亮那一成拉进达标区。
+  const brightEnd = effectiveLuma(plate.p90, veil, SCRIM_ALPHA);
+  if ((L_PAPER_ON + 0.05) / (brightEnd + 0.05) >= NAKED_TARGET) return "paperOn";
+
+  return "plate";
 }
 
 /**

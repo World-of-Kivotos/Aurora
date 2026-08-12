@@ -23,9 +23,11 @@ interface Props {
   tint: string | null;
   /** 纸色遮罩强度（百分比）。 */
   veil: number;
+  /** 是否铺压暗层。仅当右下角改用纸色裸字时为真，由外壳按取样结果判定。 */
+  scrim: boolean;
 }
 
-export function PageBackground({ file, tint, veil }: Props) {
+export function PageBackground({ file, tint, veil, scrim }: Props) {
   // MotionConfig 已全局接管 framer-motion 的动效降级，但下面那张 img 的淡入是 CSS transition，
   // 不在它管辖内，所以这里要自己读一次偏好。
   const { reduceMotion } = useMotionPref();
@@ -68,6 +70,10 @@ export function PageBackground({ file, tint, veil }: Props) {
               style={{ background: "var(--color-paper)", opacity: veil / 100 }}
             />
           )}
+
+          {/* 压暗层压在柔化之上：柔化会把底色提亮，字色判定按「图 -> 柔化 -> 压暗」这个顺序算，
+              图层顺序必须跟着一致，否则算出来的对比度对不上实际看到的。 */}
+          {scrim && <div className="plate-scrim absolute inset-0" />}
 
           {/* 顶部不做渐隐。试过一道 64px 的纸色渐变去衔接标题栏，实拍下来是一条发灰的脏带子——
               杂志的跨页图本来就是硬边切到页边，图与标题栏之间那条干净的分界才是版面语言。 */}
