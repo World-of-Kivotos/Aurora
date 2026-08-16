@@ -4,10 +4,12 @@
 //! 资源分发场景的通用下载引擎：
 //!
 //! - [`Downloader`]：单文件下载。已知大小的大文件走 Range 分块并发，分片粒度断点续传；每源指数
-//!   退避重试，耗尽后按 [`SourcePlan`] 切换下一个镜像源；合并后强制 sha1/大小校验，不符即重下。
+//!   退避重试，耗尽后按任务级候选源或 [`SourcePlan`] 切换下一个源；合并后强制 sha1/大小校验，
+//!   不符即重下。
 //! - [`DownloadPool`]：批量并发。信号量控住文件级并发，把上千小文件跑完，进度经 [`DownloadProgress`]
 //!   与 `watch` channel 上报。
-//! - [`SourcePlan`] / [`SourceResolver`]：官方源与 BMCLAPI 镜像的优先级调度与 URL 解析，支持测速排序。
+//! - [`SourcePlan`] / [`SourceResolver`]：官方源、BMCLAPI 镜像与上游提供 URL 的优先级调度和解析，
+//!   支持保序去重、任务级覆盖与测速排序。
 //!
 //! 所有失败归口到 [`Error`]，可重试性由 [`aurora_base::retry::RetryableError`] 精确分级。
 //!

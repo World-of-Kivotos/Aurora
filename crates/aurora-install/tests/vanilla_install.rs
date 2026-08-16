@@ -31,7 +31,7 @@ struct MockResolver {
 }
 
 impl SourceResolver for MockResolver {
-    fn resolve(&self, url: &str, _source: MirrorSource) -> aurora_download::Result<String> {
+    fn resolve(&self, url: &str, _source: &MirrorSource) -> aurora_download::Result<String> {
         const OFFICIAL_ASSETS: &str = "https://resources.download.minecraft.net";
         if let Some(rest) = url.strip_prefix(OFFICIAL_ASSETS) {
             Ok(format!("{}{}", self.base, rest))

@@ -2,7 +2,7 @@
 //!
 //! [`Downloader::download`] 的一次调用完整覆盖：
 //! 1. 若目标已存在且 sha1/大小校验通过则直接跳过（可重入、幂等安装）。
-//! 2. 把官方 URL 经 [`SourcePlan`] 展开为候选源列表，逐源尝试。
+//! 2. 优先使用任务级候选源；任务未指定时，再由 [`SourcePlan`] 展开全局候选源列表。
 //! 3. 每个源用 [`retry_async`] 做指数退避重试；耗尽后切换下一个源（即「n 次后切换镜像」）。
 //! 4. 已知大小且达阈值的大文件走 Range 分块并发下载，分片落 `.aurora-partN`；网络中断保留已完成
 //!    分片供下次断点续传，损坏（哈希不符）则清分片重下。
@@ -75,11 +75,18 @@ impl Downloader {
             return Ok(());
         }
 
-        let candidates = self.config.sources.candidates(&task.url)?;
+        let candidates = if task.task_sources.is_empty() {
+            self.config.sources.candidates(&task.url)?
+        } else {
+            self.config
+                .sources
+                .candidates_from(&task.url, &task.task_sources)?
+        };
         let mut last_err: Option<Error> = None;
         for (index, url) in candidates.iter().enumerate() {
             // 每个源独立退避重试：retry_async 的 op 每次生成新 future，携带当前源的 URL。
-            let result = retry_async(&self.config.retry, || self.attempt(url, task, progress)).await;
+            let result =
+                retry_async(&self.config.retry, || self.attempt(url, task, progress)).await;
             match result {
                 Ok(()) => return Ok(()),
                 Err(err) => {

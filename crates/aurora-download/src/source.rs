@@ -1,7 +1,7 @@
-//! 下载源调度：官方源与 BMCLAPI 镜像之间的优先级列表、URL 解析与测速排序。
+//! 下载源调度：官方源、BMCLAPI 镜像与上游提供地址的优先级列表、URL 解析与测速排序。
 //!
 //! [`SourcePlan`] 持有一组按优先级排列的 [`MirrorSource`]，并通过 [`SourceResolver`] 把一个
-//! 官方 URL 展开成一组「候选具体 URL」（去重、保序）。引擎按此列表依次尝试，某源重试耗尽即切换
+//! 基准 URL 展开成一组「候选具体 URL」（去重、保序）。引擎按此列表依次尝试，某源重试耗尽即切换
 //! 下一个。解析器是可注入的接口：生产用 [`MirrorResolver`]（走 aurora-base 的镜像改写表），
 //! 单元测试可注入自定义映射把不同源指向不同的本地 mock 端点。
 
@@ -12,17 +12,17 @@ use aurora_base::mirror::{self, MirrorSource};
 
 use crate::error::Result;
 
-/// 把「官方 URL + 下载源」解析为该源上的具体请求 URL。
+/// 把「基准 URL + 下载源」解析为该源上的具体请求 URL。
 pub trait SourceResolver: Send + Sync {
     /// 解析。非法 URL 等应返回错误而非静默兜底。
-    fn resolve(&self, url: &str, source: MirrorSource) -> Result<String>;
+    fn resolve(&self, url: &str, source: &MirrorSource) -> Result<String>;
 }
 
 /// 生产用解析器：直接套用 [`aurora_base::mirror::rewrite`] 的官方↔BMCLAPI 改写规则。
 pub struct MirrorResolver;
 
 impl SourceResolver for MirrorResolver {
-    fn resolve(&self, url: &str, source: MirrorSource) -> Result<String> {
+    fn resolve(&self, url: &str, source: &MirrorSource) -> Result<String> {
         Ok(mirror::rewrite(url, source)?)
     }
 }
@@ -64,13 +64,20 @@ impl SourcePlan {
         Self { sources, resolver }
     }
 
-    /// 把一个官方 URL 展开为按优先级排列、去重后的候选 URL 列表。
+    /// 把一个基准 URL 展开为按优先级排列、去重后的候选 URL 列表。
     ///
     /// 去重很关键：无镜像的域名（如 Modrinth）在所有源下解析结果相同，去重后只尝试一次，
     /// 不做无谓的重复请求；列表恒非空（源为空时回退到原始 URL）。
     pub fn candidates(&self, url: &str) -> Result<Vec<String>> {
+        self.candidates_from(url, &self.sources)
+    }
+
+    /// 使用调用方给定的源列表展开候选 URL，解析规则仍由本计划持有的解析器提供。
+    ///
+    /// 任务级候选源通过此入口覆盖全局优先级，确保同一批下载中的不同文件不会串用彼此的地址。
+    pub fn candidates_from(&self, url: &str, sources: &[MirrorSource]) -> Result<Vec<String>> {
         let mut out: Vec<String> = Vec::new();
-        for &source in &self.sources {
+        for source in sources {
             let resolved = self.resolver.resolve(url, source)?;
             if !out.contains(&resolved) {
                 out.push(resolved);
@@ -120,7 +127,7 @@ pub async fn probe_latencies(
     per_probe_timeout: Duration,
 ) -> Result<Vec<(MirrorSource, Option<Duration>)>> {
     let mut out = Vec::with_capacity(sources.len());
-    for &source in sources {
+    for source in sources {
         let url = resolver.resolve(sample_url, source)?;
         let started = Instant::now();
         let probe = tokio::time::timeout(
@@ -135,7 +142,7 @@ pub async fn probe_latencies(
             Ok(Ok(resp)) if resp.status().is_success() => Some(started.elapsed()),
             _ => None,
         };
-        out.push((source, latency));
+        out.push((source.clone(), latency));
     }
     Ok(out)
 }
@@ -182,6 +189,47 @@ mod tests {
         let plan = SourcePlan::new(vec![]);
         let got = plan.candidates("https://host/x").unwrap();
         assert_eq!(got, vec!["https://host/x".to_string()]);
+    }
+
+    #[test]
+    fn provided_candidates_are_preserved_in_order_and_deduplicated() {
+        let first = "https://cdn-a.example/mod.jar";
+        let second = "https://cdn-b.example/mod.jar";
+        let plan = SourcePlan::new(vec![
+            MirrorSource::Provided(first.into()),
+            MirrorSource::Provided(second.into()),
+            MirrorSource::Provided(first.into()),
+        ]);
+
+        let got = plan
+            .candidates("https://manifest.example/original.jar")
+            .unwrap();
+
+        assert_eq!(got, vec![first.to_owned(), second.to_owned()]);
+    }
+
+    #[test]
+    fn task_sources_override_plan_sources_without_replacing_resolver() {
+        let plan = SourcePlan::default();
+        let task_sources = vec![
+            MirrorSource::Provided("https://cdn-a.example/mod.jar".into()),
+            MirrorSource::Provided("https://cdn-b.example/mod.jar".into()),
+        ];
+
+        let got = plan
+            .candidates_from(
+                "https://libraries.minecraft.net/original.jar",
+                &task_sources,
+            )
+            .unwrap();
+
+        assert_eq!(
+            got,
+            vec![
+                "https://cdn-a.example/mod.jar".to_owned(),
+                "https://cdn-b.example/mod.jar".to_owned(),
+            ]
+        );
     }
 
     #[test]

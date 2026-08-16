@@ -11,21 +11,24 @@ use crate::error::{Error, Result};
 pub const BMCL_BASE: &str = "https://bmclapi2.bangbang93.com";
 
 /// 下载源。上层做源优先级/测速调度时按此枚举切换。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum MirrorSource {
     /// Mojang/Forge/Fabric 等官方源，URL 原样使用。
     #[default]
     Official,
     /// BMCLAPI 镜像，按 [`MIRROR_TABLE`] 改写。
     BmclApi,
+    /// 上游清单直接提供的候选 URL，不套用官方源或 BMCLAPI 的改写规则。
+    Provided(String),
 }
 
 impl MirrorSource {
     /// 面向日志/UI 的中文名。
-    pub fn display_name(self) -> &'static str {
+    pub fn display_name(&self) -> &'static str {
         match self {
             MirrorSource::Official => "官方源",
             MirrorSource::BmclApi => "BMCLAPI 镜像",
+            MirrorSource::Provided(_) => "整合包提供源",
         }
     }
 }
@@ -59,12 +62,14 @@ const MIRROR_TABLE: &[(&str, &str)] = &[
 ///
 /// - [`MirrorSource::Official`]：原样返回。
 /// - [`MirrorSource::BmclApi`]：命中映射表的官方域名改写到 BMCLAPI；未命中的原样透传。
+/// - [`MirrorSource::Provided`]：使用变体携带的候选 URL，忽略作为第一个参数传入的官方 URL。
 ///
 /// URL 非法或缺主机名时返回错误，不静默吞掉。
-pub fn rewrite(url: &str, source: MirrorSource) -> Result<String> {
+pub fn rewrite(url: &str, source: &MirrorSource) -> Result<String> {
     match source {
         MirrorSource::Official => Ok(url.to_owned()),
         MirrorSource::BmclApi => rewrite_to_bmcl(url),
+        MirrorSource::Provided(provided) => Ok(provided.clone()),
     }
 }
 
@@ -108,7 +113,7 @@ mod tests {
     #[test]
     fn official_source_is_identity() {
         let url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
-        assert_eq!(rewrite(url, MirrorSource::Official).unwrap(), url);
+        assert_eq!(rewrite(url, &MirrorSource::Official).unwrap(), url);
     }
 
     #[test]
@@ -154,7 +159,7 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(
-                rewrite(input, MirrorSource::BmclApi).unwrap(),
+                rewrite(input, &MirrorSource::BmclApi).unwrap(),
                 expected,
                 "改写 {input} 结果不符"
             );
@@ -165,33 +170,33 @@ mod tests {
     fn query_string_is_preserved() {
         let input = "https://meta.fabricmc.net/v2/versions/loader?limit=10";
         let expected = "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader?limit=10";
-        assert_eq!(rewrite(input, MirrorSource::BmclApi).unwrap(), expected);
+        assert_eq!(rewrite(input, &MirrorSource::BmclApi).unwrap(), expected);
     }
 
     #[test]
     fn host_match_is_case_insensitive() {
         let input = "https://Libraries.Minecraft.Net/foo/bar.jar";
         let expected = "https://bmclapi2.bangbang93.com/maven/foo/bar.jar";
-        assert_eq!(rewrite(input, MirrorSource::BmclApi).unwrap(), expected);
+        assert_eq!(rewrite(input, &MirrorSource::BmclApi).unwrap(), expected);
     }
 
     #[test]
     fn unmapped_host_passes_through() {
         // Modrinth 无 BMCLAPI 镜像，应原样返回。
         let input = "https://api.modrinth.com/v2/search?query=sodium";
-        assert_eq!(rewrite(input, MirrorSource::BmclApi).unwrap(), input);
+        assert_eq!(rewrite(input, &MirrorSource::BmclApi).unwrap(), input);
     }
 
     #[test]
     fn invalid_url_errors() {
-        let err = rewrite("not a url", MirrorSource::BmclApi).unwrap_err();
+        let err = rewrite("not a url", &MirrorSource::BmclApi).unwrap_err();
         assert!(matches!(err, Error::UrlParse { .. }));
     }
 
     #[test]
     fn url_without_host_errors() {
         // data: URL 能被解析但没有 host。
-        let err = rewrite("data:text/plain,hello", MirrorSource::BmclApi).unwrap_err();
+        let err = rewrite("data:text/plain,hello", &MirrorSource::BmclApi).unwrap_err();
         assert!(matches!(err, Error::UrlMissingHost(_)));
     }
 
@@ -199,6 +204,19 @@ mod tests {
     fn display_name_is_chinese() {
         assert_eq!(MirrorSource::Official.display_name(), "官方源");
         assert_eq!(MirrorSource::BmclApi.display_name(), "BMCLAPI 镜像");
+        assert_eq!(
+            MirrorSource::Provided("https://cdn.example/mod.jar".into()).display_name(),
+            "整合包提供源"
+        );
+    }
+
+    #[test]
+    fn provided_source_uses_its_own_url() {
+        let source = MirrorSource::Provided("https://cdn.example/fallback.jar".into());
+        assert_eq!(
+            rewrite("https://origin.example/file.jar", &source).unwrap(),
+            "https://cdn.example/fallback.jar"
+        );
     }
 
     #[test]

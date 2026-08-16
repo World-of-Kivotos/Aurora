@@ -1,7 +1,8 @@
 //! 针对下载引擎关键路径的本地 mock 服务器集成测试。
 //!
 //! 覆盖：Range 分块下载并合并、指数退避重试、sha1 校验失败重下、耗尽后换源、Range 不支持时
-//! 回退单流、分片粒度断点续传、批量池进度上报。全部走 wiremock 本地端口，无外网依赖。
+//! 回退单流、分片粒度断点续传、任务级多 URL 隔离、批量池进度上报。全部走 wiremock 本地端口，
+//! 无外网依赖。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -187,10 +188,11 @@ struct TwoWayResolver {
 }
 
 impl SourceResolver for TwoWayResolver {
-    fn resolve(&self, _url: &str, source: MirrorSource) -> aurora_download::Result<String> {
+    fn resolve(&self, _url: &str, source: &MirrorSource) -> aurora_download::Result<String> {
         Ok(match source {
             MirrorSource::Official => format!("{}/primary", self.base),
             MirrorSource::BmclApi => format!("{}/mirror", self.base),
+            MirrorSource::Provided(url) => url.clone(),
         })
     }
 }
@@ -353,6 +355,75 @@ async fn resume_skips_already_completed_chunk() {
         0,
         "已完成分片不应被再次请求"
     );
+}
+
+/// 同一批次内每个任务使用自己的候选 URL，首选失败后按各自顺序回退，不能串用另一任务的源。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pool_keeps_task_level_candidate_urls_isolated() {
+    let server = MockServer::start().await;
+    let bodies = ["content-for-a", "content-for-b"];
+    let first_hits = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
+    let fallback_hits = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
+
+    for index in 0..2 {
+        let first_counter = first_hits[index].clone();
+        Mock::given(method("GET"))
+            .and(path(format!("/task-{index}/first")))
+            .respond_with(move |_req: &Request| {
+                first_counter.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(404)
+            })
+            .mount(&server)
+            .await;
+
+        let fallback_counter = fallback_hits[index].clone();
+        let body = bodies[index];
+        Mock::given(method("GET"))
+            .and(path(format!("/task-{index}/fallback")))
+            .respond_with(move |_req: &Request| {
+                fallback_counter.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_string(body)
+            })
+            .mount(&server)
+            .await;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = Vec::new();
+    for (index, body) in bodies.iter().enumerate() {
+        let dest = dir.path().join(format!("task-{index}.txt"));
+        tasks.push(
+            DownloadTask::new(format!("https://manifest.example/task-{index}"), dest)
+                .with_urls([
+                    format!("{}/task-{index}/first", server.uri()),
+                    format!("{}/task-{index}/fallback", server.uri()),
+                ])
+                .with_sha1(sha1_of(body.as_bytes()).await),
+        );
+    }
+
+    let downloader = Downloader::new(client(), single_source_config(ChunkConfig::default()));
+    let pool = DownloadPool::new(downloader, 2);
+    let report = pool
+        .download_all(tasks, None)
+        .await
+        .expect("任务级多源批量下载不应 panic");
+
+    assert!(report.is_success(), "所有文件应成功: {:?}", report.failures);
+    for (index, body) in bodies.iter().enumerate() {
+        let dest = dir.path().join(format!("task-{index}.txt"));
+        assert_eq!(tokio::fs::read(dest).await.unwrap(), body.as_bytes());
+        assert_eq!(
+            first_hits[index].load(Ordering::SeqCst),
+            1,
+            "任务 {index} 的首选源应只尝试一次"
+        );
+        assert_eq!(
+            fallback_hits[index].load(Ordering::SeqCst),
+            1,
+            "任务 {index} 应只命中自己的回退源一次"
+        );
+    }
 }
 
 /// 批量池：并发下载多文件，进度经 watch channel 收敛到 finished == total。

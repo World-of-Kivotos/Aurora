@@ -151,7 +151,7 @@ impl JavaRuntimeInstaller {
 
     /// 拉取并解析 `all.json` 总清单。
     pub async fn fetch_manifest(&self) -> Result<JavaRuntimeManifest> {
-        let url = mirror::rewrite(&self.manifest_url, self.source)?;
+        let url = mirror::rewrite(&self.manifest_url, &self.source)?;
         let bytes = self.get_bytes(&url).await?;
         parse_json(&bytes, "java-runtime all.json")
     }
@@ -195,7 +195,7 @@ impl JavaRuntimeInstaller {
 
     /// 拉取并校验某组件的文件清单（含对清单自身的 sha1 校验）。
     async fn fetch_component_files(&self, component: &RuntimeComponent) -> Result<ComponentFiles> {
-        let url = mirror::rewrite(&component.manifest.url, self.source)?;
+        let url = mirror::rewrite(&component.manifest.url, &self.source)?;
         let bytes = self
             .get_verified_bytes(&url, &component.manifest.sha1)
             .await?;
@@ -219,7 +219,7 @@ impl JavaRuntimeInstaller {
                     downloads,
                     executable,
                 } => {
-                    let url = mirror::rewrite(&downloads.raw.url, self.source)?;
+                    let url = mirror::rewrite(&downloads.raw.url, &self.source)?;
                     let bytes = self.get_verified_bytes(&url, &downloads.raw.sha1).await?;
                     aurora_base::fs::atomic_write(&target, &bytes).await?;
                     set_executable(&target, *executable)?;

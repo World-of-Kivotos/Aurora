@@ -61,7 +61,7 @@ impl DownloadSourcePolicy {
 
     /// 把一个官方 URL 按该策略的首选源改写（首选官方时原样返回）。
     pub fn rewrite_primary(self, url: &str) -> Result<String> {
-        Ok(mirror::rewrite(url, self.primary_mirror())?)
+        Ok(mirror::rewrite(url, &self.primary_mirror())?)
     }
 
     /// 中文显示名。
