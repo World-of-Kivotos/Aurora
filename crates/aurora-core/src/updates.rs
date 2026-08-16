@@ -63,6 +63,12 @@ impl Aurora {
     /// 有身份走精确查，无身份先做一轮哈希反查兜底（与 [`Aurora::identify_installed_mods`] 同一套逻辑，
     /// 共用一次目录扫描）。返回顺序按文件名字典序，保证 UI 列表稳定。
     pub async fn check_updates(&self, version_id: &str) -> Result<Vec<UpdateCandidate>> {
+        // 整合包受管实例只能跟随整包清单更新。逐个追平台最新版会让玩家之间的 Mod 版本分叉，
+        // 因此在扫描 mods、读取卷宗或触网之前直接短路。
+        if self.modpack_subscription(version_id).await?.is_some() {
+            return Ok(Vec::new());
+        }
+
         let facts = instance_mod_facts(self, version_id).await?;
         // 原版实例（以及只装了 OptiFine 的实例）不会有 Mod 在跑，查更新纯属浪费网络请求。
         if facts.loaders.is_empty() {
@@ -360,6 +366,7 @@ async fn file_mtime_unix(path: &Path) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::config::AuroraConfig;
+    use crate::subscription::ModpackSubscription;
     use aurora_instance::IsolationPolicy;
     use aurora_modplatform::{Platform, ReleaseChannel};
     use sha1::{Digest, Sha1};
@@ -489,6 +496,11 @@ mod tests {
         )
         .await;
 
+        // 没有订阅文件的普通实例保持原有平台更新行为。
+        assert_eq!(
+            aurora.modpack_subscription("1.20.1-fabric").await.unwrap(),
+            None
+        );
         let found = aurora.check_updates("1.20.1-fabric").await.unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].file_name, "sodium-0.5.3.jar");
@@ -596,6 +608,66 @@ mod tests {
         .await;
 
         assert!(aurora.check_updates("1.20.1").await.unwrap().is_empty());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    /// 受管实例只能由整合包同步推进版本：平台更新检查必须在读取卷宗和触网前直接返回空。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn check_updates_on_managed_instance_skips_platform_and_ledger() {
+        let server = MockServer::start().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path();
+        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
+        put_mod(mc, "1.20.1-fabric", "sodium.jar", b"sodium-payload").await;
+
+        let aurora = aurora_at(mc, &server.uri());
+        aurora
+            .set_modpack_subscription(
+                "1.20.1-fabric",
+                &ModpackSubscription {
+                    pack_id: "wok".to_owned(),
+                    pointer_url: "https://api.mcwok.cn/api/v1/pack/latest".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // 故意留下损坏卷宗：若短路位置后移到卷宗读取之后，这个调用会报解析错误。
+        let ledger_path = aurora.ledger_store("1.20.1-fabric").path().to_path_buf();
+        tokio::fs::write(&ledger_path, b"{ broken").await.unwrap();
+
+        let found = aurora.check_updates("1.20.1-fabric").await.unwrap();
+        assert!(found.is_empty());
+        assert!(server.received_requests().await.unwrap().is_empty());
+        assert_eq!(tokio::fs::read(&ledger_path).await.unwrap(), b"{ broken");
+    }
+
+    /// 损坏的订阅不能被当作“未受管”放行，否则平台更新会在状态不明时改动整合包文件。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn check_updates_bubbles_corrupt_subscription_without_platform_request() {
+        let server = MockServer::start().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path();
+        put_version(mc, "1.20.1-fabric", FABRIC_JSON).await;
+        put_mod(mc, "1.20.1-fabric", "sodium.jar", b"sodium-payload").await;
+
+        let aurora = aurora_at(mc, &server.uri());
+        let subscription_path = aurora
+            .modpack_subscription_store("1.20.1-fabric")
+            .path()
+            .to_path_buf();
+        tokio::fs::create_dir_all(subscription_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&subscription_path, b"{ broken")
+            .await
+            .unwrap();
+
+        let err = aurora.check_updates("1.20.1-fabric").await.unwrap_err();
+        assert!(matches!(
+            err,
+            CoreError::ConfigParse { path, .. } if path == subscription_path
+        ));
         assert!(server.received_requests().await.unwrap().is_empty());
     }
 

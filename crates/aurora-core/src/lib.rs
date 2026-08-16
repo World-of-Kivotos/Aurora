@@ -44,6 +44,7 @@ pub mod ledger;
 pub mod mods;
 pub mod modversions;
 pub mod search;
+pub mod subscription;
 pub mod updates;
 pub mod versions;
 
@@ -65,6 +66,7 @@ pub use launch::LaunchOptions;
 pub use ledger::{Ledger, LedgerEntry, LedgerStore};
 pub use mods::ModInstallOutcome;
 pub use modversions::sort_by_published_desc;
+pub use subscription::{ModpackSubscription, ModpackSubscriptionStore};
 pub use updates::UpdateCandidate;
 
 pub use auth::{MSA_CLIENT_ID_ENV, perform_microsoft_login};

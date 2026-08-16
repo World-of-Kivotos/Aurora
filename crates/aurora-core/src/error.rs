@@ -54,6 +54,9 @@ pub enum CoreError {
     /// 配置序列化失败。
     #[error("序列化配置失败")]
     ConfigSerialize(#[source] serde_json::Error),
+    /// 整合包订阅字段非法。路径用于区分多实例下具体是哪份订阅损坏。
+    #[error("整合包订阅非法: {path}: {reason}")]
+    InvalidModpackSubscription { path: PathBuf, reason: &'static str },
 
     /// 未配置微软登录 client_id。
     #[error("未配置微软登录 client_id：请在 config.json 设置 msa_client_id 或提供环境变量 AURORA_MSA_CLIENT_ID")]
