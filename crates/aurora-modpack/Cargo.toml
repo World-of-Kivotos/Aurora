@@ -1,0 +1,17 @@
+[package]
+name = "aurora-modpack"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aurora-base = { path = "../aurora-base" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = "1"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["fs"] }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "fs"] }
