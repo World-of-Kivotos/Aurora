@@ -13,11 +13,13 @@ import type {
   InstanceMatch,
   Ledger,
   LedgerEntry,
+  ManagedModpackFile,
   ModVersionInfo,
   PlatformId,
   RollbackCheck,
   UpdateCandidate,
 } from "./ipc";
+import type { CheckedManagedModpackStatus, ModpackSyncError } from "./modpack-ui";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,6 +69,46 @@ const CONFIG = {
   auto_download_java: true,
   selected_version: "World of Kivotos 2.0 beta",
 };
+
+const MOCK_MANAGED_VERSION_ID = "World of Kivotos 2.0 beta";
+
+const MOCK_MANAGED_STATUS: CheckedManagedModpackStatus = {
+  kind: "ready",
+  subscription: {
+    pack_id: "wok-browser-preview",
+    pointer_url: "https://mock.invalid/api/v1/pack/latest",
+  },
+  versions: {
+    installed_version: "1.9.0-preview",
+    latest: {
+      pack_id: "wok-browser-preview",
+      version: "2.0.0-preview",
+      manifest_url: "https://mock.invalid/api/v1/pack/manifest/2.0.0-preview",
+      released_at: "2026-08-17T12:00:00Z",
+      note: "浏览器模拟状态，不代表磁盘上存在真实整合包或文件。",
+      min_launcher_version: "0.1.0",
+    },
+  },
+  source: "cache",
+  checked_at: "1786968300",
+};
+
+const MOCK_MANAGED_FILES: ManagedModpackFile[] = [
+  { path: "mods/sodium-fabric-0.6.0.jar", policy: "managed" },
+  { path: "config/wok-client.toml", policy: "seeded" },
+];
+
+function browserPreviewWriteError(targetVersion: string): ModpackSyncError {
+  return {
+    target_version: targetVersion,
+    stage: "resolving_manifest",
+    failure: {
+      kind: "filesystem",
+      file_path: "<browser-preview>",
+      detail: "浏览器预览只模拟界面状态，不会执行真实安装或写入磁盘。请在 Tauri 应用中运行此操作。",
+    },
+  };
+}
 
 // 版本清单：Mojang version_manifest_v2 的真实子集（id / release_type / release_time 均为线上原值），
 // 四种 release_type 都覆盖到，好让类型筛选与日期排版在开发期就吃到真实形状。
@@ -939,6 +981,22 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     VERSION_SETTINGS.set(id, (_args?.settings as Record<string, unknown>) ?? {});
     return resolveVersionSettings(id) as T;
   }
+  if (cmd === "managed_modpack_status") {
+    return ((_args?.versionId as string) === MOCK_MANAGED_VERSION_ID
+      ? MOCK_MANAGED_STATUS
+      : null) as T;
+  }
+  if (cmd === "managed_modpack_files") {
+    return ((_args?.versionId as string) === MOCK_MANAGED_VERSION_ID
+      ? MOCK_MANAGED_FILES
+      : null) as T;
+  }
+  if (cmd === "sync_managed_modpack") {
+    throw browserPreviewWriteError((_args?.targetVersion as string) || "latest");
+  }
+  if (cmd === "install_managed_modpack") {
+    throw browserPreviewWriteError("latest");
+  }
 
   // Mod 生态这批命令要么读入参、要么改内存态，全部走短路分支，一条都不能进 table。
   if (cmd === "list_mod_versions") {
@@ -973,6 +1031,7 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     return found.length as T;
   }
   if (cmd === "check_updates") {
+    if ((_args?.versionId as string) === MOCK_MANAGED_VERSION_ID) return [] as T;
     return checkUpdates() as T;
   }
   if (cmd === "list_history") {

@@ -3,6 +3,7 @@
 // 未命中（冷启动或换了筛选参数）才走真请求并显示骨架。错误不吞，原样呈现并给重试。
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "../components/Button";
 import { Select } from "../components/Select";
@@ -10,6 +11,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { InstancePicker } from "../components/InstancePicker";
 import { InstallPlanPreview } from "../components/InstallPlanPreview";
+import { ModpackInstallFlow, type ModpackInstallState } from "../components/ModpackInstallFlow";
 import { ResourceCardSkeleton, VersionCardSkeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import {
@@ -27,6 +29,7 @@ import {
 import { pageItem, springs } from "../lib/motion";
 import {
   installMod,
+  installManagedModpack,
   installVersion,
   listInstalled,
   type LoaderChoice,
@@ -37,6 +40,8 @@ import {
   type SearchResultDto,
   type SortField,
 } from "../lib/ipc";
+import { parseModpackSyncError } from "../lib/modpack-ui";
+import { managedModpackPointerFromSearch } from "../lib/modpack-navigation";
 import {
   DEFAULT_SORT,
   MANIFEST_KEY,
@@ -58,6 +63,20 @@ const TABS: { key: TabKey; label: string; icon: typeof CubeIcon; type?: Resource
   { key: "resourcepack", label: "资源包", icon: PaletteIcon, type: "resource_pack" },
   { key: "shader", label: "光影", icon: SunIcon, type: "shader" },
 ];
+
+const BUILT_IN_MODPACK = {
+  label: "WOK 地址",
+  pointer_url: "https://api.mcwok.cn/api/v1/pack/latest",
+};
+
+const INITIAL_MODPACK_INSTALL_PROGRESS = {
+  stage: "resolving_manifest",
+  completed_files: 0,
+  total_files: 0,
+  downloaded_bytes: 0,
+  total_bytes: null,
+  current_file: null,
+} as const;
 
 /** 同行控件统一 40px 高——输入框、下拉、按钮共用，杜绝参差。 */
 const CTRL = "h-10";
@@ -639,8 +658,82 @@ function ContentTab({ type }: { type: ResourceType }) {
   );
 }
 
+function ManagedModpackInstallTab({ initialPointerUrl }: { initialPointerUrl: string | null }) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<ModpackInstallState>({ kind: "idle" });
+
+  const install = useCallback(async (pointerUrl: string) => {
+    setState({
+      kind: "running",
+      pointer_url: pointerUrl,
+      target_version: "latest",
+      progress: INITIAL_MODPACK_INSTALL_PROGRESS,
+    });
+
+    try {
+      const outcome = await installManagedModpack(pointerUrl, (progress) => {
+        setState({
+          kind: "running",
+          pointer_url: pointerUrl,
+          target_version: "latest",
+          progress,
+        });
+      });
+      setState({
+        kind: "complete",
+        pointer_url: pointerUrl,
+        instance_id: outcome.instance_id,
+        installed_version: outcome.installed_version,
+      });
+    } catch (e) {
+      const structured = parseModpackSyncError(e);
+      if (structured) {
+        setState({
+          kind: "failed",
+          pointer_url: pointerUrl,
+          target_version: structured.target_version,
+          problem: {
+            kind: "sync",
+            stage: structured.stage,
+            failure: structured.failure,
+          },
+        });
+      } else {
+        setState({
+          kind: "failed",
+          pointer_url: pointerUrl,
+          target_version: null,
+          problem: {
+            kind: "setup",
+            failure: {
+              stage: "resolving_manifest",
+              title: "无法开始安装",
+              detail: String(e),
+              action: "确认整合包地址可访问后重试；若仍失败，请把错误详情发给整合包维护者。",
+            },
+          },
+        });
+      }
+    }
+  }, []);
+
+  return (
+    <ModpackInstallFlow
+      builtIn={BUILT_IN_MODPACK}
+      initialPointerUrl={initialPointerUrl ?? undefined}
+      state={state}
+      onInstall={(pointerUrl) => void install(pointerUrl)}
+      onOpenInstance={(instanceId) => navigate(`/versions/${encodeURIComponent(instanceId)}`)}
+    />
+  );
+}
+
 export function Download() {
-  const [tab, setTab] = useState<TabKey>("version");
+  const [searchParams] = useSearchParams();
+  const initialPointerUrl = managedModpackPointerFromSearch(searchParams);
+  const [tab, setTab] = useState<TabKey>(() =>
+    searchParams.get("tab") === "modpack" ? "modpack" : "version",
+  );
   const active = TABS.find((t) => t.key === tab)!;
 
   return (
@@ -690,7 +783,13 @@ export function Download() {
             exit={{ opacity: 0, y: -4 }}
             transition={springs.tap}
           >
-            {active.key === "version" ? <VersionTab /> : <ContentTab type={active.type!} />}
+            {active.key === "version" ? (
+              <VersionTab />
+            ) : active.key === "modpack" ? (
+              <ManagedModpackInstallTab initialPointerUrl={initialPointerUrl} />
+            ) : (
+              <ContentTab type={active.type!} />
+            )}
           </motion.div>
         </AnimatePresence>
       </motion.div>

@@ -1,11 +1,16 @@
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
 import {
   ManagedModpackPanel,
   ModpackFileManagement,
   ModpackFileOwnership,
 } from "./ManagedModpackPanel";
+import { Button } from "./Button";
 import { ModpackInstallFlow } from "./ModpackInstallFlow";
+import { Download } from "../pages/Download";
+import { managedModpackInstallRoute } from "../lib/modpack-navigation";
 import type { ManagedModpackStatus } from "../lib/modpack-ui";
 
 const READY: ManagedModpackStatus = {
@@ -26,13 +31,34 @@ const READY: ManagedModpackStatus = {
     },
   },
   source: "network",
-  checked_at: "2026-08-17T12:05:00Z",
+  checked_at: "1786968300",
 };
+
+interface ClickableProps {
+  children?: ReactNode;
+  onClick?: () => void;
+}
+
+function findButton(node: ReactNode, label: string): ReactElement<ClickableProps> | null {
+  if (!isValidElement<ClickableProps>(node)) return null;
+  if (node.type === Button && node.props.children === label) return node;
+  for (const child of Children.toArray(node.props.children)) {
+    const match = findButton(child, label);
+    if (match) return match;
+  }
+  return null;
+}
 
 describe("ManagedModpackPanel", () => {
   it("shows installed and available versions with an update action", () => {
     const html = renderToStaticMarkup(
-      <ManagedModpackPanel status={READY} sync={{ kind: "idle" }} onCheck={() => undefined} onSync={() => undefined} />,
+      <ManagedModpackPanel
+        status={READY}
+        sync={{ kind: "idle" }}
+        onCheck={() => undefined}
+        onSync={() => undefined}
+        onInstallAsNew={() => undefined}
+      />,
     );
 
     expect(html).toContain("当前版本");
@@ -60,12 +86,44 @@ describe("ManagedModpackPanel", () => {
         }}
         onCheck={() => undefined}
         onSync={() => undefined}
+        onInstallAsNew={() => undefined}
       />,
     );
 
     expect(html).toContain("磁盘空间不足：mods/wok-core-2.0.0.jar");
     expect(html).toContain("本次写入需要 16.0 MB，当前可用 4.0 MB");
     expect(html).toContain("重试同步");
+  });
+
+  it("opens one-click installation after a conflict without retrying sync", () => {
+    const onCheck = vi.fn();
+    const onSync = vi.fn();
+    const onInstallAsNew = vi.fn();
+    const panel = ManagedModpackPanel({
+      status: READY,
+      sync: {
+        kind: "failed",
+        target_version: "2.0.0",
+        stage: "resolving_manifest",
+        failure: { kind: "conflict", detail: "当前 Minecraft 版本无法原地切换" },
+      },
+      onCheck,
+      onSync,
+      onInstallAsNew,
+    });
+    const html = renderToStaticMarkup(panel);
+
+    expect(html).toContain("整合包状态已变化");
+    expect(html).toContain("作为新实例安装");
+    expect(html).not.toContain("重新检查");
+    expect(html).not.toContain("重试同步");
+
+    const installButton = findButton(panel, "作为新实例安装");
+    expect(installButton).not.toBeNull();
+    installButton?.props.onClick?.();
+    expect(onInstallAsNew).toHaveBeenCalledOnce();
+    expect(onCheck).not.toHaveBeenCalled();
+    expect(onSync).not.toHaveBeenCalled();
   });
 
   it("renders file ownership without disguising managed files as player files", () => {
@@ -97,11 +155,49 @@ describe("ModpackInstallFlow", () => {
       />,
     );
 
-    expect(html).toContain("https://api.mcwok.cn/api/v1/pack/latest");
+    expect(html).toContain('value="https://api.mcwok.cn/api/v1/pack/latest"');
     expect(html).toContain("读取整合包");
     expect(html).toContain("安装 Minecraft");
     expect(html).toContain("安装加载器");
     expect(html).toContain("同步整合包");
     expect(html).toContain("检查并安装");
+  });
+
+  it("renders the real one-click installer at the conflict destination", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={["/download?tab=modpack"]}>
+        <Download />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("安装服务器整合包");
+    expect(html).toContain("https://api.mcwok.cn/api/v1/pack/latest");
+    expect(html).toContain("检查并安装");
+  });
+
+  it("prefills the subscribed custom pointer and keeps the built-in reset", () => {
+    const pointerUrl = "https://packs.example.test/latest?channel=beta";
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={[managedModpackInstallRoute(pointerUrl)]}>
+        <Download />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain(`value="${pointerUrl}"`);
+    expect(html).toContain("使用WOK 地址");
+  });
+
+  it.each([
+    "https://user:secret@packs.example.test/latest",
+    "https://packs.example.test/latest#release",
+  ])("falls back to WOK when the routed pointer is not safe: %s", (pointerUrl) => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={[managedModpackInstallRoute(pointerUrl)]}>
+        <Download />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('value="https://api.mcwok.cn/api/v1/pack/latest"');
+    expect(html).not.toContain(`value="${pointerUrl}"`);
   });
 });

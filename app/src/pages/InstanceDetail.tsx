@@ -11,6 +11,7 @@ import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
+import { ManagedModpackPanel, ModpackFileOwnership } from "../components/ManagedModpackPanel";
 import { Select } from "../components/Select";
 import { Skeleton } from "../components/Skeleton";
 import { Toggle } from "../components/Toggle";
@@ -36,10 +37,13 @@ import {
   listInstalled,
   listLedger,
   listMods,
+  managedModpackFiles,
+  managedModpackStatus,
   rollback,
   rollbackChecks,
   setModEnabled,
   setVersionSettings,
+  syncManagedModpack,
   type CrashReport,
   type History as ChangeHistory,
   type HistoryEvent,
@@ -48,10 +52,19 @@ import {
   type IsolationOverride,
   type Ledger,
   type LedgerEntry,
+  type ManagedModpackFile,
   type RollbackCheck,
   type UpdateCandidate,
   type VersionSettingsDto,
 } from "../lib/ipc";
+import {
+  parseModpackSyncError,
+  type ManagedModpackStatus,
+  type ModpackFileOwner,
+  type ModpackSyncState,
+} from "../lib/modpack-ui";
+import { modpackOwnerOf } from "../lib/modpack-ownership";
+import { managedModpackInstallRoute } from "../lib/modpack-navigation";
 
 type TabKey = "overview" | "content" | "history";
 type ModFilter = "all" | "enabled" | "disabled" | "updatable";
@@ -75,6 +88,15 @@ const ISOLATION_OPTIONS: { value: IsolationOverride; label: string }[] = [
 ];
 
 const DISABLED_SUFFIX = ".disabled";
+
+const INITIAL_MODPACK_PROGRESS = {
+  stage: "resolving_manifest",
+  completed_files: 0,
+  total_files: 0,
+  downloaded_bytes: 0,
+  total_bytes: null,
+  current_file: null,
+} as const;
 
 /** 磁盘文件名 → 卷宗键。禁用只是给文件加了后缀，身份没变，join 前必须先把后缀剥掉。 */
 function ledgerKey(fileName: string): string {
@@ -517,17 +539,20 @@ interface ModRow {
   key: string;
   entry: LedgerEntry | null;
   update: UpdateCandidate | null;
+  /** null 表示归属尚未读取完成，此时管理开关必须保持禁用。 */
+  owner: ModpackFileOwner | null;
 }
 
 interface ContentProps {
   versionId: string;
   rows: ModRow[];
+  ownershipError: string | null;
   filter: ModFilter;
   onFilterChange: (f: ModFilter) => void;
   onReload: () => Promise<void>;
 }
 
-function ContentTab({ versionId, rows, filter, onFilterChange, onReload }: ContentProps) {
+function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, onReload }: ContentProps) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -617,6 +642,12 @@ function ContentTab({ versionId, rows, filter, onFilterChange, onReload }: Conte
 
   return (
     <div className="min-w-0">
+      {ownershipError && (
+        <div className="mb-4 flex items-center gap-3 rounded-[3px] border border-danger/35 bg-danger/[0.04] px-4 py-3 text-[13px] text-danger" role="alert">
+          <AlertIcon size={18} />
+          <span>无法确认整合包文件归属：{ownershipError}。为避免误改受管文件，管理开关已停用。</span>
+        </div>
+      )}
       <div className="mb-4 flex items-center gap-3">
         <SearchField
           value={search}
@@ -664,6 +695,7 @@ function ContentTab({ versionId, rows, filter, onFilterChange, onReload }: Conte
                     </span>
                     {meta?.version && <span className="text-[12px] text-ink/60">{meta.version}</span>}
                     {meta && <Tag>{meta.loader}</Tag>}
+                    {r.owner && <ModpackFileOwnership owner={r.owner} />}
                     {r.update && <Tag tone="accent">可更新 {r.update.latest.version_number}</Tag>}
                   </div>
 
@@ -691,12 +723,22 @@ function ContentTab({ versionId, rows, filter, onFilterChange, onReload }: Conte
                   </div>
                 </div>
 
-                <Toggle
-                  checked={r.mod.enabled}
-                  onChange={(next) => void toggle(r, next)}
-                  disabled={busy === r.mod.file_name}
-                  ariaLabel={`${r.mod.enabled ? "禁用" : "启用"} ${title}`}
-                />
+                <span
+                  title={
+                    r.owner === "modpack"
+                      ? "受管 Mod 由整合包统一维护，不能单独启用或禁用"
+                      : r.owner === null
+                        ? "整合包文件归属尚未安全确认"
+                        : undefined
+                  }
+                >
+                  <Toggle
+                    checked={r.mod.enabled}
+                    onChange={(next) => void toggle(r, next)}
+                    disabled={r.owner !== "player" || busy === r.mod.file_name}
+                    ariaLabel={`${r.mod.enabled ? "禁用" : "启用"} ${title}`}
+                  />
+                </span>
               </li>
             );
           })}
@@ -921,6 +963,12 @@ export function InstanceDetail() {
   const [updates, setUpdates] = useState<UpdateCandidate[]>([]);
   const [updatesLoading, setUpdatesLoading] = useState(true);
   const [updatesError, setUpdatesError] = useState<string | null>(null);
+  const [managedStatus, setManagedStatus] = useState<ManagedModpackStatus | null>(null);
+  const [managedStatusLoading, setManagedStatusLoading] = useState(true);
+  const [managedStatusError, setManagedStatusError] = useState<string | null>(null);
+  const [managedFiles, setManagedFiles] = useState<ManagedModpackFile[] | null | undefined>(undefined);
+  const [managedFilesError, setManagedFilesError] = useState<string | null>(null);
+  const [modpackSync, setModpackSync] = useState<ModpackSyncState>({ kind: "idle" });
 
   const load = useCallback(async () => {
     if (!versionId) return;
@@ -964,10 +1012,45 @@ export function InstanceDetail() {
     }
   }, [versionId]);
 
+  const loadManagedStatus = useCallback(async (preservePrevious: boolean) => {
+    if (!versionId) return;
+    setManagedStatusLoading(true);
+    setManagedStatusError(null);
+    setManagedStatus((previous) => {
+      if (!preservePrevious || previous === null) return null;
+      return {
+        kind: "checking",
+        subscription: previous.subscription,
+        last_known: previous.kind === "ready" ? previous.versions : previous.last_known,
+      };
+    });
+    try {
+      setManagedStatus(await managedModpackStatus(versionId));
+    } catch (e) {
+      setManagedStatusError(String(e));
+    } finally {
+      setManagedStatusLoading(false);
+    }
+  }, [versionId]);
+
+  const loadManagedFiles = useCallback(async () => {
+    if (!versionId) return;
+    setManagedFiles(undefined);
+    setManagedFilesError(null);
+    try {
+      setManagedFiles(await managedModpackFiles(versionId));
+    } catch (e) {
+      setManagedFilesError(String(e));
+    }
+  }, [versionId]);
+
   useEffect(() => {
+    setModpackSync({ kind: "idle" });
     void load();
     void loadUpdates();
-  }, [load, loadUpdates]);
+    void loadManagedStatus(false);
+    void loadManagedFiles();
+  }, [load, loadUpdates, loadManagedStatus, loadManagedFiles]);
 
   const reloadMods = useCallback(async () => {
     const [mods, ledger] = await Promise.all([listMods(versionId), listLedger(versionId)]);
@@ -1012,6 +1095,47 @@ export function InstanceDetail() {
     [data, versionId, toast, load, loadUpdates],
   );
 
+  const runModpackSync = useCallback(async (targetVersion: string) => {
+    setModpackSync({
+      kind: "running",
+      target_version: targetVersion,
+      progress: INITIAL_MODPACK_PROGRESS,
+    });
+
+    try {
+      const outcome = await syncManagedModpack(versionId, targetVersion, (progress) => {
+        setModpackSync({
+          kind: "running",
+          target_version: targetVersion,
+          progress,
+        });
+      });
+      setModpackSync({ kind: "complete", installed_version: outcome.installed_version });
+      await Promise.all([
+        load(),
+        loadUpdates(),
+        loadManagedStatus(true),
+        loadManagedFiles(),
+      ]);
+    } catch (e) {
+      const structured = parseModpackSyncError(e);
+      if (structured) {
+        setModpackSync({
+          kind: "failed",
+          target_version: structured.target_version,
+          stage: structured.stage,
+          failure: structured.failure,
+        });
+      } else {
+        setModpackSync({ kind: "idle" });
+        toast(`整合包同步失败：${String(e)}`, "error");
+      }
+    }
+  }, [versionId, load, loadUpdates, loadManagedStatus, loadManagedFiles, toast]);
+
+  const ownershipStatus =
+    managedStatusLoading || managedStatusError !== null ? undefined : managedStatus;
+
   // 磁盘是权威：以 listMods 的扫盘结果为骨架，卷宗与更新检查只往上贴，绝不反过来凭卷宗造行。
   const rows = useMemo<ModRow[]>(() => {
     if (!data) return [];
@@ -1027,9 +1151,10 @@ export function InstanceDetail() {
         key,
         entry: entryOf.get(key) ?? null,
         update: updateOf.get(key) ?? null,
+        owner: modpackOwnerOf(ownershipStatus, managedFiles, mod.file_name),
       };
     });
-  }, [data, updates]);
+  }, [data, updates, ownershipStatus, managedFiles]);
 
   const updatableCount = useMemo(() => rows.filter((r) => r.update).length, [rows]);
 
@@ -1066,6 +1191,8 @@ export function InstanceDetail() {
           onClick={() => {
             void load();
             void loadUpdates();
+            void loadManagedStatus(true);
+            void loadManagedFiles();
           }}
           className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
         >
@@ -1082,6 +1209,27 @@ export function InstanceDetail() {
           <AlertIcon size={18} />
           <span className="flex-1">{error}</span>
           <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={() => void load()}>
+            重试
+          </Button>
+        </motion.div>
+      )}
+
+      {(managedStatusError || managedFilesError) && (
+        <motion.div
+          variants={pageItem}
+          className="mb-5 flex items-center gap-3 rounded-[3px] border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          role="alert"
+        >
+          <AlertIcon size={18} />
+          <span className="flex-1">{managedStatusError ?? managedFilesError}</span>
+          <Button
+            variant="secondary"
+            icon={<RefreshIcon size={15} />}
+            onClick={() => {
+              void loadManagedStatus(true);
+              void loadManagedFiles();
+            }}
+          >
             重试
           </Button>
         </motion.div>
@@ -1136,26 +1284,48 @@ export function InstanceDetail() {
               className="flex min-h-full flex-col"
             >
               {tab === "overview" && (
-                <OverviewTab
-                  versionId={versionId}
-                  identity={data.identity}
-                  settings={data.settings}
-                  crash={data.crash}
-                  updatableCount={updatableCount}
-                  updatesLoading={updatesLoading}
-                  updatesError={updatesError}
-                  onSaveSettings={saveSettings}
-                  onRetryUpdates={() => void loadUpdates()}
-                  onGoUpdates={() => {
-                    setModFilter("updatable");
-                    setTab("content");
-                  }}
-                />
+                <>
+                  {managedStatusLoading && managedStatus === null && (
+                    <Skeleton className="mb-5 h-[196px] w-full" />
+                  )}
+                  {managedStatus && (
+                    <div className="mb-5">
+                      <ManagedModpackPanel
+                        status={managedStatus}
+                        sync={modpackSync}
+                        onCheck={() => {
+                          setModpackSync({ kind: "idle" });
+                          void loadManagedStatus(true);
+                        }}
+                        onSync={(targetVersion) => void runModpackSync(targetVersion)}
+                        onInstallAsNew={() =>
+                          navigate(managedModpackInstallRoute(managedStatus.subscription.pointer_url))
+                        }
+                      />
+                    </div>
+                  )}
+                  <OverviewTab
+                    versionId={versionId}
+                    identity={data.identity}
+                    settings={data.settings}
+                    crash={data.crash}
+                    updatableCount={updatableCount}
+                    updatesLoading={updatesLoading}
+                    updatesError={updatesError}
+                    onSaveSettings={saveSettings}
+                    onRetryUpdates={() => void loadUpdates()}
+                    onGoUpdates={() => {
+                      setModFilter("updatable");
+                      setTab("content");
+                    }}
+                  />
+                </>
               )}
               {tab === "content" && (
                 <ContentTab
                   versionId={versionId}
                   rows={rows}
+                  ownershipError={managedFilesError}
                   filter={modFilter}
                   onFilterChange={setModFilter}
                   onReload={reloadMods}

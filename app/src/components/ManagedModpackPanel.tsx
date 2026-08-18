@@ -19,6 +19,7 @@ export interface ManagedModpackPanelProps {
   sync: ModpackSyncState;
   onCheck: () => void;
   onSync: (targetVersion: string) => void;
+  onInstallAsNew: () => void;
 }
 
 function versionsOf(status: ManagedModpackStatus): KnownModpackVersions | null {
@@ -106,7 +107,13 @@ export function ModpackSyncFailureView({
   );
 }
 
-export function ManagedModpackPanel({ status, sync, onCheck, onSync }: ManagedModpackPanelProps) {
+export function ManagedModpackPanel({
+  status,
+  sync,
+  onCheck,
+  onSync,
+  onInstallAsNew,
+}: ManagedModpackPanelProps) {
   const versions = versionsOf(status);
   const displayedVersions =
     versions && sync.kind === "complete"
@@ -189,9 +196,20 @@ export function ManagedModpackPanel({ status, sync, onCheck, onSync }: ManagedMo
         <>
           <ModpackSyncFailureView failure={sync.failure} />
           <div className="mt-3">
-            <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={() => onSync(sync.target_version)}>
-              重试同步
-            </Button>
+            {sync.failure.kind === "conflict" ? (
+              <Button variant="primary" icon={<DownloadIcon size={16} />} onClick={onInstallAsNew}>
+                作为新实例安装
+              </Button>
+            ) : sync.failure.kind === "invalid_metadata" ||
+              sync.failure.kind === "launcher_too_old" ? (
+              <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={onCheck}>
+                重新检查
+              </Button>
+            ) : (
+              <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={() => onSync(sync.target_version)}>
+                重试同步
+              </Button>
+            )}
           </div>
         </>
       )}

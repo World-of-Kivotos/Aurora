@@ -1,8 +1,7 @@
 /**
  * 整合包 UI 的前端契约。
  *
- * 这些类型刻意不声明 Tauri command：阶段 4 的后端 IPC 尚未确定，组件只消费数据与回调。
- * 字段沿用服务端 JSON 的 snake_case，真实 DTO 到位后无需在视图层重复改名。
+ * 字段沿用 aurora-core 经 Tauri 序列化后的 snake_case，视图层无需重复改名。
  */
 
 export interface ModpackSubscription {
@@ -35,6 +34,7 @@ export type ManagedModpackStatus =
       subscription: ModpackSubscription;
       versions: KnownModpackVersions;
       source: "network" | "cache";
+      /** 检查完成时刻的 Unix 秒数字符串。 */
       checked_at: string;
     }
   | {
@@ -43,6 +43,8 @@ export type ManagedModpackStatus =
       last_known: KnownModpackVersions | null;
       detail: string;
     };
+
+export type CheckedManagedModpackStatus = Exclude<ManagedModpackStatus, { kind: "checking" }>;
 
 export type ModpackSyncStage =
   | "resolving_manifest"
@@ -87,7 +89,42 @@ export type ModpackSyncFailure =
   | (FileFailure & {
       kind: "snapshot_write";
       detail: string;
+    })
+  | {
+      kind: "invalid_metadata";
+      detail: string;
+    }
+  | {
+      kind: "launcher_too_old";
+      current: string;
+      required: string;
+    }
+  | {
+      kind: "conflict";
+      detail: string;
+    }
+  | (FileFailure & {
+      kind: "filesystem";
+      detail: string;
     });
+
+export interface ModpackSyncError {
+  target_version: string;
+  stage: ModpackSyncStage;
+  failure: ModpackSyncFailure;
+}
+
+export interface ModpackSyncOutcome {
+  installed_version: string;
+  downloaded_files: number;
+  deleted_files: number;
+  kept_files: number;
+}
+
+export interface ModpackInstallOutcome {
+  instance_id: string;
+  installed_version: string;
+}
 
 export type ModpackSyncState =
   | { kind: "idle" }
@@ -110,6 +147,64 @@ export interface SyncFailurePresentation {
   title: string;
   reason: string;
   action: string;
+}
+
+const SYNC_STAGES: ReadonlySet<string> = new Set<ModpackSyncStage>([
+  "resolving_manifest",
+  "installing_minecraft",
+  "installing_loader",
+  "downloading_files",
+  "deleting_files",
+  "writing_snapshot",
+]);
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || typeof value === "number";
+}
+
+function isModpackSyncFailure(value: unknown): value is ModpackSyncFailure {
+  const failure = recordOf(value);
+  if (!failure || typeof failure.kind !== "string") return false;
+
+  const hasPath = typeof failure.file_path === "string";
+  const hasDetail = typeof failure.detail === "string";
+  switch (failure.kind) {
+    case "network":
+    case "permission_denied":
+    case "snapshot_write":
+    case "filesystem":
+      return hasPath && hasDetail;
+    case "checksum_mismatch":
+      return hasPath && typeof failure.expected_sha1 === "string" && typeof failure.actual_sha1 === "string";
+    case "disk_full":
+      return hasPath && isNullableNumber(failure.required_bytes) && isNullableNumber(failure.available_bytes);
+    case "invalid_metadata":
+    case "conflict":
+      return hasDetail;
+    case "launcher_too_old":
+      return typeof failure.current === "string" && typeof failure.required === "string";
+    default:
+      return false;
+  }
+}
+
+/** Tauri 会以结构化 rejection 返回同步错误；只接受完整契约，避免把普通 Error 误当成可重试同步失败。 */
+export function parseModpackSyncError(value: unknown): ModpackSyncError | null {
+  const error = recordOf(value);
+  if (
+    !error ||
+    typeof error.target_version !== "string" ||
+    typeof error.stage !== "string" ||
+    !SYNC_STAGES.has(error.stage) ||
+    !isModpackSyncFailure(error.failure)
+  ) {
+    return null;
+  }
+  return error as unknown as ModpackSyncError;
 }
 
 export const SYNC_STAGE_LABEL: Record<ModpackSyncStage, string> = {
@@ -180,6 +275,30 @@ export function presentSyncFailure(failure: ModpackSyncFailure): SyncFailurePres
         reason: failure.detail,
         action: "确认实例目录可写后重试。快照未写入前，本次同步不会被标记为完成。",
       };
+    case "invalid_metadata":
+      return {
+        title: "整合包元数据无效",
+        reason: failure.detail,
+        action: "请把错误详情发给整合包维护者，修复发布数据后再重新检查。",
+      };
+    case "launcher_too_old":
+      return {
+        title: "启动器版本过低",
+        reason: `当前 Aurora 为 ${failure.current}，整合包要求 ${failure.required} 或更高版本。`,
+        action: "先更新 Aurora，然后重新检查并同步整合包。",
+      };
+    case "conflict":
+      return {
+        title: "整合包状态已变化",
+        reason: failure.detail,
+        action: "当前实例不能安全地原地应用此次变更。请作为新实例安装，现有实例与玩家数据会保留。",
+      };
+    case "filesystem":
+      return {
+        title: `文件系统操作失败：${failure.file_path}`,
+        reason: failure.detail,
+        action: "确认该路径位于实例目录内且没有被其它程序占用，处理后再重试。",
+      };
   }
 }
 
@@ -201,8 +320,14 @@ export function validateModpackPointerUrl(value: string): string | null {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     return "整合包地址只支持 HTTP 或 HTTPS";
   }
+  if (url.hostname === "") {
+    return "整合包地址必须包含主机名";
+  }
   if (url.username !== "" || url.password !== "") {
     return "整合包地址不能包含账号或密码";
+  }
+  if (url.hash !== "") {
+    return "整合包地址不能包含片段标识";
   }
   return null;
 }

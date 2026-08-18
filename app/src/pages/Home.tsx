@@ -23,6 +23,8 @@ import {
   launchGame,
   listInstalled,
   listMods,
+  managedModpackFiles,
+  managedModpackStatus,
   onCoreEvent,
   onGameCrash,
   onGameLog,
@@ -33,8 +35,11 @@ import {
   type GameLog,
   type InstalledVersionDto,
   type LaunchArgs,
+  type ManagedModpackFile,
   type VersionScanDto,
 } from "../lib/ipc";
+import type { ManagedModpackStatus } from "../lib/modpack-ui";
+import { modpackOwnerOf } from "../lib/modpack-ownership";
 
 const ACCOUNT_TYPE_LABEL: Record<AccountType, string> = {
   microsoft: "微软正版",
@@ -106,7 +111,12 @@ export function Home() {
   // 游戏日志后台累积（不在 UI 显示，留作诊断 / 未来日志页）。
   const logRef = useRef<GameLog[]>([]);
   // 崩溃报告：由后端在进程异常退出后推送。玩家主动点结束不会触发（detect_crash 对主动终止短路）。
-  const [crash, setCrash] = useState<{ report: CrashReport; versionId: string } | null>(null);
+  const [crash, setCrash] = useState<{
+    report: CrashReport;
+    versionId: string;
+    managedStatus: ManagedModpackStatus | null | undefined;
+    managedFiles: ManagedModpackFile[] | null | undefined;
+  } | null>(null);
   // 进程运行期间持续存活的事件订阅，仅在结束游戏 / 组件卸载时统一 unlisten。
   const runUnlisten = useRef<Array<() => void>>([]);
 
@@ -194,8 +204,22 @@ export function Home() {
     });
     // 崩溃推送到达即意味着进程已退出：顺手收束运行态，让 Start 从「运行中」复位。
     const unCrash = await onGameCrash((report) => {
-      setCrash({ report, versionId });
+      setCrash({ report, versionId, managedStatus: undefined, managedFiles: undefined });
       setRunning(false);
+      void Promise.all([
+        managedModpackStatus(versionId),
+        managedModpackFiles(versionId),
+      ])
+        .then(([managedStatus, managedFiles]) => {
+          setCrash((currentCrash) =>
+            currentCrash?.report === report && currentCrash.versionId === versionId
+              ? { ...currentCrash, managedStatus, managedFiles }
+              : currentCrash,
+          );
+        })
+        .catch((e) => {
+          toast(`无法确认崩溃 Mod 的整合包归属：${String(e)}`, "error");
+        });
     });
     runUnlisten.current = [unGame, unCore, unCrash];
 
@@ -304,6 +328,9 @@ export function Home() {
               onPhoto={onPhoto}
               report={crash.report}
               versionId={crash.versionId}
+              ownerOf={(fileName) =>
+                modpackOwnerOf(crash.managedStatus, crash.managedFiles, fileName)
+              }
               onDismiss={() => setCrash(null)}
               onOpenDetail={() => navigate(`/versions/${encodeURIComponent(crash.versionId)}`)}
             />

@@ -4,6 +4,12 @@
 // import @tauri-apps/api，保证调用点集中、可测。
 
 import { invoke, listen, type UnlistenFn } from "./tauri-bridge";
+import type {
+  CheckedManagedModpackStatus,
+  ModpackInstallOutcome,
+  ModpackSyncOutcome,
+  ModpackSyncProgress,
+} from "./modpack-ui";
 
 // ---- 与后端 serde 枚举对应的字面量联合（均为 snake_case）----
 export type DownloadSourcePolicy = "auto" | "official_first" | "mirror_first";
@@ -157,11 +163,19 @@ export interface InstalledMod {
   metadata: ModMetadata | null;
 }
 
+export type ModpackFilePolicy = "managed" | "seeded" | "optional";
+
+export interface ManagedModpackFile {
+  path: string;
+  policy: ModpackFilePolicy;
+}
+
 // ---- 事件负载 ----
 export type CoreEvent =
   | { kind: "stage"; message: string }
   | { kind: "warning"; message: string }
-  | { kind: "download"; total: number; finished: number; bytes: number; speed: number };
+  | { kind: "download"; total: number; finished: number; bytes: number; speed: number }
+  | { kind: "modpack_sync"; operation_id: string | null; progress: ModpackSyncProgress };
 
 export interface DeviceCode {
   user_code: string;
@@ -183,11 +197,64 @@ export const GAME_LOG_EVENT = "aurora://game-log";
 /** 游戏异常退出时后端推送的崩溃诊断；玩家主动结束游戏不会触发（见 detect_crash 的主动终止短路）。 */
 export const GAME_CRASH_EVENT = "aurora://game-crash";
 
+let modpackOperationSequence = 0;
+
+function nextModpackOperationId(): string {
+  modpackOperationSequence += 1;
+  return `modpack-${Date.now().toString(36)}-${modpackOperationSequence.toString(36)}`;
+}
+
+async function invokeModpackOperation<T>(
+  command: "sync_managed_modpack" | "install_managed_modpack",
+  args: Record<string, unknown>,
+  onProgress?: (progress: ModpackSyncProgress) => void,
+): Promise<T> {
+  const operationId = nextModpackOperationId();
+  const unlisten = onProgress
+    ? await listen<CoreEvent>(CORE_EVENT, (event) => {
+        const payload = event.payload;
+        if (payload.kind === "modpack_sync" && payload.operation_id === operationId) {
+          onProgress(payload.progress);
+        }
+      })
+    : null;
+  try {
+    return await invoke<T>(command, { ...args, operationId });
+  } finally {
+    unlisten?.();
+  }
+}
+
 // ---- 命令封装（参数键 camelCase）----
 export const getConfig = (): Promise<ConfigDto> => invoke<ConfigDto>("get_config");
 
 export const listInstalled = (): Promise<VersionScanDto> =>
   invoke<VersionScanDto>("list_installed");
+
+export const managedModpackStatus = (
+  versionId: string,
+): Promise<CheckedManagedModpackStatus | null> =>
+  invoke<CheckedManagedModpackStatus | null>("managed_modpack_status", { versionId });
+
+export const managedModpackFiles = (versionId: string): Promise<ManagedModpackFile[] | null> =>
+  invoke<ManagedModpackFile[] | null>("managed_modpack_files", { versionId });
+
+export const syncManagedModpack = (
+  versionId: string,
+  targetVersion: string,
+  onProgress?: (progress: ModpackSyncProgress) => void,
+): Promise<ModpackSyncOutcome> =>
+  invokeModpackOperation<ModpackSyncOutcome>(
+    "sync_managed_modpack",
+    { versionId, targetVersion },
+    onProgress,
+  );
+
+export const installManagedModpack = (
+  pointerUrl: string,
+  onProgress?: (progress: ModpackSyncProgress) => void,
+): Promise<ModpackInstallOutcome> =>
+  invokeModpackOperation<ModpackInstallOutcome>("install_managed_modpack", { pointerUrl }, onProgress);
 
 export const currentAccount = (): Promise<AccountDto | null> =>
   invoke<AccountDto | null>("current_account");

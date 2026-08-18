@@ -3,6 +3,7 @@ import {
   canRemoveModpackFile,
   formatModpackBytes,
   modpackUpdateAvailable,
+  parseModpackSyncError,
   presentSyncFailure,
   syncProgressRatio,
   validateModpackPointerUrl,
@@ -13,8 +14,10 @@ describe("validateModpackPointerUrl", () => {
   it.each([
     ["", "请输入整合包地址"],
     ["not a url", "整合包地址不是有效 URL"],
+    ["https://", "整合包地址不是有效 URL"],
     ["file:///D:/pack/latest.json", "整合包地址只支持 HTTP 或 HTTPS"],
     ["https://user:secret@example.com/pack/latest", "整合包地址不能包含账号或密码"],
+    ["https://example.com/pack/latest#release", "整合包地址不能包含片段标识"],
   ])("rejects %j with a specific reason", (value, reason) => {
     expect(validateModpackPointerUrl(value)).toBe(reason);
   });
@@ -126,6 +129,26 @@ describe("presentSyncFailure", () => {
       title: "无法保存同步快照：.aurora/modpack-applied.json",
       action: "确认实例目录可写后重试。快照未写入前，本次同步不会被标记为完成。",
     },
+    {
+      failure: { kind: "invalid_metadata", detail: "manifest 的 pack_id 与订阅不一致" },
+      title: "整合包元数据无效",
+      action: "请把错误详情发给整合包维护者，修复发布数据后再重新检查。",
+    },
+    {
+      failure: { kind: "launcher_too_old", current: "0.3.0", required: "0.4.0" },
+      title: "启动器版本过低",
+      action: "先更新 Aurora，然后重新检查并同步整合包。",
+    },
+    {
+      failure: { kind: "conflict", detail: "服务端当前版本已变化" },
+      title: "整合包状态已变化",
+      action: "当前实例不能安全地原地应用此次变更。请作为新实例安装，现有实例与玩家数据会保留。",
+    },
+    {
+      failure: { kind: "filesystem", file_path: "config/wok.toml", detail: "父目录是符号链接" },
+      title: "文件系统操作失败：config/wok.toml",
+      action: "确认该路径位于实例目录内且没有被其它程序占用，处理后再重试。",
+    },
   ];
 
   it.each(cases)("keeps the failing file and actionable guidance for $failure.kind", ({ failure, title, action }) => {
@@ -143,6 +166,15 @@ describe("presentSyncFailure", () => {
       actual_sha1: "bb22",
     });
     expect(presentation.reason).toBe("期望 SHA-1 aa11，实际为 bb22。");
+  });
+
+  it("reports the exact installed and required launcher versions", () => {
+    const presentation = presentSyncFailure({
+      kind: "launcher_too_old",
+      current: "0.3.0",
+      required: "0.4.0",
+    });
+    expect(presentation.reason).toBe("当前 Aurora 为 0.3.0，整合包要求 0.4.0 或更高版本。");
   });
 });
 
@@ -164,6 +196,26 @@ describe("managed pack policy", () => {
     expect(modpackUpdateAvailable({ installed_version: "1.9.0", latest })).toBe(true);
     expect(modpackUpdateAvailable({ installed_version: "2.0.0", latest })).toBe(false);
     expect(modpackUpdateAvailable({ installed_version: null, latest })).toBe(true);
+  });
+});
+
+describe("parseModpackSyncError", () => {
+  it("accepts the structured Tauri rejection without losing context", () => {
+    const failure = {
+      target_version: "2.0.0",
+      stage: "resolving_manifest",
+      failure: { kind: "conflict", detail: "服务端发布版本已变化" },
+    };
+    expect(parseModpackSyncError(failure)).toEqual(failure);
+  });
+
+  it.each([
+    "同步失败",
+    null,
+    { target_version: "2.0.0", stage: "unknown", failure: { kind: "conflict", detail: "x" } },
+    { target_version: "2.0.0", stage: "deleting_files", failure: { kind: "filesystem" } },
+  ])("rejects an unstructured or incomplete IPC error: %j", (value) => {
+    expect(parseModpackSyncError(value)).toBeNull();
   });
 });
 

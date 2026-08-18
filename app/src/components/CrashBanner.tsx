@@ -6,6 +6,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { springs } from "../lib/motion";
 import { setModEnabled, type CrashDiagnosis, type CrashReport } from "../lib/ipc";
+import type { ModpackFileOwner } from "../lib/modpack-ui";
 import { Button } from "./Button";
 import { useToast } from "./Toast";
 import { AlertIcon, CheckIcon } from "./icons";
@@ -16,6 +17,8 @@ interface CrashBannerProps {
   onDismiss: () => void;
   /** 跳实例卷宗页的诊断区。 */
   onOpenDetail: () => void;
+  /** 每个可疑文件独立判定归属；归属未确认时必须关闭破坏性动作。 */
+  ownerOf: (fileName: string) => ModpackFileOwner | null;
   /** 是否浮在背景图上。由调用方下发而不是自己读外观，免得与外壳的判定漂移。 */
   onPhoto: boolean;
 }
@@ -36,6 +39,7 @@ export function CrashBanner({
   versionId,
   onDismiss,
   onOpenDetail,
+  ownerOf,
   onPhoto,
 }: CrashBannerProps) {
   const { toast } = useToast();
@@ -49,6 +53,7 @@ export function CrashBanner({
   const extraDiagnoses = report.diagnoses.length - (primary ? 1 : 0);
 
   const disable = async (fileName: string) => {
+    if (ownerOf(fileName) !== "player") return;
     setStates((s) => ({ ...s, [fileName]: "pending" }));
     try {
       await setModEnabled(versionId, fileName, false);
@@ -95,6 +100,7 @@ export function CrashBanner({
         <ul className="mt-3.5 flex flex-col gap-1.5">
           {shown.map((suspect) => {
             const file = suspect.file_name;
+            const owner = file ? ownerOf(file) : null;
             const state = (file ? states[file] : undefined) ?? "idle";
             return (
               <li
@@ -107,7 +113,7 @@ export function CrashBanner({
                   {/* 卷宗对不上文件时只能报 mod id，此时没有可禁用的目标，说清楚而不是给个点不动的按钮。 */}
                   {!file && <span className="shrink-0 text-[12px] text-ink/60">（卷宗未对上文件）</span>}
                 </span>
-                {file && (
+                {file && owner === "player" && (
                   <Button
                     variant="secondary"
                     className="h-10 shrink-0"
@@ -117,6 +123,12 @@ export function CrashBanner({
                   >
                     {disableLabel[state]}
                   </Button>
+                )}
+                {file && owner === "modpack" && (
+                  <span className="shrink-0 text-[12px] text-ink/60">由整合包统一维护，不能单独禁用</span>
+                )}
+                {file && owner === null && (
+                  <span className="shrink-0 text-[12px] text-ink/60">文件归属尚未确认，暂不提供禁用操作</span>
                 )}
               </li>
             );

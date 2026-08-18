@@ -49,6 +49,7 @@ export type ModpackInstallState =
 
 export interface ModpackInstallFlowProps {
   builtIn: BuiltInModpack | null;
+  initialPointerUrl?: string;
   state: ModpackInstallState;
   onInstall: (pointerUrl: string) => void;
   onOpenInstance?: (instanceId: string) => void;
@@ -122,11 +123,12 @@ function SetupFailure({ failure }: { failure: ModpackInstallProblem }) {
 
 export function ModpackInstallFlow({
   builtIn,
+  initialPointerUrl,
   state,
   onInstall,
   onOpenInstance,
 }: ModpackInstallFlowProps) {
-  const [pointerUrl, setPointerUrl] = useState(builtIn?.pointer_url ?? "");
+  const [pointerUrl, setPointerUrl] = useState(initialPointerUrl ?? builtIn?.pointer_url ?? "");
   const [validationError, setValidationError] = useState<string | null>(null);
   const running = state.kind === "running";
 
