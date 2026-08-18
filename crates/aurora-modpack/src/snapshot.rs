@@ -17,6 +17,17 @@ pub const APPLIED_SNAPSHOT_FILE: &str = "modpack-applied.json";
 
 const SNAPSHOT_DOCUMENT: &str = "整合包应用快照";
 
+/// 快照所描述文件的实际工作目录。
+///
+/// 只记录稳定的根类型而非绝对路径：快照本身已经位于对应实例目录，实例 id 与当前游戏目录共同
+/// 决定实际路径。该字段必须存在，旧格式快照会拒绝解析，避免把旧根下的删除计划套到新根。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotWorkingDirectory {
+    SharedGameDirectory,
+    IsolatedVersionDirectory,
+}
+
 /// 上次成功同步完成后记录的远端事实。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,16 +35,21 @@ pub struct AppliedSnapshot {
     pub schema: u32,
     pub pack_id: String,
     pub version: String,
+    pub working_directory: SnapshotWorkingDirectory,
     pub files: Vec<SnapshotEntry>,
 }
 
 impl AppliedSnapshot {
     /// 从目标清单生成同步成功后应写入的快照。
-    pub fn from_manifest(manifest: &PackManifest) -> Self {
+    pub fn from_manifest(
+        manifest: &PackManifest,
+        working_directory: SnapshotWorkingDirectory,
+    ) -> Self {
         Self {
             schema: SCHEMA_VERSION,
             pack_id: manifest.pack_id.clone(),
             version: manifest.version.clone(),
+            working_directory,
             files: manifest.files.iter().map(SnapshotEntry::from).collect(),
         }
     }

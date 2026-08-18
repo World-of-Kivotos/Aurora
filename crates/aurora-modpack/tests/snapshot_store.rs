@@ -2,7 +2,7 @@ use aurora_modpack::error::Error;
 use aurora_modpack::model::{FilePolicy, PackManifest, SCHEMA_VERSION, Sha1Digest};
 use aurora_modpack::path::SafeRelativePath;
 use aurora_modpack::snapshot::{
-    APPLIED_SNAPSHOT_FILE, AppliedSnapshot, SnapshotEntry, SnapshotStore,
+    APPLIED_SNAPSHOT_FILE, AppliedSnapshot, SnapshotEntry, SnapshotStore, SnapshotWorkingDirectory,
 };
 
 const SHA1: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -36,13 +36,17 @@ async fn missing_snapshot_is_first_install_and_path_is_version_local() {
 async fn round_trip_is_atomic_and_only_persists_diff_fields() {
     let temp = tempfile::tempdir().unwrap();
     let store = SnapshotStore::for_version_dir(temp.path());
-    let snapshot = AppliedSnapshot::from_manifest(&manifest("2.0.0", "mods/core.jar"));
+    let snapshot = AppliedSnapshot::from_manifest(
+        &manifest("2.0.0", "mods/core.jar"),
+        SnapshotWorkingDirectory::IsolatedVersionDirectory,
+    );
 
     store.save(&snapshot).await.unwrap();
     assert_eq!(store.load().await.unwrap(), Some(snapshot.clone()));
 
     let text = tokio::fs::read_to_string(store.path()).await.unwrap();
     assert!(text.contains("\"pack_id\": \"wok\""));
+    assert!(text.contains("\"working_directory\": \"isolated_version_directory\""));
     assert!(!text.contains("minecraft"));
     assert!(!text.contains("urls"));
     assert!(!text.contains("size"));
@@ -61,8 +65,14 @@ async fn round_trip_is_atomic_and_only_persists_diff_fields() {
 async fn save_replaces_previous_snapshot_without_residue() {
     let temp = tempfile::tempdir().unwrap();
     let store = SnapshotStore::for_version_dir(temp.path());
-    let first = AppliedSnapshot::from_manifest(&manifest("1.0.0", "mods/old.jar"));
-    let second = AppliedSnapshot::from_manifest(&manifest("2.0.0", "mods/new.jar"));
+    let first = AppliedSnapshot::from_manifest(
+        &manifest("1.0.0", "mods/old.jar"),
+        SnapshotWorkingDirectory::IsolatedVersionDirectory,
+    );
+    let second = AppliedSnapshot::from_manifest(
+        &manifest("2.0.0", "mods/new.jar"),
+        SnapshotWorkingDirectory::IsolatedVersionDirectory,
+    );
 
     store.save(&first).await.unwrap();
     store.save(&second).await.unwrap();
@@ -86,7 +96,7 @@ async fn corrupt_or_future_snapshot_never_silently_resets() {
         .unwrap();
     assert!(matches!(store.load().await, Err(Error::Json { .. })));
 
-    let future = r#"{"schema":2,"pack_id":"wok","version":"2.0.0","files":[]}"#;
+    let future = r#"{"schema":2,"pack_id":"wok","version":"2.0.0","working_directory":"isolated_version_directory","files":[]}"#;
     tokio::fs::write(store.path(), future).await.unwrap();
     assert!(matches!(
         store.load().await,
@@ -99,10 +109,21 @@ async fn corrupt_or_future_snapshot_never_silently_resets() {
 }
 
 #[test]
+fn legacy_snapshot_without_working_directory_is_rejected() {
+    let legacy = r#"{"schema":1,"pack_id":"wok","version":"2.0.0","files":[]}"#;
+
+    assert!(matches!(
+        AppliedSnapshot::from_json_str(legacy),
+        Err(Error::Json { .. })
+    ));
+}
+
+#[test]
 fn snapshot_parser_rejects_unknown_fields() {
     let json = format!(
         r#"{{
-            "schema":1,"pack_id":"wok","version":"2.0.0","files":[{{
+            "schema":1,"pack_id":"wok","version":"2.0.0",
+            "working_directory":"isolated_version_directory","files":[{{
                 "path":"mods/core.jar","sha1":"{SHA1}","policy":"managed","url":"https://bad"
             }}]
         }}"#
@@ -126,6 +147,7 @@ async fn invalid_manual_snapshot_is_rejected_before_any_write() {
         schema: SCHEMA_VERSION,
         pack_id: "wok".to_owned(),
         version: "2.0.0".to_owned(),
+        working_directory: SnapshotWorkingDirectory::IsolatedVersionDirectory,
         files: vec![
             entry,
             SnapshotEntry {

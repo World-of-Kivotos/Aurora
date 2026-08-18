@@ -19,4 +19,6 @@ pub use model::{
     Sha1Digest, Sha1ValidationError,
 };
 pub use path::{PathValidationError, SafeRelativePath, validate_relative_path};
-pub use snapshot::{APPLIED_SNAPSHOT_FILE, AppliedSnapshot, SnapshotEntry, SnapshotStore};
+pub use snapshot::{
+    APPLIED_SNAPSHOT_FILE, AppliedSnapshot, SnapshotEntry, SnapshotStore, SnapshotWorkingDirectory,
+};

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, Result};
 use crate::model::{FilePolicy, ManifestFile, PackManifest, Sha1Digest};
 use crate::path::SafeRelativePath;
-use crate::snapshot::{AppliedSnapshot, SnapshotEntry};
+use crate::snapshot::{AppliedSnapshot, SnapshotEntry, SnapshotWorkingDirectory};
 
 const DISK_INDEX_DOCUMENT: &str = "磁盘文件索引";
 
@@ -115,6 +115,7 @@ pub fn diff(
     manifest: &PackManifest,
     snapshot: Option<&AppliedSnapshot>,
     disk_files: &[DiskFile],
+    working_directory: SnapshotWorkingDirectory,
 ) -> Result<SyncPlan> {
     manifest.validate()?;
     if let Some(snapshot) = snapshot {
@@ -123,6 +124,12 @@ pub fn diff(
             return Err(Error::SnapshotPackMismatch {
                 snapshot_pack_id: snapshot.pack_id.clone(),
                 manifest_pack_id: manifest.pack_id.clone(),
+            });
+        }
+        if snapshot.working_directory != working_directory {
+            return Err(Error::SnapshotWorkingDirectoryMismatch {
+                snapshot: snapshot.working_directory,
+                current: working_directory,
             });
         }
     }
@@ -149,7 +156,7 @@ pub fn diff(
         to_delete: Vec::new(),
         to_keep: Vec::new(),
         to_forget: Vec::new(),
-        next_snapshot: AppliedSnapshot::from_manifest(manifest),
+        next_snapshot: AppliedSnapshot::from_manifest(manifest, working_directory),
     };
 
     for key in keys {

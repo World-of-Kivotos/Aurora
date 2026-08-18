@@ -5,11 +5,13 @@ use aurora_modpack::model::{
     FilePolicy, LoaderKind, LoaderSpec, ManifestFile, PackManifest, SCHEMA_VERSION, Sha1Digest,
 };
 use aurora_modpack::path::SafeRelativePath;
-use aurora_modpack::snapshot::{AppliedSnapshot, SnapshotEntry};
+use aurora_modpack::snapshot::{AppliedSnapshot, SnapshotEntry, SnapshotWorkingDirectory};
 
 pub const SHA_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 pub const SHA_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 pub const SHA_C: &str = "cccccccccccccccccccccccccccccccccccccccc";
+pub const WORKING_DIRECTORY: SnapshotWorkingDirectory =
+    SnapshotWorkingDirectory::IsolatedVersionDirectory;
 
 pub fn safe(path: &str) -> SafeRelativePath {
     SafeRelativePath::new(path).unwrap()
@@ -56,6 +58,7 @@ pub fn snapshot(files: Vec<SnapshotEntry>) -> AppliedSnapshot {
         schema: SCHEMA_VERSION,
         pack_id: "wok".to_owned(),
         version: "1.0.0".to_owned(),
+        working_directory: WORKING_DIRECTORY,
         files,
     }
 }

@@ -6,7 +6,7 @@ use aurora_modpack::diff::{DownloadReason, KeepReason, diff};
 use aurora_modpack::model::FilePolicy;
 use aurora_modpack::snapshot::AppliedSnapshot;
 
-use common::{SHA_A, SHA_B, SHA_C, disk, manifest, previous, remote, snapshot};
+use common::{SHA_A, SHA_B, SHA_C, WORKING_DIRECTORY, disk, manifest, previous, remote, snapshot};
 
 struct DeterministicRng(u64);
 
@@ -76,11 +76,17 @@ fn randomized_diff_preserves_deletion_and_ownership_invariants() {
         disk_files.push(disk(&private_path, SHA_C));
         let remote_manifest = manifest(remote_files);
         let old_snapshot = snapshot(old_files);
-        let plan = diff(&remote_manifest, Some(&old_snapshot), &disk_files).unwrap();
+        let plan = diff(
+            &remote_manifest,
+            Some(&old_snapshot),
+            &disk_files,
+            WORKING_DIRECTORY,
+        )
+        .unwrap();
 
         assert_eq!(
             plan.next_snapshot,
-            AppliedSnapshot::from_manifest(&remote_manifest)
+            AppliedSnapshot::from_manifest(&remote_manifest, WORKING_DIRECTORY)
         );
 
         let mut planned_paths = BTreeSet::new();

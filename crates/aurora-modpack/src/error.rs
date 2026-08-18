@@ -41,6 +41,13 @@ pub enum Error {
         manifest_pack_id: String,
     },
 
+    /// 快照记录的文件根与本次同步解析出的实际工作根不同，不能跨根复用删除事实。
+    #[error("快照工作目录为 {snapshot:?}，当前工作目录为 {current:?}")]
+    SnapshotWorkingDirectoryMismatch {
+        snapshot: crate::snapshot::SnapshotWorkingDirectory,
+        current: crate::snapshot::SnapshotWorkingDirectory,
+    },
+
     /// aurora-base 提供的原子文件写入或文件 IO 失败。
     #[error(transparent)]
     Base(#[from] aurora_base::Error),
