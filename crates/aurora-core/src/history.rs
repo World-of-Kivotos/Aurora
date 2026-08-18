@@ -916,7 +916,11 @@ mod tests {
         assert!(!after[1].can_rollback);
         assert_eq!(after[1].reason.as_deref(), Some("该更新已经回滚过"));
         assert_eq!(
-            aurora.rollback(VERSION_ID, "200-001").await.unwrap_err().to_string(),
+            aurora
+                .rollback(VERSION_ID, "200-001")
+                .await
+                .unwrap_err()
+                .to_string(),
             format!("文件 IO 失败: {}", store.path().display())
         );
     }
@@ -1280,9 +1284,12 @@ mod tests {
         tokio::fs::create_dir_all(mods_dir.join("nested.old"))
             .await
             .unwrap();
-        tokio::fs::write(mods_dir.join("nested.old").join("f.jar.old"), vec![0u8; 900])
-            .await
-            .unwrap();
+        tokio::fs::write(
+            mods_dir.join("nested.old").join("f.jar.old"),
+            vec![0u8; 900],
+        )
+        .await
+        .unwrap();
 
         assert_eq!(aurora.backup_size(VERSION_ID).await.unwrap(), 13);
 
@@ -1385,7 +1392,10 @@ mod tests {
     async fn history_on_fresh_instance_is_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let (aurora, _) = installed_instance(tmp.path()).await;
-        assert_eq!(aurora.history(VERSION_ID).await.unwrap(), History::default());
+        assert_eq!(
+            aurora.history(VERSION_ID).await.unwrap(),
+            History::default()
+        );
         assert!(aurora.rollback_checks(VERSION_ID).await.unwrap().is_empty());
     }
 
@@ -1394,7 +1404,11 @@ mod tests {
     fn history_store_points_into_version_meta_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let mc = tmp.path().join(".minecraft");
-        let aurora = Aurora::for_test(AuroraConfig::default(), tmp.path().to_path_buf(), mc.clone());
+        let aurora = Aurora::for_test(
+            AuroraConfig::default(),
+            tmp.path().to_path_buf(),
+            mc.clone(),
+        );
         assert_eq!(
             aurora.history_store("1.20.1-Forge_47.4.20").path(),
             mc.join("versions")

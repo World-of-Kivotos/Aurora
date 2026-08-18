@@ -67,8 +67,17 @@ mod tests {
 
         let result = aurora.search(&SearchQuery::new("sodium")).await.unwrap();
 
-        assert!(result.hits.iter().any(|h| h.slug.as_deref() == Some("sodium")));
-        let hit = result.hits.iter().find(|h| h.slug.as_deref() == Some("sodium")).unwrap();
+        assert!(
+            result
+                .hits
+                .iter()
+                .any(|h| h.slug.as_deref() == Some("sodium"))
+        );
+        let hit = result
+            .hits
+            .iter()
+            .find(|h| h.slug.as_deref() == Some("sodium"))
+            .unwrap();
         assert_eq!(hit.platform, Platform::Modrinth);
         assert_eq!(hit.downloads, 123456);
         assert_eq!(hit.title, "Sodium");

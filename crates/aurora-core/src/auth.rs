@@ -302,23 +302,28 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/xbl"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"Token":"xbl","DisplayClaims":{"xui":[{"uhs":"theuhs"}]}}"#,
-            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    r#"{"Token":"xbl","DisplayClaims":{"xui":[{"uhs":"theuhs"}]}}"#,
+                ),
+            )
             .mount(server)
             .await;
         Mock::given(method("POST"))
             .and(path("/xsts"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"Token":"xsts","DisplayClaims":{"xui":[{"uhs":"theuhs"}]}}"#,
-            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    r#"{"Token":"xsts","DisplayClaims":{"xui":[{"uhs":"theuhs"}]}}"#,
+                ),
+            )
             .mount(server)
             .await;
         Mock::given(method("POST"))
             .and(path("/authentication/login_with_xbox"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"access_token":"MC-TOKEN","expires_in":86400}"#,
-            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"access_token":"MC-TOKEN","expires_in":86400}"#),
+            )
             .mount(server)
             .await;
         Mock::given(method("GET"))

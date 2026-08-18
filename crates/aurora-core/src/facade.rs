@@ -31,6 +31,7 @@ pub struct Aurora {
     fabric_base: String,
     quilt_base: String,
     java_runtime_url: String,
+    launcher_version: semver::Version,
 }
 
 impl Aurora {
@@ -68,6 +69,12 @@ impl Aurora {
             fabric_base: "https://meta.fabricmc.net".to_owned(),
             quilt_base: "https://meta.quiltmc.org".to_owned(),
             java_runtime_url: aurora_java::MOJANG_JAVA_RUNTIME_ALL.to_owned(),
+            launcher_version: semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(
+                |source| crate::error::CoreError::InvalidLauncherVersion {
+                    version: env!("CARGO_PKG_VERSION").to_owned(),
+                    detail: source.to_string(),
+                },
+            )?,
         })
     }
 
@@ -157,6 +164,19 @@ impl Aurora {
         self.config.cache_directory = dir;
     }
 
+    /// 覆盖整合包最低版本门控使用的桌面启动器产品版本。
+    ///
+    /// Tauri 外壳应传入自身的 `CARGO_PKG_VERSION`，避免 core crate 与最终产品独立发版后误判。
+    pub fn with_launcher_version(mut self, version: &str) -> Result<Self> {
+        self.launcher_version = semver::Version::parse(version).map_err(|source| {
+            crate::error::CoreError::InvalidLauncherVersion {
+                version: version.to_owned(),
+                detail: source.to_string(),
+            }
+        })?;
+        Ok(self)
+    }
+
     /// 设置游戏目录并写入配置（区别于仅改运行期字段的 [`Aurora::set_game_dir`]）。
     ///
     /// 同时更新运行期 `game_dir` 与 `config.game_directory`，`save_config` 落盘后下次 `load` 生效；
@@ -228,6 +248,10 @@ impl Aurora {
     pub(crate) fn java_runtime_url(&self) -> &str {
         &self.java_runtime_url
     }
+
+    pub(crate) fn launcher_version(&self) -> &semver::Version {
+        &self.launcher_version
+    }
 }
 
 /// 装配一个安装上下文所需的一束借用（生命周期绑定到传入的各组件）。
@@ -262,6 +286,8 @@ impl Aurora {
             fabric_base: "https://meta.fabricmc.net".to_owned(),
             quilt_base: "https://meta.quiltmc.org".to_owned(),
             java_runtime_url: aurora_java::MOJANG_JAVA_RUNTIME_ALL.to_owned(),
+            launcher_version: semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .expect("core package version must be valid semver"),
         }
     }
 
@@ -277,6 +303,11 @@ impl Aurora {
 
     pub(crate) fn with_fabric_base(mut self, url: impl Into<String>) -> Self {
         self.fabric_base = url.into();
+        self
+    }
+
+    pub(crate) fn with_quilt_base(mut self, url: impl Into<String>) -> Self {
+        self.quilt_base = url.into();
         self
     }
 

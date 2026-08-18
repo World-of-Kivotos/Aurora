@@ -1,4 +1,4 @@
-﻿//! 兼容性判定与实例匹配。
+//! 兼容性判定与实例匹配。
 //!
 //! 下载页的落位层要回答一个问题：「这个 Mod 该装进哪个实例」。答案由两部分组成——纯判定
 //! （[`classify`]：某个版本对某组实例事实是否可用）与编排（把判定结果铺成全部已装实例的矩阵）。
@@ -724,7 +724,10 @@ mod tests {
     #[test]
     fn classify_without_instance_mc_version_falls_back_to_unknown() {
         let v = version(&[ModLoader::Fabric], &["1.20.1"]);
-        assert_eq!(classify(&v, None, &names(&["fabric"])), Compatibility::Unknown);
+        assert_eq!(
+            classify(&v, None, &names(&["fabric"])),
+            Compatibility::Unknown
+        );
 
         // 加载器仍然照判：这一维不依赖 MC 版本。
         assert!(matches!(

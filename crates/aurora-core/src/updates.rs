@@ -199,7 +199,10 @@ async fn sha1_of_installed(installed: &[InstalledMod], file_name: &str) -> Optio
     let item = installed
         .iter()
         .find(|m| ledger_key(&m.file_name) == file_name)?;
-    hash_mod_file(Path::new(&item.path)).await.ok().map(|h| h.sha1)
+    hash_mod_file(Path::new(&item.path))
+        .await
+        .ok()
+        .map(|h| h.sha1)
 }
 
 /// 更新检查所需的实例事实。
@@ -350,10 +353,12 @@ async fn file_mtime_unix(path: &Path) -> Result<u64> {
             path: path.to_owned(),
             source,
         })?;
-    let modified = metadata.modified().map_err(|source| aurora_base::Error::Io {
-        path: path.to_owned(),
-        source,
-    })?;
+    let modified = metadata
+        .modified()
+        .map_err(|source| aurora_base::Error::Io {
+            path: path.to_owned(),
+            source,
+        })?;
     Ok(modified
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
@@ -379,8 +384,7 @@ mod tests {
         "mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient",
         "libraries":[{"name":"net.fabricmc:fabric-loader:0.15.11"}]}"#;
     /// 原版实例：无任何加载器库。
-    const VANILLA_JSON: &str =
-        r#"{"id":"1.20.1","type":"release","mainClass":"m","libraries":[]}"#;
+    const VANILLA_JSON: &str = r#"{"id":"1.20.1","type":"release","mainClass":"m","libraries":[]}"#;
 
     async fn put_version(mc: &Path, id: &str, json: &str) {
         let dir = mc.join("versions").join(id);
@@ -391,7 +395,12 @@ mod tests {
     }
 
     /// 往实例的隔离 mods 目录放一个 jar，返回 (路径, sha1)。
-    async fn put_mod(mc: &Path, version_id: &str, file_name: &str, bytes: &[u8]) -> (PathBuf, String) {
+    async fn put_mod(
+        mc: &Path,
+        version_id: &str,
+        file_name: &str,
+        bytes: &[u8],
+    ) -> (PathBuf, String) {
         let dir = mc.join("versions").join(version_id).join("mods");
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let path = dir.join(file_name);
@@ -399,7 +408,11 @@ mod tests {
 
         let mut hasher = Sha1::new();
         hasher.update(bytes);
-        let sha1 = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let sha1 = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         (path, sha1)
     }
 
@@ -428,11 +441,7 @@ mod tests {
         for entry in entries {
             ledger.upsert(entry);
         }
-        aurora
-            .ledger_store(version_id)
-            .save(&ledger)
-            .await
-            .unwrap();
+        aurora.ledger_store(version_id).save(&ledger).await.unwrap();
     }
 
     /// 一条 Modrinth 版本 JSON（含单个主文件）。
@@ -560,7 +569,13 @@ mod tests {
         )
         .await;
 
-        assert!(aurora.check_updates("1.20.1-fabric").await.unwrap().is_empty());
+        assert!(
+            aurora
+                .check_updates("1.20.1-fabric")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// 响应里没有某个哈希：代表该文件无更新（或平台未收录），不是错误，也不该报更新。
@@ -586,7 +601,13 @@ mod tests {
         )
         .await;
 
-        assert!(aurora.check_updates("1.20.1-fabric").await.unwrap().is_empty());
+        assert!(
+            aurora
+                .check_updates("1.20.1-fabric")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// 原版实例：直接返回空，且一个请求都不发（没有加载器就不会有 Mod 在跑）。
@@ -654,6 +675,8 @@ mod tests {
         let aurora = aurora_at(mc, &server.uri());
         let subscription_path = aurora
             .modpack_subscription_store("1.20.1-fabric")
+            .await
+            .unwrap()
             .path()
             .to_path_buf();
         tokio::fs::create_dir_all(subscription_path.parent().unwrap())
@@ -754,7 +777,10 @@ mod tests {
 
         let aurora = aurora_at(mc, &server.uri());
         assert_eq!(
-            aurora.identify_installed_mods("1.20.1-fabric").await.unwrap(),
+            aurora
+                .identify_installed_mods("1.20.1-fabric")
+                .await
+                .unwrap(),
             1
         );
 
@@ -773,7 +799,10 @@ mod tests {
         let before = server.received_requests().await.unwrap().len();
         // 已有身份不再反查：条数为 0，且没有新增任何请求。
         assert_eq!(
-            aurora.identify_installed_mods("1.20.1-fabric").await.unwrap(),
+            aurora
+                .identify_installed_mods("1.20.1-fabric")
+                .await
+                .unwrap(),
             0
         );
         assert_eq!(server.received_requests().await.unwrap().len(), before);
@@ -797,15 +826,17 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/fingerprints"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(r#"{"data":{"exactMatches":[]}}"#),
+                ResponseTemplate::new(200).set_body_string(r#"{"data":{"exactMatches":[]}}"#),
             )
             .mount(&server)
             .await;
 
         let aurora = aurora_at(mc, &server.uri());
         assert_eq!(
-            aurora.identify_installed_mods("1.20.1-fabric").await.unwrap(),
+            aurora
+                .identify_installed_mods("1.20.1-fabric")
+                .await
+                .unwrap(),
             0
         );
         let ledger_path = aurora.ledger_store("1.20.1-fabric").path().to_path_buf();

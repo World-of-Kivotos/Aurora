@@ -22,9 +22,10 @@ use aurora_core::{
     DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, History, InstallPlan,
     InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
     LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemorySettings, ModLoader,
-    ModVersionInfo, NamedDirectory, Platform, ResolvedIsolation, ResourceType, RollbackCheck,
-    SearchHit, SearchQuery, SortField, UpdateCandidate, VersionManifest, VersionScan,
-    VersionSettings,
+    ManagedModpackFile, ManagedModpackStatus, ModVersionInfo, ModpackInstallOutcome,
+    ModpackSyncError, ModpackSyncOutcome, ModpackSyncProgress, NamedDirectory, Platform,
+    ResolvedIsolation, ResourceType, RollbackCheck, SearchHit, SearchQuery, SortField,
+    UpdateCandidate, VersionManifest, VersionScan, VersionSettings,
 };
 use aurora_core::folders::GameDirectoryEntry;
 use serde::{Deserialize, Serialize};
@@ -192,6 +193,11 @@ enum CoreEventDto {
         bytes: u64,
         speed: u64,
     },
+    /// 受管整合包同步的结构化阶段与进度。
+    ModpackSync {
+        operation_id: Option<String>,
+        progress: ModpackSyncProgress,
+    },
 }
 
 impl From<CoreEvent> for CoreEventDto {
@@ -205,7 +211,21 @@ impl From<CoreEvent> for CoreEventDto {
                 bytes: p.bytes,
                 speed: p.speed,
             },
+            CoreEvent::ModpackSync(progress) => CoreEventDto::ModpackSync {
+                operation_id: None,
+                progress,
+            },
         }
+    }
+}
+
+fn correlated_modpack_event(event: CoreEvent, operation_id: &str) -> CoreEventDto {
+    match event {
+        CoreEvent::ModpackSync(progress) => CoreEventDto::ModpackSync {
+            operation_id: Some(operation_id.to_owned()),
+            progress,
+        },
+        other => CoreEventDto::from(other),
     }
 }
 
@@ -695,6 +715,87 @@ async fn list_installed(state: State<'_, RwLock<Aurora>>) -> Result<VersionScanD
     let aurora = state.read().await;
     let scan = aurora.list_installed().await.map_err(|e| e.to_string())?;
     Ok(scan_dto(scan))
+}
+
+/// 检查一个实例是否受整合包管理，并返回当前成功快照与可用发布版本。普通实例返回 null。
+#[tauri::command]
+async fn managed_modpack_status(
+    version_id: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<Option<ManagedModpackStatus>, String> {
+    let aurora = state.read().await;
+    aurora
+        .managed_modpack_status(&version_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 读取成功快照里的受管文件归属。普通实例返回 null，尚未成功同步的受管实例返回空数组。
+#[tauri::command]
+async fn managed_modpack_files(
+    version_id: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<Option<Vec<ManagedModpackFile>>, String> {
+    let aurora = state.read().await;
+    aurora
+        .managed_modpack_files(&version_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 把受管实例同步到刚检查到的目标版本。失败保持结构化，不压平成不可操作的一句话。
+#[tauri::command]
+async fn sync_managed_modpack(
+    app: AppHandle,
+    version_id: String,
+    target_version: String,
+    operation_id: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<ModpackSyncOutcome, ModpackSyncError> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CoreEvent>();
+    let forwarder = app.clone();
+    let forward_task = tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let _ = forwarder.emit(CORE_EVENT, correlated_modpack_event(event, &operation_id));
+        }
+    });
+
+    let result = {
+        let aurora = state.read().await;
+        aurora
+            .sync_managed_modpack(&version_id, &target_version, Some(&tx))
+            .await
+    };
+
+    drop(tx);
+    let _ = forward_task.await;
+    result
+}
+
+/// 从远端指针完成 Minecraft、加载器、订阅与空快照同步，返回真正可启动的实例 id。
+#[tauri::command]
+async fn install_managed_modpack(
+    app: AppHandle,
+    pointer_url: String,
+    operation_id: String,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<ModpackInstallOutcome, ModpackSyncError> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CoreEvent>();
+    let forwarder = app.clone();
+    let forward_task = tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let _ = forwarder.emit(CORE_EVENT, correlated_modpack_event(event, &operation_id));
+        }
+    });
+
+    let result = {
+        let aurora = state.read().await;
+        aurora.install_managed_modpack(&pointer_url, Some(&tx)).await
+    };
+
+    drop(tx);
+    let _ = forward_task.await;
+    result
 }
 
 /// 读取当前选中账户（可能没有）。
@@ -1873,7 +1974,8 @@ pub fn run() {
         .setup(|app| {
             // Aurora::load() 是异步，而 setup 是同步闭包；用 Tauri 运行时 block_on 构造后放进 state。
             // 构造失败（配置损坏等）直接冒泡终止启动，避免带着半初始化的门面继续跑。
-            let aurora = tauri::async_runtime::block_on(Aurora::load())?;
+            let aurora = tauri::async_runtime::block_on(Aurora::load())?
+                .with_launcher_version(env!("CARGO_PKG_VERSION"))?;
             app.manage(RwLock::new(aurora));
             // 运行中的游戏槽（launch_game 存入 kill 句柄、stop_game 取用、监控任务收尾时摘除）。初始空。
             app.manage(RunningGame(Arc::new(Mutex::new(None))));
@@ -1882,6 +1984,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             list_installed,
+            managed_modpack_status,
+            managed_modpack_files,
+            sync_managed_modpack,
+            install_managed_modpack,
             current_account,
             create_offline_account,
             microsoft_login,
@@ -1936,6 +2042,37 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modpack_progress_event_keeps_its_structured_payload() {
+        let dto = correlated_modpack_event(
+            CoreEvent::ModpackSync(ModpackSyncProgress {
+                stage: aurora_core::ModpackSyncStage::DownloadingFiles,
+                completed_files: 3,
+                total_files: 8,
+                downloaded_bytes: 4096,
+                total_bytes: Some(16384),
+                current_file: None,
+            }),
+            "sync-forge-47.4.16",
+        );
+
+        assert_eq!(
+            serde_json::to_value(dto).unwrap(),
+            serde_json::json!({
+                "kind": "modpack_sync",
+                "operation_id": "sync-forge-47.4.16",
+                "progress": {
+                    "stage": "downloading_files",
+                    "completed_files": 3,
+                    "total_files": 8,
+                    "downloaded_bytes": 4096,
+                    "total_bytes": 16384,
+                    "current_file": null
+                }
+            })
+        );
+    }
 
     #[test]
     fn current_path_resolves_to_configured_background() {

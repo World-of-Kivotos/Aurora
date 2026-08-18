@@ -6,18 +6,23 @@
 //! 全靠自己发现的静默失效。
 
 use aurora_instance::{
-    ResolvedIsolation, VERSIONS_DIR, VersionSettings, VersionSettingsStore, discover_versions,
+    ResolvedIsolation, VersionSettings, VersionSettingsStore, discover_versions,
 };
 use aurora_launch::resolve_game_directory;
 
 use crate::error::{CoreError, Result};
 use crate::facade::Aurora;
+use crate::modpack::ensure_version_relative_path;
 
 impl Aurora {
     /// 读取版本级设置：缺文件即全默认（未自定义），文件损坏则冒泡，不静默重置——
     /// 悄悄重置会丢掉用户的收藏、描述与隔离覆盖，比报错更糟。
     pub async fn version_settings(&self, version_id: &str) -> Result<VersionSettings> {
-        Ok(self.version_settings_store(version_id).load().await?)
+        Ok(self
+            .version_settings_store(version_id)
+            .await?
+            .load()
+            .await?)
     }
 
     /// 覆盖写版本级设置（原子写）。
@@ -26,7 +31,30 @@ impl Aurora {
         version_id: &str,
         settings: &VersionSettings,
     ) -> Result<()> {
-        self.version_settings_store(version_id).save(settings).await?;
+        self.ensure_instance_not_pending_managed_install(version_id)
+            .await?;
+        let store = self.version_settings_store(version_id).await?;
+        let current = store.load().await?;
+        if current.isolation != settings.isolation
+            && self.modpack_subscription(version_id).await?.is_some()
+        {
+            return Err(CoreError::ManagedModpackIsolationLocked {
+                version_id: version_id.to_owned(),
+            });
+        }
+        store.save(settings).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn set_initial_managed_version_settings(
+        &self,
+        version_id: &str,
+        settings: &VersionSettings,
+    ) -> Result<()> {
+        self.version_settings_store(version_id)
+            .await?
+            .save(settings)
+            .await?;
         Ok(())
     }
 
@@ -69,8 +97,15 @@ impl Aurora {
     }
 
     /// 版本设置文件句柄：`versions/<id>/.aurora/settings.json`。
-    fn version_settings_store(&self, version_id: &str) -> VersionSettingsStore {
-        VersionSettingsStore::for_version_dir(&self.game_dir().join(VERSIONS_DIR).join(version_id))
+    async fn version_settings_store(&self, version_id: &str) -> Result<VersionSettingsStore> {
+        let version_dir = self.checked_version_dir(version_id).await?;
+        ensure_version_relative_path(
+            self.game_dir(),
+            &version_dir,
+            std::path::Path::new(".aurora/settings.json"),
+        )
+        .await?;
+        Ok(VersionSettingsStore::for_version_dir(&version_dir))
     }
 }
 
@@ -93,11 +128,8 @@ mod tests {
     }
 
     async fn aurora_at(mc: &std::path::Path, policy: IsolationPolicy) -> Aurora {
-        let mut aurora = Aurora::for_test(
-            AuroraConfig::default(),
-            mc.to_path_buf(),
-            mc.to_path_buf(),
-        );
+        let mut aurora =
+            Aurora::for_test(AuroraConfig::default(), mc.to_path_buf(), mc.to_path_buf());
         aurora.set_isolation_policy(policy);
         aurora
     }
@@ -185,7 +217,11 @@ mod tests {
                 .await
                 .unwrap();
 
-            let launch_dir = aurora.resolve_working_dir("1.21").await.unwrap().working_dir;
+            let launch_dir = aurora
+                .resolve_working_dir("1.21")
+                .await
+                .unwrap()
+                .working_dir;
             let mods_dir = aurora.resolve_mods_dir("1.21").await.unwrap();
             assert_eq!(
                 mods_dir,
@@ -238,7 +274,96 @@ mod tests {
             isolation: IsolationOverride::Enabled,
             ..Default::default()
         };
-        aurora.set_version_settings("1.21", &settings).await.unwrap();
+        aurora
+            .set_version_settings("1.21", &settings)
+            .await
+            .unwrap();
         assert_eq!(aurora.version_settings("1.21").await.unwrap(), settings);
+    }
+
+    #[tokio::test]
+    async fn managed_instance_locks_only_isolation_and_fails_closed_on_corrupt_subscription() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path();
+        put_version(mc, "1.21").await;
+        let aurora = aurora_at(mc, IsolationPolicy::Disabled).await;
+        let initial = VersionSettings {
+            isolation: IsolationOverride::Enabled,
+            ..Default::default()
+        };
+        aurora.set_version_settings("1.21", &initial).await.unwrap();
+        aurora
+            .set_modpack_subscription(
+                "1.21",
+                &crate::subscription::ModpackSubscription {
+                    pack_id: "wok".to_owned(),
+                    pointer_url: "https://example.com/latest".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+        let settings_path = mc
+            .join("versions")
+            .join("1.21")
+            .join(".aurora")
+            .join("settings.json");
+        let before = tokio::fs::read(&settings_path).await.unwrap();
+
+        let error = aurora
+            .set_version_settings(
+                "1.21",
+                &VersionSettings {
+                    isolation: IsolationOverride::Disabled,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            CoreError::ManagedModpackIsolationLocked { ref version_id }
+                if version_id == "1.21"
+        ));
+        assert_eq!(tokio::fs::read(&settings_path).await.unwrap(), before);
+
+        let metadata_only = VersionSettings {
+            description: Some("managed profile".to_owned()),
+            favorite: true,
+            isolation: IsolationOverride::Enabled,
+            ..Default::default()
+        };
+        aurora
+            .set_version_settings("1.21", &metadata_only)
+            .await
+            .unwrap();
+        assert_eq!(
+            aurora.version_settings("1.21").await.unwrap(),
+            metadata_only
+        );
+
+        let subscription_path = mc
+            .join("versions")
+            .join("1.21")
+            .join(".aurora")
+            .join("modpack-subscription.json");
+        tokio::fs::write(&subscription_path, b"{ broken")
+            .await
+            .unwrap();
+        let before_corrupt_attempt = tokio::fs::read(&settings_path).await.unwrap();
+        let error = aurora
+            .set_version_settings(
+                "1.21",
+                &VersionSettings {
+                    isolation: IsolationOverride::Disabled,
+                    ..metadata_only
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CoreError::ConfigParse { .. }));
+        assert_eq!(
+            tokio::fs::read(&settings_path).await.unwrap(),
+            before_corrupt_attempt
+        );
     }
 }

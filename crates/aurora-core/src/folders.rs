@@ -84,7 +84,10 @@ impl Aurora {
         }
 
         for (name, path) in sibling_launcher_dirs() {
-            if path.is_dir() && !known.iter().any(|k| same_path(k, &path)) && !found.iter().any(|f| same_path(&f.path, &path)) {
+            if path.is_dir()
+                && !known.iter().any(|k| same_path(k, &path))
+                && !found.iter().any(|f| same_path(&f.path, &path))
+            {
                 found.push(NamedDirectory { name, path });
             }
         }
@@ -262,7 +265,10 @@ mod tests {
     #[test]
     fn game_directories_keeps_unavailable_entries_visible() {
         let tmp = tempfile::tempdir().unwrap();
-        let aurora = aurora_with(tmp.path(), vec![named("PCL2", "E:\\不存在的盘\\.minecraft")]);
+        let aurora = aurora_with(
+            tmp.path(),
+            vec![named("PCL2", "E:\\不存在的盘\\.minecraft")],
+        );
 
         let listed = aurora.game_directories();
         assert_eq!(listed.len(), 2);
@@ -273,7 +279,10 @@ mod tests {
 
         assert_eq!(listed[1].name, "PCL2");
         assert!(!listed[1].is_current);
-        assert!(!listed[1].available, "盘没挂时该条目仍要列出，只是标记为不可达");
+        assert!(
+            !listed[1].available,
+            "盘没挂时该条目仍要列出，只是标记为不可达"
+        );
     }
 
     /// 当前目录若同时被记进额外列表，只出现一次。

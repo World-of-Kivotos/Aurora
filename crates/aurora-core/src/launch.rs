@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use aurora_auth::Account;
 use aurora_instance::discover_versions;
-use aurora_java::{DetectSource, JavaInstallation, JavaRuntimeInstaller, detect_all, select_for_major};
+use aurora_java::{
+    DetectSource, JavaInstallation, JavaRuntimeInstaller, detect_all, select_for_major,
+};
 use aurora_launch::{
     AuthValues, CheckStatus, CommandBuilder, GamePaths, GameSession, LaunchCommand, LogLine,
     MemoryConfig, PreLaunchInput, precheck, spawn,
@@ -20,6 +22,8 @@ use tokio::sync::mpsc;
 use crate::error::{CoreError, Result};
 use crate::event::{CoreEvent, EventSink, emit};
 use crate::facade::Aurora;
+
+const MANAGED_PACK_VERSION_PROPERTY: &str = "-Dshinoyuki.accesshub.pack-version=";
 
 /// 离线启动的可覆盖选项（缺省取全局配置）。
 #[derive(Debug, Clone, Default)]
@@ -90,6 +94,9 @@ impl Aurora {
         log_tx: Option<mpsc::Sender<LogLine>>,
         events: Option<&EventSink>,
     ) -> Result<GameSession> {
+        self.checked_version_dir(version_id).await?;
+        self.ensure_instance_not_pending_managed_install(version_id)
+            .await?;
         // 版本发现 + 继承合并。
         let scan = discover_versions(self.game_dir()).await?;
         let mut provider: HashMap<String, VersionJson> = HashMap::new();
@@ -141,7 +148,10 @@ impl Aurora {
         });
         for item in &report.items {
             if item.status == CheckStatus::Warn {
-                emit(events, CoreEvent::warning(format!("{}：{}", item.name, item.message)));
+                emit(
+                    events,
+                    CoreEvent::warning(format!("{}：{}", item.name, item.message)),
+                );
             }
         }
         if report.is_blocking() {
@@ -155,8 +165,10 @@ impl Aurora {
             return Err(CoreError::PrecheckFailed(failures));
         }
 
-        let memory = self.memory_config(options);
-        let command = assemble_command(
+        let pack_version = self.managed_pack_version_for_launch(version_id).await?;
+        let effective_options = with_managed_pack_version(options, pack_version.as_deref());
+        let memory = self.memory_config(&effective_options);
+        let mut command = assemble_command(
             &merged,
             &java_path,
             paths,
@@ -165,8 +177,9 @@ impl Aurora {
             version_id,
             self.runtime().clone(),
             memory,
-            options,
+            &effective_options,
         )?;
+        retain_authoritative_pack_version(&mut command.args, pack_version.as_deref());
         emit(
             events,
             CoreEvent::stage(format!(
@@ -182,7 +195,11 @@ impl Aurora {
             CoreEvent::stage(format!(
                 "游戏进程已启动（工作目录 {}{}）",
                 working_dir.display(),
-                if resolved.isolated { "，已隔离" } else { "" }
+                if resolved.isolated {
+                    "，已隔离"
+                } else {
+                    ""
+                }
             )),
         );
         Ok(session)
@@ -201,7 +218,10 @@ impl Aurora {
             let path = java.path.clone();
             emit(
                 events,
-                CoreEvent::stage(format!("使用本地 Java {required_major}：{}", path.display())),
+                CoreEvent::stage(format!(
+                    "使用本地 Java {required_major}：{}",
+                    path.display()
+                )),
             );
             return Ok((installations, path));
         }
@@ -214,7 +234,9 @@ impl Aurora {
 
         emit(
             events,
-            CoreEvent::stage(format!("本地未找到 Java {required_major}，开始下载 Mojang 运行时")),
+            CoreEvent::stage(format!(
+                "本地未找到 Java {required_major}，开始下载 Mojang 运行时"
+            )),
         );
         let installer = JavaRuntimeInstaller::new(self.http())
             .with_manifest_url(self.java_runtime_url())
@@ -233,7 +255,10 @@ impl Aurora {
         installations.push(probed);
         emit(
             events,
-            CoreEvent::stage(format!("Java {required_major} 运行时安装完成：{}", path.display())),
+            CoreEvent::stage(format!(
+                "Java {required_major} 运行时安装完成：{}",
+                path.display()
+            )),
         );
         Ok((installations, path))
     }
@@ -292,6 +317,29 @@ fn assemble_command(
     }
     let command = builder.build()?;
     Ok(command)
+}
+
+/// 只有成功快照能生成服务端门控属性。受管但尚未成功同步的实例得到 `None`，不会拿订阅或远端
+/// 指针里的目标版本冒充本地已应用版本。
+fn with_managed_pack_version(options: &LaunchOptions, pack_version: Option<&str>) -> LaunchOptions {
+    let mut effective = options.clone();
+    effective
+        .extra_jvm_args
+        .retain(|arg| !arg.starts_with(MANAGED_PACK_VERSION_PROPERTY));
+    if let Some(version) = pack_version {
+        effective
+            .extra_jvm_args
+            .push(format!("{MANAGED_PACK_VERSION_PROPERTY}{version}"));
+    }
+    effective
+}
+
+fn retain_authoritative_pack_version(args: &mut Vec<String>, pack_version: Option<&str>) {
+    let expected = pack_version.map(|version| format!("{MANAGED_PACK_VERSION_PROPERTY}{version}"));
+    args.retain(|arg| {
+        !arg.starts_with(MANAGED_PACK_VERSION_PROPERTY)
+            || expected.as_deref().is_some_and(|expected| arg == expected)
+    });
 }
 
 /// 当前 Unix 秒（时钟异常时退化为 0，令令牌视为过期，属安全兜底）。
@@ -378,7 +426,12 @@ mod tests {
         assert!(command.args.iter().any(|a| a == "-Xms512m"));
         assert!(command.args.iter().any(|a| a == "-Xmx3072m"));
         // 主类。
-        assert!(command.args.iter().any(|a| a == "net.minecraft.client.main.Main"));
+        assert!(
+            command
+                .args
+                .iter()
+                .any(|a| a == "net.minecraft.client.main.Main")
+        );
         // 离线鉴权值经占位符替换进入游戏参数。
         let joined = command.args.join(" ");
         assert!(joined.contains("--username Steve"));
@@ -466,7 +519,12 @@ mod tests {
 
         let joined = command.args.join(" ");
         // 自定义 JVM 参数原样进入。
-        assert!(command.args.iter().any(|a| a == "-XX:+UseStringDeduplication"));
+        assert!(
+            command
+                .args
+                .iter()
+                .any(|a| a == "-XX:+UseStringDeduplication")
+        );
         // 自定义游戏参数（新键）追加进入。
         assert!(joined.contains("--server mc.example.net"));
         // 分辨率经条件参数与占位符替换进入。
@@ -474,5 +532,70 @@ mod tests {
         assert!(joined.contains("--height 720"));
         // 试玩模式条件参数生效。
         assert!(command.args.iter().any(|a| a == "--demo"));
+    }
+
+    #[test]
+    fn managed_pack_property_comes_only_from_success_snapshot_version() {
+        let base = LaunchOptions {
+            extra_jvm_args: vec![
+                "-Duser.setting=kept".to_owned(),
+                "-Dshinoyuki.accesshub.pack-version=spoofed".to_owned(),
+            ],
+            ..LaunchOptions::default()
+        };
+
+        let unmanaged = with_managed_pack_version(&base, None);
+        assert_eq!(unmanaged.extra_jvm_args, vec!["-Duser.setting=kept"]);
+        assert!(
+            unmanaged
+                .extra_jvm_args
+                .iter()
+                .all(|arg| !arg.starts_with("-Dshinoyuki.accesshub.pack-version="))
+        );
+
+        let managed = with_managed_pack_version(&base, Some("2.0.0"));
+        assert_eq!(
+            managed.extra_jvm_args,
+            vec![
+                "-Duser.setting=kept",
+                "-Dshinoyuki.accesshub.pack-version=2.0.0"
+            ]
+        );
+
+        let mut assembled = vec![
+            "-Dshinoyuki.accesshub.pack-version=from-version-json".to_owned(),
+            "-Duser.setting=kept".to_owned(),
+            "-Dshinoyuki.accesshub.pack-version=2.0.0".to_owned(),
+        ];
+        retain_authoritative_pack_version(&mut assembled, Some("2.0.0"));
+        assert_eq!(
+            assembled,
+            vec![
+                "-Duser.setting=kept",
+                "-Dshinoyuki.accesshub.pack-version=2.0.0"
+            ]
+        );
+
+        retain_authoritative_pack_version(&mut assembled, None);
+        assert_eq!(assembled, vec!["-Duser.setting=kept"]);
+    }
+
+    #[tokio::test]
+    async fn launch_rejects_traversal_instance_id_before_version_discovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game");
+        let aurora = Aurora::for_test(
+            crate::config::AuroraConfig::default(),
+            tmp.path().to_path_buf(),
+            game_dir,
+        );
+
+        let result = aurora
+            .launch_offline("../outside", "Steve", &LaunchOptions::default(), None, None)
+            .await;
+        assert!(matches!(
+            result,
+            Err(CoreError::UnsafeModpackPath { ref path, .. }) if path == "../outside"
+        ));
     }
 }

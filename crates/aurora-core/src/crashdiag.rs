@@ -359,13 +359,7 @@ Caused by: org.spongepowered.asm.mixin.injection.throwables.InjectionError: Crit
         put_version(&mc, "1.20.1-fabric").await;
 
         // 一份归档都没有时不许编报告。
-        assert!(
-            aurora
-                .last_crash("1.20.1-fabric")
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(aurora.last_crash("1.20.1-fabric").await.unwrap().is_none());
 
         let working_dir = aurora
             .resolve_working_dir("1.20.1-fabric")
@@ -373,12 +367,8 @@ Caused by: org.spongepowered.asm.mixin.injection.throwables.InjectionError: Crit
             .unwrap()
             .working_dir;
         put_archived_log(&working_dir, 1_754_600_000, HEALTHY_LOG).await;
-        let latest = put_archived_log(
-            &working_dir,
-            1_754_612_345,
-            FABRIC_MISSING_DEPENDENCY_LOG,
-        )
-        .await;
+        let latest =
+            put_archived_log(&working_dir, 1_754_612_345, FABRIC_MISSING_DEPENDENCY_LOG).await;
         put_ledger(&aurora, "1.20.1-fabric", &["sodium-fabric-0.5.3.jar"]).await;
 
         let report = aurora
@@ -397,7 +387,10 @@ Caused by: org.spongepowered.asm.mixin.injection.throwables.InjectionError: Crit
             report.suspects[0].file_name.as_deref(),
             Some("sodium-fabric-0.5.3.jar")
         );
-        assert_eq!(report.log_path.as_deref(), Some(latest.display().to_string().as_str()));
+        assert_eq!(
+            report.log_path.as_deref(),
+            Some(latest.display().to_string().as_str())
+        );
     }
 
     #[tokio::test]

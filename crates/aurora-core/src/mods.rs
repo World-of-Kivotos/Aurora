@@ -1,4 +1,4 @@
-﻿//! 模组安装到实例 + 本地模组管理。
+//! 模组安装到实例 + 本地模组管理。
 //!
 //! 门面把 aurora-modplatform 的双平台客户端（Modrinth / CurseForge）与本地 `mods/` 目录管理串起来。
 //! 安装不是「下一个文件」这么简单：一次安装是一份计划（玩家选的那个 Mod + 它的必需前置），整份计划
@@ -128,7 +128,10 @@ impl Aurora {
     ) -> Result<ModInstallOutcome> {
         emit(
             events,
-            CoreEvent::stage(format!("准备从 {} 安装模组到 {version_id}", platform.display_name())),
+            CoreEvent::stage(format!(
+                "准备从 {} 安装模组到 {version_id}",
+                platform.display_name()
+            )),
         );
 
         // 计划先行：这一步会校验版本确已安装（未装则在触网前短路）、展开必需依赖、判定哪些其实已装。
@@ -249,12 +252,13 @@ impl Aurora {
     /// IO 故障（如权限不足）仍向上冒泡。
     pub async fn list_mods(&self, version_id: &str) -> Result<Vec<InstalledMod>> {
         let mods_dir = self.resolve_mods_dir(version_id).await?;
-        let exists = tokio::fs::try_exists(&mods_dir)
-            .await
-            .map_err(|source| aurora_base::Error::Io {
-                path: mods_dir.clone(),
-                source,
-            })?;
+        let exists =
+            tokio::fs::try_exists(&mods_dir)
+                .await
+                .map_err(|source| aurora_base::Error::Io {
+                    path: mods_dir.clone(),
+                    source,
+                })?;
         if !exists {
             return Ok(Vec::new());
         }
@@ -853,7 +857,11 @@ mod tests {
     fn sha1_hex(bytes: &[u8]) -> String {
         let mut hasher = Sha1::new();
         hasher.update(bytes);
-        hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     /// 拼一条 Modrinth 版本 JSON。`deps` 原样填进 dependencies 数组，`hashes` 原样填进文件哈希对象。
@@ -897,7 +905,8 @@ mod tests {
 
     /// 造一个隔离档位为 All、已装 1.21 的测试门面。
     fn isolated_aurora(mc: &std::path::Path, base: String) -> Aurora {
-        let mut aurora = Aurora::for_test(AuroraConfig::default(), mc.to_path_buf(), mc.to_path_buf());
+        let mut aurora =
+            Aurora::for_test(AuroraConfig::default(), mc.to_path_buf(), mc.to_path_buf());
         aurora.set_isolation_policy(IsolationPolicy::All);
         aurora.with_modrinth_base(base)
     }
@@ -934,7 +943,11 @@ mod tests {
             .unwrap();
 
         // 隔离档位 All -> 工作目录进版本文件夹 -> mods 落 versions/1.21/mods。
-        let expected = mc.join("versions").join("1.21").join("mods").join("sodium.jar");
+        let expected = mc
+            .join("versions")
+            .join("1.21")
+            .join("mods")
+            .join("sodium.jar");
         assert_eq!(outcome.file_name, "sodium.jar");
         assert_eq!(outcome.path, expected);
         assert_eq!(outcome.platform, Platform::Modrinth);
@@ -942,9 +955,14 @@ mod tests {
         assert_eq!(tokio::fs::read(&expected).await.unwrap(), jar_bytes);
         // 暂存目录已清空。
         assert!(
-            !tokio::fs::try_exists(mc.join("versions").join("1.21").join(".aurora").join("staging"))
-                .await
-                .unwrap()
+            !tokio::fs::try_exists(
+                mc.join("versions")
+                    .join("1.21")
+                    .join(".aurora")
+                    .join("staging")
+            )
+            .await
+            .unwrap()
         );
 
         // list_mods 能扫出这枚模组，且为启用态。
@@ -954,7 +972,10 @@ mod tests {
         assert!(listed[0].enabled);
 
         // 禁用：文件重命名为 .disabled 后缀，原文件消失。
-        let disabled = aurora.set_mod_enabled("1.21", "sodium.jar", false).await.unwrap();
+        let disabled = aurora
+            .set_mod_enabled("1.21", "sodium.jar", false)
+            .await
+            .unwrap();
         assert_eq!(disabled.file_name().unwrap(), "sodium.jar.disabled");
         assert!(!tokio::fs::try_exists(&expected).await.unwrap());
         assert!(tokio::fs::try_exists(&disabled).await.unwrap());
@@ -980,7 +1001,11 @@ mod tests {
             }
         }
         assert!(stages.iter().any(|s| s.contains("模组 sodium.jar 已安装")));
-        assert!(stages.iter().any(|s| s.contains("(1/1) sodium.jar 下载完成并通过校验")));
+        assert!(
+            stages
+                .iter()
+                .any(|s| s.contains("(1/1) sodium.jar 下载完成并通过校验"))
+        );
     }
 
     /// 共享档位（关闭隔离）下装模组：文件落到 .minecraft/mods 根，验证 mods 目录随隔离策略切换。
@@ -1226,7 +1251,10 @@ mod tests {
         assert_eq!(history.events.len(), 1);
         match &history.events[0] {
             HistoryEvent::Install { id, at, files } => {
-                assert_eq!(files, &vec!["carpet.jar".to_owned(), "cloth.jar".to_owned()]);
+                assert_eq!(
+                    files,
+                    &vec!["carpet.jar".to_owned(), "cloth.jar".to_owned()]
+                );
                 assert!(*at > 0);
                 assert_eq!(id, &format!("{at}-001"));
             }
@@ -1295,10 +1323,22 @@ mod tests {
 
         // 主项明明下载成功，也一样不许进 mods：全过才移，是这条流程的全部意义。
         assert!(aurora.list_mods("1.21").await.unwrap().is_empty());
-        assert!(aurora.ledger_store("1.21").load().await.unwrap().entries.is_empty());
+        assert!(
+            aurora
+                .ledger_store("1.21")
+                .load()
+                .await
+                .unwrap()
+                .entries
+                .is_empty()
+        );
         assert!(aurora.history("1.21").await.unwrap().events.is_empty());
         // 暂存目录连同里面的残片一起清掉。
-        let staging = mc.join("versions").join("1.21").join(".aurora").join("staging");
+        let staging = mc
+            .join("versions")
+            .join("1.21")
+            .join(".aurora")
+            .join("staging");
         assert!(!tokio::fs::try_exists(&staging).await.unwrap());
     }
 
@@ -1402,9 +1442,15 @@ mod tests {
             new_bytes
         );
         // 旧文件不再以 jar 形式存在（不会被加载器读到两份），但字节原样留在 .old 备份里。
-        assert!(!tokio::fs::try_exists(mods.join("iris-1.6.jar")).await.unwrap());
+        assert!(
+            !tokio::fs::try_exists(mods.join("iris-1.6.jar"))
+                .await
+                .unwrap()
+        );
         assert_eq!(
-            tokio::fs::read(mods.join("iris-1.6.jar.old")).await.unwrap(),
+            tokio::fs::read(mods.join("iris-1.6.jar.old"))
+                .await
+                .unwrap(),
             old_bytes
         );
 
@@ -1444,7 +1490,10 @@ mod tests {
             .find(|c| c.event_id == update_id)
             .expect("更新事件应出现在回滚判定里");
         assert!(check.can_rollback, "原因：{:?}", check.reason);
-        assert_eq!(aurora.backup_size("1.21").await.unwrap(), old_bytes.len() as u64);
+        assert_eq!(
+            aurora.backup_size("1.21").await.unwrap(),
+            old_bytes.len() as u64
+        );
     }
 
     /// 同版本重复安装：不再下载、不写新历史，卷宗那条身份原样留着。
@@ -1498,16 +1547,27 @@ mod tests {
 
         assert_eq!(
             outcome.path,
-            mc.join("versions").join("1.21").join("mods").join("modmenu.jar")
+            mc.join("versions")
+                .join("1.21")
+                .join("mods")
+                .join("modmenu.jar")
         );
         // 身份没被第二次安装动过（时间戳都还是第一次那个），历史也没多出一条。
-        assert_eq!(aurora.ledger_store("1.21").load().await.unwrap(), first_ledger);
+        assert_eq!(
+            aurora.ledger_store("1.21").load().await.unwrap(),
+            first_ledger
+        );
         assert_eq!(aurora.history("1.21").await.unwrap().events.len(), 1);
-        assert!(!tokio::fs::try_exists(
-            mc.join("versions").join("1.21").join("mods").join("modmenu.jar.old")
-        )
-        .await
-        .unwrap());
+        assert!(
+            !tokio::fs::try_exists(
+                mc.join("versions")
+                    .join("1.21")
+                    .join("mods")
+                    .join("modmenu.jar.old")
+            )
+            .await
+            .unwrap()
+        );
     }
 
     /// 带路径分隔符或形如 `..` 的文件名一律拒绝，绝不允许拼出目录之外的落点。
@@ -1634,8 +1694,8 @@ mod tests {
             "gone-2.jar",
             &tmp.path().join("staged-not-there.jar"),
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         assert_eq!(missing, None);
     }
 

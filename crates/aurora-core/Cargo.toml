@@ -11,6 +11,7 @@ aurora-java = { path = "../aurora-java" }
 aurora-download = { path = "../aurora-download" }
 aurora-instance = { path = "../aurora-instance" }
 aurora-install = { path = "../aurora-install" }
+aurora-modpack = { path = "../aurora-modpack" }
 aurora-modplatform = { path = "../aurora-modplatform" }
 aurora-launch = { path = "../aurora-launch" }
 # 仅用于在门面结构里持有由 aurora-base 工厂构建的 reqwest::Client 并克隆分发；本 crate 不直接调
@@ -20,8 +21,12 @@ reqwest = { version = "0.13", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "fs", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 thiserror = "2"
 tracing = "0.1"
+fs2 = "0.4"
+fastrand = "2"
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # 自定义背景：导入时解码、缩放到展示尺寸、算平均色。
 # 关掉默认特性只留三种格式：默认会把十几个解码器全编进来，而玩家的壁纸不出这三类。
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -33,4 +38,3 @@ wiremock = "0.6"
 tempfile = "3"
 sha1 = "0.11"
 # 造带元数据的测试 jar：mod_id 兜底那道判据必须拿真 jar 验，否则测的只是「解析失败返回 None」。
-zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

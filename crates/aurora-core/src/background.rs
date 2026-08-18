@@ -13,11 +13,11 @@
 
 use std::path::{Path, PathBuf};
 
-use image::imageops::FilterType;
 use image::ImageReader;
+use image::imageops::FilterType;
 use serde::Serialize;
 
-use crate::config::{BackgroundRef, PlateZone, MAX_BACKGROUND_VEIL};
+use crate::config::{BackgroundRef, MAX_BACKGROUND_VEIL, PlateZone};
 use crate::error::{CoreError, Result};
 use crate::facade::Aurora;
 
@@ -65,21 +65,19 @@ impl Aurora {
             // 还没导入过任何图，不是错误。
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(source) => {
-                return Err(CoreError::BackgroundIo {
-                    path: dir,
-                    source,
-                });
+                return Err(CoreError::BackgroundIo { path: dir, source });
             }
         };
 
         let mut out = Vec::new();
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|source| CoreError::BackgroundIo {
-                path: dir.clone(),
-                source,
-            })?
+        while let Some(entry) =
+            entries
+                .next_entry()
+                .await
+                .map_err(|source| CoreError::BackgroundIo {
+                    path: dir.clone(),
+                    source,
+                })?
         {
             let path = entry.path();
             if !path.is_file() {
@@ -204,7 +202,14 @@ impl Aurora {
         tokio::fs::remove_file(&path)
             .await
             .map_err(|source| CoreError::BackgroundIo { path, source })?;
-        if self.config().appearance.background.as_ref().map(|b| b.file.as_str()) == Some(file) {
+        if self
+            .config()
+            .appearance
+            .background
+            .as_ref()
+            .map(|b| b.file.as_str())
+            == Some(file)
+        {
             self.config_mut().appearance.background = None;
         }
         Ok(())
@@ -292,7 +297,8 @@ fn import_blocking(source: &Path, dir: &Path, stem: &str) -> Result<BackgroundRe
 
     // 只缩不放：比 1920 窄的图放大只会糊，原样收下即可。
     let display = if decoded.width() > DISPLAY_WIDTH {
-        let height = (decoded.height() as u64 * DISPLAY_WIDTH as u64 / decoded.width() as u64).max(1);
+        let height =
+            (decoded.height() as u64 * DISPLAY_WIDTH as u64 / decoded.width() as u64).max(1);
         decoded.resize(DISPLAY_WIDTH, height as u32, FilterType::Lanczos3)
     } else {
         decoded
@@ -472,7 +478,10 @@ mod tests {
         for (i, want) in expected.iter().enumerate() {
             let got = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("十六进制通道");
             let diff = got.abs_diff(*want);
-            assert!(diff <= 2, "{actual} 的第 {i} 个通道是 {got}，期望接近 {want}");
+            assert!(
+                diff <= 2,
+                "{actual} 的第 {i} 个通道是 {got}，期望接近 {want}"
+            );
         }
     }
 
@@ -536,7 +545,11 @@ mod tests {
         let (w, h) = (200u32, 200u32);
         let mut img = RgbImage::new(w, h);
         for (_, y, px) in img.enumerate_pixels_mut() {
-            *px = Rgb(if y < (h * 4) / 5 { [0, 0, 0] } else { [255, 255, 255] });
+            *px = Rgb(if y < (h * 4) / 5 {
+                [0, 0, 0]
+            } else {
+                [255, 255, 255]
+            });
         }
         let zone = plate_zone_of(&image::DynamicImage::ImageRgb8(img));
         assert_eq!(zone.p10, 0, "偏暗那端应落在黑上");
@@ -604,7 +617,10 @@ mod tests {
             tint: "#000000".to_owned(),
             plate: None,
         });
-        assert!(!aurora.backfill_plate_zone(), "取不到图应当返回 false 而不是 panic");
+        assert!(
+            !aurora.backfill_plate_zone(),
+            "取不到图应当返回 false 而不是 panic"
+        );
         assert!(
             aurora
                 .config()
@@ -664,10 +680,7 @@ mod tests {
             "C:\\Windows\\win.ini",
             "",
         ] {
-            assert!(
-                resolve_in_library(dir, bad).is_err(),
-                "{bad} 不该通过校验"
-            );
+            assert!(resolve_in_library(dir, bad).is_err(), "{bad} 不该通过校验");
         }
     }
 
@@ -763,9 +776,17 @@ mod tests {
         let tmp = tempfile::tempdir().expect("临时目录");
         let mut aurora = aurora_at(tmp.path());
         // 图库里没有这张。
-        assert!(aurora.set_background(Some("不存在.jpg".to_owned())).is_err());
+        assert!(
+            aurora
+                .set_background(Some("不存在.jpg".to_owned()))
+                .is_err()
+        );
         // 越界文件名同样拒绝，且不该因为「文件确实存在」而放行。
-        assert!(aurora.set_background(Some("../config.json".to_owned())).is_err());
+        assert!(
+            aurora
+                .set_background(Some("../config.json".to_owned()))
+                .is_err()
+        );
         assert!(aurora.config().appearance.background.is_none());
     }
 
@@ -779,13 +800,25 @@ mod tests {
         let blue = aurora.import_background(&blue).await.expect("导入蓝");
 
         aurora.set_background(Some(red.file.clone())).expect("设红");
-        let now = aurora.config().appearance.background.as_ref().expect("有背景");
+        let now = aurora
+            .config()
+            .appearance
+            .background
+            .as_ref()
+            .expect("有背景");
         assert_eq!(now.file, red.file);
         assert_tint_near(&now.tint, [200, 40, 30]);
 
         // 切换必须重算 tint，否则加载间隙会闪上一张的颜色。
-        aurora.set_background(Some(blue.file.clone())).expect("设蓝");
-        let now = aurora.config().appearance.background.as_ref().expect("有背景");
+        aurora
+            .set_background(Some(blue.file.clone()))
+            .expect("设蓝");
+        let now = aurora
+            .config()
+            .appearance
+            .background
+            .as_ref()
+            .expect("有背景");
         assert_eq!(now.file, blue.file);
         assert_tint_near(&now.tint, [20, 60, 180]);
 
@@ -807,7 +840,9 @@ mod tests {
         // 玩家手动往目录里丢的杂物不该让整个列表失败。
         std::fs::write(aurora.backgrounds_dir().join("说明.txt"), b"hello").expect("杂物");
 
-        aurora.set_background(Some(a.file.clone())).expect("设为当前");
+        aurora
+            .set_background(Some(a.file.clone()))
+            .expect("设为当前");
         let listed = aurora.list_backgrounds().await.expect("列举");
         assert_eq!(listed.len(), 2, "非图片应被跳过");
         assert_eq!(listed[0].file, "a.jpg");
@@ -830,9 +865,14 @@ mod tests {
         let mut aurora = aurora_at(tmp.path());
         let src = write_solid(tmp.path(), "x.png", 32, 32, [1, 2, 3]);
         let imported = aurora.import_background(&src).await.expect("导入");
-        aurora.set_background(Some(imported.file.clone())).expect("设为当前");
+        aurora
+            .set_background(Some(imported.file.clone()))
+            .expect("设为当前");
 
-        aurora.remove_background(&imported.file).await.expect("删除");
+        aurora
+            .remove_background(&imported.file)
+            .await
+            .expect("删除");
         assert!(!aurora.backgrounds_dir().join(&imported.file).is_file());
         // 删掉的正是当前那张，配置必须跟着清空，否则界面会拿着断链引用去加载。
         assert!(aurora.config().appearance.background.is_none());
@@ -846,11 +886,21 @@ mod tests {
         let drop = write_solid(tmp.path(), "删.png", 32, 32, [9, 9, 9]);
         let keep = aurora.import_background(&keep).await.expect("导入留");
         let drop = aurora.import_background(&drop).await.expect("导入删");
-        aurora.set_background(Some(keep.file.clone())).expect("设当前");
+        aurora
+            .set_background(Some(keep.file.clone()))
+            .expect("设当前");
 
-        aurora.remove_background(&drop.file).await.expect("删另一张");
+        aurora
+            .remove_background(&drop.file)
+            .await
+            .expect("删另一张");
         assert_eq!(
-            aurora.config().appearance.background.as_ref().map(|b| b.file.as_str()),
+            aurora
+                .config()
+                .appearance
+                .background
+                .as_ref()
+                .map(|b| b.file.as_str()),
             Some(keep.file.as_str())
         );
     }
@@ -862,7 +912,10 @@ mod tests {
         let src = write_solid(tmp.path(), "y.png", 32, 32, [4, 5, 6]);
         let imported = aurora.import_background(&src).await.expect("导入");
 
-        let bytes = aurora.read_background(&imported.file).await.expect("读字节");
+        let bytes = aurora
+            .read_background(&imported.file)
+            .await
+            .expect("读字节");
         // JPEG 魔数，确认吐出去的确实是转码后的图。
         assert_eq!(&bytes[..2], &[0xff, 0xd8]);
 

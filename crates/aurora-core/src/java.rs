@@ -97,7 +97,11 @@ mod tests {
     fn sha1_hex(bytes: &[u8]) -> String {
         let mut hasher = Sha1::new();
         hasher.update(bytes);
-        hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     async fn mount_get(server: &MockServer, p: &str, body: String) {

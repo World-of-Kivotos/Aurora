@@ -36,6 +36,9 @@ pub enum CoreError {
     /// Mod 平台错误（Modrinth/CurseForge 客户端、本地模组扫描与启禁）。
     #[error(transparent)]
     ModPlatform(#[from] aurora_modplatform::Error),
+    /// 整合包清单、路径、差集或快照错误。
+    #[error(transparent)]
+    Modpack(#[from] aurora_modpack::Error),
 
     /// 读取配置文件失败。
     #[error("读取配置文件 {path} 失败")]
@@ -57,9 +60,35 @@ pub enum CoreError {
     /// 整合包订阅字段非法。路径用于区分多实例下具体是哪份订阅损坏。
     #[error("整合包订阅非法: {path}: {reason}")]
     InvalidModpackSubscription { path: PathBuf, reason: &'static str },
+    /// 整合包元数据端点暂时不可用，且没有可用缓存。
+    #[error("整合包元数据不可用: {url}: {detail}")]
+    ModpackRemoteUnavailable { url: String, detail: String },
+    /// 指针、订阅、清单或快照之间的身份/版本契约不一致。
+    #[error("整合包元数据冲突: {detail}")]
+    ModpackMetadataConflict { detail: String },
+    /// 调用产品注入的启动器版本不是合法 semver。
+    #[error("启动器版本 {version} 无法按 semver 解析: {detail}")]
+    InvalidLauncherVersion { version: String, detail: String },
+    /// 服务端要求的启动器版本高于当前版本，必须明确拒绝解析后续清单。
+    #[error("整合包要求 Aurora >= {required}，当前版本为 {current}，请先升级启动器")]
+    ModpackLauncherTooOld { current: String, required: String },
+    /// 对普通实例调用了仅受管实例可用的整合包操作。
+    #[error("实例 {version_id} 未订阅整合包")]
+    ModpackNotManaged { version_id: String },
+    /// 受管实例的快照绑定实际工作根，不能在仍受管时切换隔离策略。
+    #[error("受管整合包实例 {version_id} 的隔离设置已锁定；请先解除受管状态或重新安装实例")]
+    ManagedModpackIsolationLocked { version_id: String },
+    /// 清单声明了当前安装门面尚不支持的加载器。
+    #[error("整合包加载器 {loader} 暂不支持一键安装")]
+    UnsupportedModpackLoader { loader: &'static str },
+    /// 清单路径虽通过词法校验，但命中了玩家/启动器保留域或既有符号链接/reparse point。
+    #[error("拒绝整合包路径 {path}: {reason}")]
+    UnsafeModpackPath { path: String, reason: String },
 
     /// 未配置微软登录 client_id。
-    #[error("未配置微软登录 client_id：请在 config.json 设置 msa_client_id 或提供环境变量 AURORA_MSA_CLIENT_ID")]
+    #[error(
+        "未配置微软登录 client_id：请在 config.json 设置 msa_client_id 或提供环境变量 AURORA_MSA_CLIENT_ID"
+    )]
     MissingClientId,
     /// 请求启动/操作的版本本地未安装。
     #[error("本地未安装版本 {id}")]
@@ -72,7 +101,9 @@ pub enum CoreError {
         version_id: String,
     },
     /// 找不到匹配主版本的 Java，且自动下载被关闭。
-    #[error("未找到匹配 Java {major} 的运行时，且自动下载已关闭（开启 auto_download_java 或手动安装对应 Java）")]
+    #[error(
+        "未找到匹配 Java {major} 的运行时，且自动下载已关闭（开启 auto_download_java 或手动安装对应 Java）"
+    )]
     NoJava { major: u32 },
     /// 启动前检查存在阻断项，已中止启动。
     #[error("启动前检查未通过：{0}")]

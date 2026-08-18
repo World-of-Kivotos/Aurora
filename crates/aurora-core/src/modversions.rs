@@ -274,30 +274,61 @@ mod tests {
     #[test]
     fn filter_drops_declared_mismatches_and_keeps_metadata_less_versions() {
         let list = vec![
-            tagged("hit", "2026-01-05T00:00:00Z", &["1.20.1"], &[ModLoader::Fabric]),
+            tagged(
+                "hit",
+                "2026-01-05T00:00:00Z",
+                &["1.20.1"],
+                &[ModLoader::Fabric],
+            ),
             // 加载器对不上：确凿不兼容，筛掉。
-            tagged("wrong-loader", "2026-01-04T00:00:00Z", &["1.20.1"], &[ModLoader::Forge]),
+            tagged(
+                "wrong-loader",
+                "2026-01-04T00:00:00Z",
+                &["1.20.1"],
+                &[ModLoader::Forge],
+            ),
             // MC 版本对不上：确凿不兼容，筛掉。
-            tagged("wrong-mc", "2026-01-03T00:00:00Z", &["1.19.4"], &[ModLoader::Fabric]),
+            tagged(
+                "wrong-mc",
+                "2026-01-03T00:00:00Z",
+                &["1.19.4"],
+                &[ModLoader::Fabric],
+            ),
             // 两维都没标：平台没给元数据不等于不兼容，放行。
             tagged("bare", "2026-01-02T00:00:00Z", &[], &[]),
             // 只标了加载器且对得上，MC 版本缺失：单维缺失同样放行。
-            tagged("loader-only", "2026-01-01T00:00:00Z", &[], &[ModLoader::Fabric]),
+            tagged(
+                "loader-only",
+                "2026-01-01T00:00:00Z",
+                &[],
+                &[ModLoader::Fabric],
+            ),
         ];
-        let kept = refine(
-            list,
-            &["1.20.1".to_owned()],
-            &[ModLoader::Fabric],
-        );
+        let kept = refine(list, &["1.20.1".to_owned()], &[ModLoader::Fabric]);
         assert_eq!(ids(&kept), vec!["hit", "bare", "loader-only"]);
     }
 
     #[test]
     fn filter_treats_multiple_values_inside_one_dimension_as_or() {
         let list = vec![
-            tagged("mc-1201", "2026-01-03T00:00:00Z", &["1.20.1"], &[ModLoader::Fabric]),
-            tagged("mc-1211", "2026-01-02T00:00:00Z", &["1.21.1"], &[ModLoader::Quilt]),
-            tagged("mc-1194", "2026-01-01T00:00:00Z", &["1.19.4"], &[ModLoader::Fabric]),
+            tagged(
+                "mc-1201",
+                "2026-01-03T00:00:00Z",
+                &["1.20.1"],
+                &[ModLoader::Fabric],
+            ),
+            tagged(
+                "mc-1211",
+                "2026-01-02T00:00:00Z",
+                &["1.21.1"],
+                &[ModLoader::Quilt],
+            ),
+            tagged(
+                "mc-1194",
+                "2026-01-01T00:00:00Z",
+                &["1.19.4"],
+                &[ModLoader::Fabric],
+            ),
         ];
         let kept = refine(
             list,
@@ -323,8 +354,18 @@ mod tests {
     #[test]
     fn empty_filters_keep_everything() {
         let list = vec![
-            tagged("a", "2026-01-01T00:00:00Z", &["1.7.10"], &[ModLoader::LiteLoader]),
-            tagged("b", "2026-02-01T00:00:00Z", &["1.21"], &[ModLoader::NeoForge]),
+            tagged(
+                "a",
+                "2026-01-01T00:00:00Z",
+                &["1.7.10"],
+                &[ModLoader::LiteLoader],
+            ),
+            tagged(
+                "b",
+                "2026-02-01T00:00:00Z",
+                &["1.21"],
+                &[ModLoader::NeoForge],
+            ),
         ];
         let kept = refine(list, &[], &[]);
         assert_eq!(ids(&kept), vec!["b", "a"]);
@@ -588,7 +629,9 @@ mod tests {
 
         let client = curseforge_client(&server.uri());
         let wanted = vec!["1.20.1".to_owned(), "1.21.1".to_owned()];
-        let fetched = fetch_curseforge(&client, "238222", &wanted, &[]).await.unwrap();
+        let fetched = fetch_curseforge(&client, "238222", &wanted, &[])
+            .await
+            .unwrap();
         assert_eq!(ids(&fetched), vec!["1", "2", "3"]);
         // 本地这一遍把 1.16.5 筛掉，并按发布时间倒序。
         let listed = refine(fetched, &wanted, &[]);

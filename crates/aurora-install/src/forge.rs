@@ -300,7 +300,8 @@ impl<'a> ForgeInstaller<'a> {
             .cx
             .layout
             .root()
-            .join(".aurora-cache")
+            .join(".aurora")
+            .join("installer-cache")
             .join(file_name);
         self.cx
             .run_batch(

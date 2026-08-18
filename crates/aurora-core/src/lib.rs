@@ -34,17 +34,18 @@ pub mod deps;
 pub mod error;
 pub mod event;
 pub mod facade;
-pub mod history;
 pub mod folders;
+pub mod history;
 pub mod install;
 pub mod instance;
 pub mod java;
 pub mod launch;
 pub mod ledger;
+pub mod modpack;
 pub mod mods;
 pub mod modversions;
 pub mod search;
-pub mod subscription;
+mod subscription;
 pub mod updates;
 pub mod versions;
 
@@ -64,9 +65,14 @@ pub use history::{History, HistoryEvent, HistoryStore, RollbackCheck};
 pub use install::{InstallOutcome, LoaderChoice};
 pub use launch::LaunchOptions;
 pub use ledger::{Ledger, LedgerEntry, LedgerStore};
+pub use modpack::{
+    KnownModpackVersions, ManagedModpackFile, ManagedModpackStatus, ModpackCacheSource,
+    ModpackInstallOutcome, ModpackSyncError, ModpackSyncFailure, ModpackSyncOutcome,
+    ModpackSyncProgress, ModpackSyncStage,
+};
 pub use mods::ModInstallOutcome;
 pub use modversions::sort_by_published_desc;
-pub use subscription::{ModpackSubscription, ModpackSubscriptionStore};
+pub use subscription::ModpackSubscription;
 pub use updates::UpdateCandidate;
 
 pub use auth::{MSA_CLIENT_ID_ENV, perform_microsoft_login};

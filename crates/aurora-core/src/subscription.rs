@@ -6,20 +6,24 @@
 
 use std::path::{Path, PathBuf};
 
-use aurora_instance::{AURORA_META_DIR, VERSIONS_DIR};
+use aurora_instance::AURORA_META_DIR;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::facade::Aurora;
+use crate::modpack::ensure_version_relative_path;
 
 const MODPACK_SUBSCRIPTION_FILE: &str = "modpack-subscription.json";
+const INVALID_POINTER_URL: &str = "pointer_url 必须是带主机名的合法 HTTP(S) URL";
+const POINTER_URL_WITH_CREDENTIALS: &str = "pointer_url 不能包含用户信息或密码";
+const POINTER_URL_WITH_FRAGMENT: &str = "pointer_url 不能包含片段";
 
 /// 实例订阅的整合包与其最新版本指针。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModpackSubscription {
     /// 服务端整合包标识。
     pub pack_id: String,
-    /// 最新版本指针地址，只接受 HTTP(S)。
+    /// 最新版本指针地址，只接受带主机名且不含用户信息、密码或片段的 HTTP(S) URL。
     pub pointer_url: String,
 }
 
@@ -29,24 +33,40 @@ impl ModpackSubscription {
             return Err("pack_id 不能为空");
         }
 
-        let url = reqwest::Url::parse(&self.pointer_url)
-            .map_err(|_| "pointer_url 必须是合法的 HTTP(S) URL")?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return Err("pointer_url 必须是合法的 HTTP(S) URL");
+        let url = reqwest::Url::parse(&self.pointer_url).map_err(|_| INVALID_POINTER_URL)?;
+        if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+            return Err(INVALID_POINTER_URL);
+        }
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || raw_url_authority(&self.pointer_url).is_some_and(|authority| authority.contains('@'))
+        {
+            return Err(POINTER_URL_WITH_CREDENTIALS);
+        }
+        if url.fragment().is_some() {
+            return Err(POINTER_URL_WITH_FRAGMENT);
         }
         Ok(())
     }
 }
 
+fn raw_url_authority(url: &str) -> Option<&str> {
+    let (_, after_scheme) = url.split_once("://")?;
+    let end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    Some(&after_scheme[..end])
+}
+
 /// `modpack-subscription.json` 的读写句柄。
 #[derive(Debug, Clone)]
-pub struct ModpackSubscriptionStore {
+pub(crate) struct ModpackSubscriptionStore {
     path: PathBuf,
 }
 
 impl ModpackSubscriptionStore {
     /// 默认路径：`version_dir/.aurora/modpack-subscription.json`。
-    pub fn for_version_dir(version_dir: &Path) -> Self {
+    fn for_version_dir(version_dir: &Path) -> Self {
         Self {
             path: version_dir
                 .join(AURORA_META_DIR)
@@ -55,17 +75,19 @@ impl ModpackSubscriptionStore {
     }
 
     /// 指定订阅文件路径（测试注入）。
-    pub fn at(path: impl Into<PathBuf>) -> Self {
+    #[cfg(test)]
+    fn at(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
     }
 
     /// 订阅文件路径。
-    pub fn path(&self) -> &Path {
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
     /// 读取订阅；文件缺失表示普通实例，存在但损坏或字段非法则冒泡。
-    pub async fn load(&self) -> Result<Option<ModpackSubscription>> {
+    async fn load(&self) -> Result<Option<ModpackSubscription>> {
         match tokio::fs::read(&self.path).await {
             Ok(bytes) => {
                 let subscription: ModpackSubscription =
@@ -91,7 +113,7 @@ impl ModpackSubscriptionStore {
     }
 
     /// 校验并原子写入订阅。
-    pub async fn save(&self, subscription: &ModpackSubscription) -> Result<()> {
+    async fn save(&self, subscription: &ModpackSubscription) -> Result<()> {
         subscription
             .validate()
             .map_err(|reason| CoreError::InvalidModpackSubscription {
@@ -106,10 +128,20 @@ impl ModpackSubscriptionStore {
 
 impl Aurora {
     /// 该实例的整合包订阅句柄。
-    pub fn modpack_subscription_store(&self, version_id: &str) -> ModpackSubscriptionStore {
-        ModpackSubscriptionStore::for_version_dir(
-            &self.game_dir().join(VERSIONS_DIR).join(version_id),
+    pub(crate) async fn modpack_subscription_store(
+        &self,
+        version_id: &str,
+    ) -> Result<ModpackSubscriptionStore> {
+        let version_dir = self.checked_version_dir(version_id).await?;
+        ensure_version_relative_path(
+            self.game_dir(),
+            &version_dir,
+            Path::new(AURORA_META_DIR)
+                .join(MODPACK_SUBSCRIPTION_FILE)
+                .as_path(),
         )
+        .await?;
+        Ok(ModpackSubscriptionStore::for_version_dir(&version_dir))
     }
 
     /// 读取实例订阅；`None` 表示实例不受整合包管理。
@@ -117,7 +149,10 @@ impl Aurora {
         &self,
         version_id: &str,
     ) -> Result<Option<ModpackSubscription>> {
-        self.modpack_subscription_store(version_id).load().await
+        self.modpack_subscription_store(version_id)
+            .await?
+            .load()
+            .await
     }
 
     /// 校验并原子写入实例订阅。
@@ -127,6 +162,7 @@ impl Aurora {
         subscription: &ModpackSubscription,
     ) -> Result<()> {
         self.modpack_subscription_store(version_id)
+            .await?
             .save(subscription)
             .await
     }
@@ -197,7 +233,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_rejects_empty_pack_id_and_non_http_pointer() {
+    async fn load_rejects_invalid_subscription_fields() {
         let tmp = tempfile::tempdir().unwrap();
         let cases = [
             (
@@ -206,11 +242,31 @@ mod tests {
             ),
             (
                 r#"{"pack_id":"wok","pointer_url":"ftp://example.com/latest"}"#,
-                "pointer_url 必须是合法的 HTTP(S) URL",
+                INVALID_POINTER_URL,
             ),
             (
                 r#"{"pack_id":"wok","pointer_url":"not a url"}"#,
-                "pointer_url 必须是合法的 HTTP(S) URL",
+                INVALID_POINTER_URL,
+            ),
+            (
+                r#"{"pack_id":"wok","pointer_url":"https://"}"#,
+                INVALID_POINTER_URL,
+            ),
+            (
+                r#"{"pack_id":"wok","pointer_url":"https://user@example.com/latest"}"#,
+                POINTER_URL_WITH_CREDENTIALS,
+            ),
+            (
+                r#"{"pack_id":"wok","pointer_url":"https://user:secret@example.com/latest"}"#,
+                POINTER_URL_WITH_CREDENTIALS,
+            ),
+            (
+                r#"{"pack_id":"wok","pointer_url":"https://@example.com/latest"}"#,
+                POINTER_URL_WITH_CREDENTIALS,
+            ),
+            (
+                r##"{"pack_id":"wok","pointer_url":"https://example.com/latest#stable"}"##,
+                POINTER_URL_WITH_FRAGMENT,
             ),
         ];
 
@@ -229,6 +285,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn validate_accepts_hosted_http_urls_without_credentials_or_fragments() {
+        for pointer_url in [
+            "http://example.com/latest",
+            "https://example.com:8443/latest?channel=stable",
+            "https://[::1]/latest",
+        ] {
+            let subscription = ModpackSubscription {
+                pack_id: "wok".to_owned(),
+                pointer_url: pointer_url.to_owned(),
+            };
+
+            assert_eq!(subscription.validate(), Ok(()), "{pointer_url}");
+        }
+    }
+
     #[tokio::test]
     async fn save_rejects_invalid_subscription_without_creating_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -243,7 +315,7 @@ mod tests {
         assert!(matches!(
             err,
             CoreError::InvalidModpackSubscription { path: bad, reason }
-                if bad == path && reason == "pointer_url 必须是合法的 HTTP(S) URL"
+                if bad == path && reason == INVALID_POINTER_URL
         ));
         assert!(!tokio::fs::try_exists(&path).await.unwrap());
     }
@@ -265,7 +337,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            aurora.modpack_subscription_store("1.20.1-fabric").path(),
+            aurora
+                .modpack_subscription_store("1.20.1-fabric")
+                .await
+                .unwrap()
+                .path(),
             mc.join("versions")
                 .join("1.20.1-fabric")
                 .join(".aurora")
@@ -275,5 +351,45 @@ mod tests {
             aurora.modpack_subscription("1.20.1-fabric").await.unwrap(),
             Some(subscription)
         );
+    }
+
+    #[tokio::test]
+    async fn public_subscription_apis_reject_traversal_without_external_reads_or_writes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path().join(".minecraft");
+        let outside = mc.join("outside").join(".aurora");
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+        let sentinel = outside.join(MODPACK_SUBSCRIPTION_FILE);
+        tokio::fs::write(&sentinel, b"sentinel").await.unwrap();
+        let aurora = Aurora::for_test(AuroraConfig::default(), tmp.path().to_path_buf(), mc);
+        let traversal = "../outside";
+
+        let store_error = aurora
+            .modpack_subscription_store(traversal)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            store_error,
+            CoreError::UnsafeModpackPath { ref path, .. } if path == traversal
+        ));
+        let read_error = aurora.modpack_subscription(traversal).await.unwrap_err();
+        assert!(matches!(
+            read_error,
+            CoreError::UnsafeModpackPath { ref path, .. } if path == traversal
+        ));
+        let write_error = aurora
+            .set_modpack_subscription(traversal, &valid_subscription())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            write_error,
+            CoreError::UnsafeModpackPath { ref path, .. } if path == traversal
+        ));
+        let updates_error = aurora.check_updates(traversal).await.unwrap_err();
+        assert!(matches!(
+            updates_error,
+            CoreError::UnsafeModpackPath { ref path, .. } if path == traversal
+        ));
+        assert_eq!(tokio::fs::read(&sentinel).await.unwrap(), b"sentinel");
     }
 }

@@ -172,7 +172,9 @@ fn init_tracing(verbose: bool) {
 }
 
 async fn run(cli: Cli) -> aurora_core::Result<()> {
-    let mut aurora = Aurora::load().await?;
+    let mut aurora = Aurora::load()
+        .await?
+        .with_launcher_version(env!("CARGO_PKG_VERSION"))?;
     if let Some(game_dir) = &cli.game_dir {
         aurora.set_game_dir(game_dir.clone());
     }
@@ -454,6 +456,15 @@ fn spawn_event_printer() -> (EventSink, tokio::task::JoinHandle<()>) {
                         progress.total,
                         progress.bytes / 1024,
                         progress.speed / 1024
+                    );
+                }
+                CoreEvent::ModpackSync(progress) => {
+                    eprintln!(
+                        "[整合包] {:?}：{}/{} 文件，{} KiB",
+                        progress.stage,
+                        progress.completed_files,
+                        progress.total_files,
+                        progress.downloaded_bytes / 1024
                     );
                 }
             }

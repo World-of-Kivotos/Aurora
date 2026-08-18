@@ -6,6 +6,8 @@
 
 use tokio::sync::mpsc;
 
+use crate::modpack::ModpackSyncProgress;
+
 /// 门面事件通道的发送端。`None` 表示调用方不关心事件。
 pub type EventSink = mpsc::UnboundedSender<CoreEvent>;
 
@@ -21,6 +23,8 @@ pub enum CoreEvent {
     Warning(String),
     /// 批量下载进度快照。
     Download(DownloadProgress),
+    /// 受管整合包同步的结构化阶段与进度。
+    ModpackSync(ModpackSyncProgress),
 }
 
 impl CoreEvent {
