@@ -1586,32 +1586,6 @@ impl Aurora {
         }))
     }
 
-    pub(crate) async fn managed_mod_paths_for_player_write(
-        &self,
-        version_id: &str,
-    ) -> Result<HashSet<String>> {
-        self.ensure_instance_not_pending_managed_install(version_id)
-            .await?;
-        let (version_dir, subscription) = self.checked_modpack_subscription(version_id).await?;
-        let Some(subscription) = subscription else {
-            return Ok(HashSet::new());
-        };
-        let snapshot = self
-            .checked_managed_snapshot(version_id, &version_dir, &subscription)
-            .await?
-            .ok_or_else(|| CoreError::ModpackMetadataConflict {
-                detail: format!(
-                    "managed instance {version_id} has no successful applied snapshot; player mod writes are locked"
-                ),
-            })?;
-        Ok(snapshot
-            .files
-            .into_iter()
-            .filter(|entry| entry.policy == FilePolicy::Managed)
-            .map(|entry| entry.path.as_str().replace('\\', "/").to_ascii_lowercase())
-            .collect())
-    }
-
     async fn checked_modpack_subscription(
         &self,
         version_id: &str,
@@ -1972,10 +1946,13 @@ pub(crate) async fn acquire_install_gate(game_dir: &Path) -> Result<ActiveManage
     };
     let lock_path = game_dir.join(INSTALL_LOCK_FILE);
     ensure_no_link_components(&game_dir, Path::new(INSTALL_LOCK_FILE)).await?;
+    // 这个文件只是 flock 的载体，内容自始至终为空、从不写入，因此显式声明不截断：将来若有人往锁文件里
+    // 记 pid，抢锁失败的一方也不会在拿到锁之前先把持锁者的内容抹掉。
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&lock_path)
         .map_err(|source| aurora_base::Error::Io {
             path: lock_path.clone(),
