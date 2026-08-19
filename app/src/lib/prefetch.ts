@@ -1,15 +1,13 @@
 // 前端预取与 TTL 缓存层。
 //
-// 背景：后端 list_manifest / search_resources 都是直连上游（Mojang 清单、Modrinth/CurseForge 搜索），
-// 没有任何缓存——每次进下载页都要等一次网络往返，五个 tab 就是五次冷启动。
+// 背景：后端 search_resources 直连上游（Modrinth/CurseForge 搜索），没有任何缓存——
+// 每次进下载页都要等一次网络往返，三个 tab 就是三次冷启动。
 // 这里在启动器起来后的空闲期把下载页各 tab 的首屏并发预取一遍，进页面直接命中内存，零骨架闪烁。
 //
 // 三件事：TTL 缓存、并发去重（同 key 的第二个调用复用在途 promise）、启动编排。
 
 import {
-  listManifest,
   searchResources,
-  type ManifestDto,
   type ModLoader,
   type ResourceType,
   type SearchResultDto,
@@ -24,13 +22,10 @@ interface Entry {
 const store = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
 
-/** 版本清单变动慢（Mojang 发版级别），搜索结果放宽到分钟级即可覆盖一次使用会话。 */
+/** 搜索结果放宽到分钟级即可覆盖一次使用会话。 */
 export const TTL = {
-  manifest: 10 * 60_000,
   search: 5 * 60_000,
 } as const;
-
-export const MANIFEST_KEY = "manifest";
 
 /** 搜索缓存键：参数一字不差才算同一份结果，避免筛选变了还吃旧缓存。 */
 export function searchKey(
@@ -75,13 +70,6 @@ export function cached<T>(key: string, ttl: number, loader: () => Promise<T>): P
   return p;
 }
 
-/** 手动作废：安装完新版本后清掉清单缓存，下次进页面重拉。 */
-export function invalidate(key: string): void {
-  store.delete(key);
-}
-
-export const fetchManifest = (): Promise<ManifestDto> => cached(MANIFEST_KEY, TTL.manifest, listManifest);
-
 export function fetchSearch(
   type: ResourceType,
   sort: SortField,
@@ -97,24 +85,21 @@ export function fetchSearch(
 
 /** 下载页首屏参数：预取与页面初始状态必须一致，否则预取白做（键对不上）。 */
 export const DEFAULT_SORT: SortField = "relevance";
-export const PREFETCH_TYPES: ResourceType[] = ["mod", "modpack", "resource_pack", "shader"];
+/** 与下载页 TABS 一一对应。玩家不再自选 MC 版本、也不再搜第三方整合包，那两类不预取。 */
+export const PREFETCH_TYPES: ResourceType[] = ["mod", "resource_pack", "shader"];
 
 export const defaultSearchKey = (type: ResourceType) => searchKey(type, DEFAULT_SORT, "", [], []);
 
 /**
- * 启动预取：清单 + 四类资源首屏并发拉取。
+ * 启动预取：三类资源首屏并发拉取。
  * 单项失败只记录不抛——预取是纯优化路径，真正进页面时会再取一次并把错误正常呈现给用户；
  * 若这里 throw，会变成没人接的 unhandled rejection，反而掩盖问题。失败项不写缓存，下次自动重试。
  */
 export function prefetchDownloadTabs(): void {
-  const tasks: Array<[string, Promise<unknown>]> = [
-    [MANIFEST_KEY, fetchManifest()],
-    ...PREFETCH_TYPES.map(
-      (t) => [defaultSearchKey(t), fetchSearch(t, DEFAULT_SORT, "", [], [])] as [string, Promise<unknown>],
-    ),
-  ];
-  for (const [key, p] of tasks) {
-    p.catch((e) => console.warn(`[prefetch] ${key} 预取失败，进入页面时会重试：`, e));
+  for (const type of PREFETCH_TYPES) {
+    fetchSearch(type, DEFAULT_SORT, "", [], []).catch((e) =>
+      console.warn(`[prefetch] ${defaultSearchKey(type)} 预取失败，进入页面时会重试：`, e),
+    );
   }
 }
 

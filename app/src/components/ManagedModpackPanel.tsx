@@ -30,10 +30,12 @@ import {
 
 export interface ManagedModpackPanelProps {
   status: ManagedModpackStatus;
+  /** 当前实例 id。只在同步冲突那一支用到：要指名道姓地说清哪个目录会被留在磁盘上。 */
+  instanceId: string;
   sync: ModpackSyncState;
   onCheck: () => void;
   onSync: (targetVersion: string) => void;
-  onInstallAsNew: () => void;
+  onInstallNewVersion: () => void;
 }
 
 function versionsOf(status: ManagedModpackStatus): KnownModpackVersions | null {
@@ -124,10 +126,11 @@ export function ModpackSyncFailureView({
 
 export function ManagedModpackPanel({
   status,
+  instanceId,
   sync,
   onCheck,
   onSync,
-  onInstallAsNew,
+  onInstallNewVersion,
 }: ManagedModpackPanelProps) {
   const versions = versionsOf(status);
   const displayedVersions =
@@ -212,9 +215,24 @@ export function ManagedModpackPanel({
           <ModpackSyncFailureView failure={sync.failure} />
           <div className="mt-3">
             {sync.failure.kind === "conflict" ? (
-              <Button variant="primary" icon={<DownloadIcon size={16} />} onClick={onInstallAsNew}>
-                作为新实例安装
-              </Button>
+              // 措辞是单实例收敛后校准过的：这颗按钮不会「新增一个与旧实例并存的实例」——
+              // 装出来的新实例会顶掉 config.selected_version 成为启动器认的那一个，
+              // 旧目录留在磁盘上但从此没有任何界面能进它。承诺并存会让人以为随时切得回去，
+              // 所以按钮只说「装新版本」，代价另起一行明说。
+              <>
+                <Button
+                  variant="primary"
+                  icon={<DownloadIcon size={16} />}
+                  onClick={onInstallNewVersion}
+                >
+                  安装新版本
+                </Button>
+                <p className="mt-2 text-[12px] leading-relaxed text-ink/75">
+                  装好之后启动器改认新实例。当前实例{" "}
+                  <span className="font-mono font-bold">{instanceId}</span>{" "}
+                  的目录（含存档与自装 mod）会原样留在游戏目录里，但不再出现在启动器中；需要腾出空间时请手动删除。
+                </p>
+              </>
             ) : sync.failure.kind === "invalid_metadata" ||
               sync.failure.kind === "launcher_too_old" ? (
               <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={onCheck}>

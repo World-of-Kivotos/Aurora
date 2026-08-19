@@ -142,7 +142,8 @@ describe("presentSyncFailure", () => {
     {
       failure: { kind: "conflict", detail: "服务端当前版本已变化" },
       title: "整合包状态已变化",
-      action: "当前实例不能安全地原地应用此次变更。请作为新实例安装，现有实例与玩家数据会保留。",
+      action:
+        "当前实例不能安全地原地应用此次变更。需要按新清单另装一个实例，装好后启动器改认新的那一个；当前实例的文件会留在磁盘上，但不再出现在启动器中。",
     },
     {
       failure: { kind: "filesystem", file_path: "config/wok.toml", detail: "父目录是符号链接" },

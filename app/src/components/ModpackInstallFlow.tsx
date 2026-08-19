@@ -1,4 +1,8 @@
-// 一键安装整合包：地址输入 + 四步进度 + 失败现场。
+// 一键把游戏装上：地址输入 + 四步进度 + 失败现场。
+//
+// 场景已从「在资源浏览器里再装一个整合包」变成「这台启动器唯一的装游戏途径」——
+// Aurora 收敛为 World of Kivotos 专用启动器后，下载页不再有游戏版本与整合包 tab，
+// 玩家拿到游戏的唯一入口就是启动屏上的这套流程，措辞按「把游戏装上」写。
 //
 // 材质分层（与本组另外三个文件同一套）：整块面板直接压在照片上，只有它挂 .surface-panel；
 // 里面的步骤条、失败块、完成条一律不挂第二层玻璃，靠描边与语义色区分。
@@ -60,6 +64,14 @@ export interface ModpackInstallFlowProps {
   state: ModpackInstallState;
   onInstall: (pointerUrl: string) => void;
   onOpenInstance?: (instanceId: string) => void;
+  /**
+   * 地址每次变动都回报一次。
+   *
+   * 启动屏右下角那个「安装游戏」与这块面板里的按钮装的必须是同一个地址：
+   * 玩家把地址改成自建整合包、却从角上点了安装，结果装回官方的，是最难查的那类不一致。
+   * 地址仍由本组件自持（它才是编辑它的人），只把当前值同步给外面那颗按钮。
+   */
+  onPointerUrlChange?: (pointerUrl: string) => void;
 }
 
 const STEPS: { label: string; stages: ModpackSyncStage[] }[] = [
@@ -134,10 +146,17 @@ export function ModpackInstallFlow({
   state,
   onInstall,
   onOpenInstance,
+  onPointerUrlChange,
 }: ModpackInstallFlowProps) {
   const [pointerUrl, setPointerUrl] = useState(initialPointerUrl ?? builtIn?.pointer_url ?? "");
   const [validationError, setValidationError] = useState<string | null>(null);
   const running = state.kind === "running";
+
+  const changePointerUrl = (next: string) => {
+    setPointerUrl(next);
+    setValidationError(null);
+    onPointerUrlChange?.(next);
+  };
 
   const submit = () => {
     const error = validateModpackPointerUrl(pointerUrl);
@@ -154,27 +173,24 @@ export function ModpackInstallFlow({
         </span>
         <div>
           <h2 id="modpack-install-title" className="text-[16px] font-extrabold text-ink">
-            安装服务器整合包
+            安装 World of Kivotos
           </h2>
           <p className="mt-1 text-[12.5px] leading-relaxed text-ink/75">
-            Aurora 会从地址读取版本要求，安装 Minecraft 与加载器，再用同一套同步流程写入整合包文件。
+            Aurora 会从服务器读取本期版本要求，装好 Minecraft 与加载器，再写入整合包文件。全程一步到位，装完即可开始游戏。
           </p>
         </div>
       </div>
 
       <div className="mt-5">
         <label htmlFor="modpack-pointer-url" className="text-[12px] font-bold text-ink/75">
-          整合包地址
+          整合包地址（默认指向官方服务器，测试服才需要改）
         </label>
         <div className="mt-1.5 flex gap-2">
           <input
             id="modpack-pointer-url"
             type="url"
             value={pointerUrl}
-            onChange={(event) => {
-              setPointerUrl(event.target.value);
-              setValidationError(null);
-            }}
+            onChange={(event) => changePointerUrl(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !running) submit();
             }}
@@ -195,10 +211,7 @@ export function ModpackInstallFlow({
               variant="secondary"
               className="shrink-0"
               disabled={running}
-              onClick={() => {
-                setPointerUrl(builtIn.pointer_url);
-                setValidationError(null);
-              }}
+              onClick={() => changePointerUrl(builtIn.pointer_url)}
             >
               使用{builtIn.label}
             </Button>
@@ -226,7 +239,7 @@ export function ModpackInstallFlow({
         <div className="mt-4 rounded-panel border border-ink/12 px-4 py-3.5" role="status">
           <div className="flex items-center gap-2.5 text-[13px] text-ink/75">
             <CheckIcon size={16} />
-            已创建实例 <span className="font-mono font-bold text-ink">{state.instance_id}</span>
+            游戏已装好 <span className="font-mono font-bold text-ink">{state.instance_id}</span>
             <span className="text-ink/75">整合包 {state.installed_version}</span>
           </div>
         </div>
@@ -235,7 +248,7 @@ export function ModpackInstallFlow({
       <div className="mt-5 flex items-center gap-3">
         {state.kind === "complete" && onOpenInstance ? (
           <Button variant="primary" onClick={() => onOpenInstance(state.instance_id)}>
-            打开实例
+            进入管理
           </Button>
         ) : (
           <Button
@@ -244,10 +257,10 @@ export function ModpackInstallFlow({
             disabled={running}
             onClick={submit}
           >
-            {running ? "正在安装" : state.kind === "failed" ? "重新安装" : "检查并安装"}
+            {running ? "正在安装" : state.kind === "failed" ? "重新安装" : "安装游戏"}
           </Button>
         )}
-        <span className="text-[11.5px] text-ink/75">安装与后续更新共用同一同步路径</span>
+        <span className="text-[11.5px] text-ink/75">安装与日后更新共用同一条同步路径</span>
       </div>
     </section>
   );

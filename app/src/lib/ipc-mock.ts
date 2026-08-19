@@ -111,74 +111,6 @@ function browserPreviewWriteError(targetVersion: string): ModpackSyncError {
   };
 }
 
-// 版本清单：Mojang version_manifest_v2 的真实子集（id / release_type / release_time 均为线上原值），
-// 四种 release_type 都覆盖到，好让类型筛选与日期排版在开发期就吃到真实形状。
-const MANIFEST_ROWS: [string, string, string][] = [
-  ["26.2", "release", "2026-06-16"],
-  ["26.1.2", "release", "2026-04-09"],
-  ["26.1.1", "release", "2026-04-01"],
-  ["26.1", "release", "2026-03-24"],
-  ["1.21.11", "release", "2025-12-09"],
-  ["1.21.10", "release", "2025-10-07"],
-  ["1.21.9", "release", "2025-09-30"],
-  ["1.21.8", "release", "2025-07-17"],
-  ["1.21.7", "release", "2025-06-30"],
-  ["1.21.6", "release", "2025-06-17"],
-  ["1.21.5", "release", "2025-03-25"],
-  ["1.21.4", "release", "2024-12-03"],
-  ["1.21.3", "release", "2024-10-23"],
-  ["1.21.2", "release", "2024-10-22"],
-  ["1.21.1", "release", "2024-08-08"],
-  ["1.21", "release", "2024-06-13"],
-  ["1.20.6", "release", "2024-04-29"],
-  ["1.20.5", "release", "2024-04-23"],
-  ["1.20.4", "release", "2023-12-07"],
-  ["1.20.3", "release", "2023-12-04"],
-  ["1.20.2", "release", "2023-09-20"],
-  ["1.20.1", "release", "2023-06-12"],
-  ["1.20", "release", "2023-06-02"],
-  ["1.19.4", "release", "2023-03-14"],
-  ["1.19.3", "release", "2022-12-07"],
-  ["1.19.2", "release", "2022-08-05"],
-  ["26.3-snapshot-6", "snapshot", "2026-07-28"],
-  ["26.3-snapshot-5", "snapshot", "2026-07-21"],
-  ["26.3-snapshot-4", "snapshot", "2026-07-16"],
-  ["26.3-snapshot-3", "snapshot", "2026-07-07"],
-  ["26.3-snapshot-2", "snapshot", "2026-06-30"],
-  ["26.3-snapshot-1", "snapshot", "2026-06-23"],
-  ["26.2-rc-2", "snapshot", "2026-06-12"],
-  ["26.2-rc-1", "snapshot", "2026-06-11"],
-  ["26.2-pre-6", "snapshot", "2026-06-10"],
-  ["26.2-pre-5", "snapshot", "2026-06-08"],
-  ["26.2-pre-4", "snapshot", "2026-06-04"],
-  ["26.2-pre-3", "snapshot", "2026-06-02"],
-  ["26.2-pre-2", "snapshot", "2026-05-28"],
-  ["26.2-pre-1", "snapshot", "2026-05-26"],
-  ["b1.8.1", "old_beta", "2011-09-18"],
-  ["b1.8", "old_beta", "2011-09-14"],
-  ["b1.7.3", "old_beta", "2011-07-07"],
-  ["b1.7.2", "old_beta", "2011-06-30"],
-  ["b1.7", "old_beta", "2011-06-29"],
-  ["b1.6.6", "old_beta", "2011-05-30"],
-  ["a1.2.6", "old_alpha", "2010-12-02"],
-  ["a1.2.5", "old_alpha", "2010-11-30"],
-  ["a1.2.4_01", "old_alpha", "2010-11-29"],
-  ["a1.2.3_04", "old_alpha", "2010-11-25"],
-];
-
-function manifest() {
-  const versions = MANIFEST_ROWS.map(([id, release_type, day]) => ({
-    id,
-    release_type,
-    url: `https://piston-meta.mojang.com/v1/packages/mock/${id}.json`,
-    time: day,
-    release_time: day,
-    sha1: null,
-    compliance_level: 1,
-  }));
-  return { latest: { release: "26.2", snapshot: "26.3-snapshot-6" }, versions };
-}
-
 // 搜索结果：Modrinth v2 search 各类型下载量 Top 8 的真实快照（标题/作者/下载量/图标 URL/分类均为线上原值）。
 // 用真图标而非造假数据，是为了让卡片排版在开发期就吃到真实的图片比例、长标题与中英混排。
 const SEARCH_HITS = [
@@ -1086,7 +1018,6 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
     authlib_login: ACCOUNTS[0],
     set_current_account: undefined,
     remove_account: undefined,
-    list_manifest: manifest(),
     install_version: { vanilla: { id: "1.21.1", libraries: 42, assets: 3200, natives: 6 }, loader: null },
     launch_game: { pid: 73136 },
     stop_game: undefined,

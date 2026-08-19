@@ -54,19 +54,3 @@ export function ResourceCardSkeleton({ delay = 0 }: { delay?: number }) {
     </div>
   );
 }
-
-/**
- * 版本格骨架：与 VersionTab 的版本格同尺寸、同圆角、同材质。
- *
- * 用寄生的 .surface-control 而不是自足材质：版本格是铺在一块 .surface-panel-strong 托底上的，
- * 骨架挂自足材质就成了玻璃叠玻璃（还多 12 块 backdrop-filter 白烧 GPU）。
- * 圆角同理跟着真格子取 rounded-control——差一档的话数据落位时整片格子的角会一起跳一下。
- */
-export function VersionCardSkeleton({ delay = 0 }: { delay?: number }) {
-  return (
-    <div className="surface-control rounded-control px-3.5 py-3">
-      <Skeleton className="h-[17px] w-20" delay={delay} />
-      <Skeleton className="mt-2 h-[11px] w-12" delay={delay + 0.08} />
-    </div>
-  );
-}

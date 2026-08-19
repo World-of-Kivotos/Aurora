@@ -73,21 +73,6 @@ export interface AccountDto {
   account_type: AccountType;
 }
 
-export interface ManifestVersionDto {
-  id: string;
-  release_type: string;
-  url: string;
-  time: string;
-  release_time: string;
-  sha1: string | null;
-  compliance_level: number | null;
-}
-
-export interface ManifestDto {
-  latest: { release: string; snapshot: string };
-  versions: ManifestVersionDto[];
-}
-
 export interface InstallOutcomeDto {
   vanilla: { id: string; libraries: number; assets: number; natives: number };
   loader: { id: string; loader_version: string; libraries: number } | null;
@@ -277,8 +262,6 @@ export const setCurrentAccount = (uuid: string): Promise<void> =>
   invoke("set_current_account", { uuid });
 
 export const removeAccount = (uuid: string): Promise<void> => invoke("remove_account", { uuid });
-
-export const listManifest = (): Promise<ManifestDto> => invoke<ManifestDto>("list_manifest");
 
 export const installVersion = (
   id: string,

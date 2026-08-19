@@ -1,6 +1,5 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import {
   ManagedModpackPanel,
@@ -9,8 +8,10 @@ import {
 } from "./ManagedModpackPanel";
 import { Button } from "./Button";
 import { ModpackInstallFlow } from "./ModpackInstallFlow";
-import { Download } from "../pages/Download";
-import { managedModpackInstallRoute } from "../lib/modpack-navigation";
+import {
+  managedModpackInstallIntent,
+  managedModpackInstallRoute,
+} from "../lib/modpack-navigation";
 import type { ManagedModpackStatus } from "../lib/modpack-ui";
 
 const READY: ManagedModpackStatus = {
@@ -54,10 +55,11 @@ describe("ManagedModpackPanel", () => {
     const html = renderToStaticMarkup(
       <ManagedModpackPanel
         status={READY}
+        instanceId="wok-1.20.1-forge"
         sync={{ kind: "idle" }}
         onCheck={() => undefined}
         onSync={() => undefined}
-        onInstallAsNew={() => undefined}
+        onInstallNewVersion={() => undefined}
       />,
     );
 
@@ -73,6 +75,7 @@ describe("ManagedModpackPanel", () => {
     const html = renderToStaticMarkup(
       <ManagedModpackPanel
         status={READY}
+        instanceId="wok-1.20.1-forge"
         sync={{
           kind: "failed",
           target_version: "2.0.0",
@@ -86,7 +89,7 @@ describe("ManagedModpackPanel", () => {
         }}
         onCheck={() => undefined}
         onSync={() => undefined}
-        onInstallAsNew={() => undefined}
+        onInstallNewVersion={() => undefined}
       />,
     );
 
@@ -95,12 +98,17 @@ describe("ManagedModpackPanel", () => {
     expect(html).toContain("重试同步");
   });
 
-  it("opens one-click installation after a conflict without retrying sync", () => {
+  // 冲突这一支的措辞必须被断言钉住：单实例收敛之后，这颗按钮装出来的实例会顶掉
+  // config.selected_version，旧实例目录留在磁盘上却再没有任何界面进得去。
+  // 一旦文案退回「作为新实例安装」这类并存承诺，玩家会以为随时切得回旧版本，
+  // 而这种误解在界面上是看不出来的——只能靠断言守住。
+  it("opens one-click installation after a conflict without promising the old instance stays reachable", () => {
     const onCheck = vi.fn();
     const onSync = vi.fn();
-    const onInstallAsNew = vi.fn();
+    const onInstallNewVersion = vi.fn();
     const panel = ManagedModpackPanel({
       status: READY,
+      instanceId: "wok-1.20.1-forge",
       sync: {
         kind: "failed",
         target_version: "2.0.0",
@@ -109,19 +117,22 @@ describe("ManagedModpackPanel", () => {
       },
       onCheck,
       onSync,
-      onInstallAsNew,
+      onInstallNewVersion,
     });
     const html = renderToStaticMarkup(panel);
 
     expect(html).toContain("整合包状态已变化");
-    expect(html).toContain("作为新实例安装");
+    expect(html).toContain("安装新版本");
+    expect(html).not.toContain("作为新实例安装");
+    expect(html).toContain("wok-1.20.1-forge");
+    expect(html).toContain("不再出现在启动器中");
     expect(html).not.toContain("重新检查");
     expect(html).not.toContain("重试同步");
 
-    const installButton = findButton(panel, "作为新实例安装");
+    const installButton = findButton(panel, "安装新版本");
     expect(installButton).not.toBeNull();
     installButton?.props.onClick?.();
-    expect(onInstallAsNew).toHaveBeenCalledOnce();
+    expect(onInstallNewVersion).toHaveBeenCalledOnce();
     expect(onCheck).not.toHaveBeenCalled();
     expect(onSync).not.toHaveBeenCalled();
   });
@@ -145,11 +156,40 @@ describe("ManagedModpackPanel", () => {
   });
 });
 
+const BUILT_IN = {
+  label: "WOK 地址",
+  pointer_url: "https://api.mcwok.cn/api/v1/pack/latest",
+};
+
+/**
+ * 深链落点的真实装配：启动屏读地址栏走 managedModpackInstallIntent，
+ * 读出来的两个信号（要不要展开、预填什么）原样喂给这块面板，这里把那两步接起来跑。
+ *
+ * 不直接渲染 <Home />：它挂在 Toast 与 Appearance 两个 Provider 上，
+ * 而 ToastProvider 会 createPortal 到 document.body，renderToStaticMarkup 渲不出来。
+ */
+function renderRoutedInstaller(route: string) {
+  const parsedRoute = new URL(route, "https://aurora.local");
+  const intent = managedModpackInstallIntent(parsedRoute.searchParams);
+  return {
+    parsedRoute,
+    intent,
+    html: renderToStaticMarkup(
+      <ModpackInstallFlow
+        builtIn={BUILT_IN}
+        initialPointerUrl={intent.pointerUrl ?? undefined}
+        state={{ kind: "idle" }}
+        onInstall={() => undefined}
+      />,
+    ),
+  };
+}
+
 describe("ModpackInstallFlow", () => {
   it("offers the built-in pointer and the full one-click install sequence", () => {
     const html = renderToStaticMarkup(
       <ModpackInstallFlow
-        builtIn={{ label: "WOK 地址", pointer_url: "https://api.mcwok.cn/api/v1/pack/latest" }}
+        builtIn={BUILT_IN}
         state={{ kind: "idle" }}
         onInstall={() => undefined}
       />,
@@ -160,29 +200,29 @@ describe("ModpackInstallFlow", () => {
     expect(html).toContain("安装 Minecraft");
     expect(html).toContain("安装加载器");
     expect(html).toContain("同步整合包");
-    expect(html).toContain("检查并安装");
+    expect(html).toContain("安装游戏");
   });
 
   it("renders the real one-click installer at the conflict destination", () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={["/download?tab=modpack"]}>
-        <Download />
-      </MemoryRouter>,
+    const { parsedRoute, intent, html } = renderRoutedInstaller(
+      managedModpackInstallRoute("https://api.mcwok.cn/api/v1/pack/latest"),
     );
 
-    expect(html).toContain("安装服务器整合包");
-    expect(html).toContain("https://api.mcwok.cn/api/v1/pack/latest");
-    expect(html).toContain("检查并安装");
+    // 冲突时游戏通常已经装着，启动屏必须凭 requested 展开面板，而不是凭「没装游戏」。
+    expect(parsedRoute.pathname).toBe("/");
+    expect(intent.requested).toBe(true);
+    expect(html).toContain("安装 World of Kivotos");
+    expect(html).toContain('value="https://api.mcwok.cn/api/v1/pack/latest"');
+    expect(html).toContain("安装游戏");
   });
 
   it("prefills the subscribed custom pointer and keeps the built-in reset", () => {
     const pointerUrl = "https://packs.example.test/latest?channel=beta";
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={[managedModpackInstallRoute(pointerUrl)]}>
-        <Download />
-      </MemoryRouter>,
+    const { intent, html } = renderRoutedInstaller(
+      managedModpackInstallRoute(pointerUrl),
     );
 
+    expect(intent.requested).toBe(true);
     expect(html).toContain(`value="${pointerUrl}"`);
     expect(html).toContain("使用WOK 地址");
   });
@@ -191,12 +231,12 @@ describe("ModpackInstallFlow", () => {
     "https://user:secret@packs.example.test/latest",
     "https://packs.example.test/latest#release",
   ])("falls back to WOK when the routed pointer is not safe: %s", (pointerUrl) => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={[managedModpackInstallRoute(pointerUrl)]}>
-        <Download />
-      </MemoryRouter>,
+    const { intent, html } = renderRoutedInstaller(
+      managedModpackInstallRoute(pointerUrl),
     );
 
+    // 地址被判不可信也照样开面板：人是来装游戏的，只是这条地址不能用。
+    expect(intent.requested).toBe(true);
     expect(html).toContain('value="https://api.mcwok.cn/api/v1/pack/latest"');
     expect(html).not.toContain(`value="${pointerUrl}"`);
   });

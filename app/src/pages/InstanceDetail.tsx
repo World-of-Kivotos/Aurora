@@ -1,10 +1,12 @@
-// 实例卷宗页：一个已装实例的三面——概览（身份 / 版本级设置 / 待处理清单）、内容（Mod 清单）、变更史（事件流与回滚）。
+// 实例卷宗页：那一个已装实例的三面——概览（身份 / 实例设置 / 待处理清单）、内容（Mod 清单）、变更史（事件流与回滚）。
+// 单实例契约：Aurora 只管 World of Kivotos 一个实例，路由 /instance 不带参数，实例 id 取自 config.selected_version。
+// 实例的唯一产生途径是安装受管整合包，所以「没有实例」等于「游戏还没装」，空态一律把人送回启动屏而不是某个列表页。
 // 地基纪律：磁盘是权威、卷宗只是索引。内容 tab 以 listMods 的扫盘结果为准，listLedger 只负责把身份贴上去；
 // 卷宗里有、磁盘上没有的条目一概不显示（那是残留索引，不是已装内容）。
 // 崩溃诊断刻意不单独占 tab：它是「上次运行留下的线索」而非常驻功能区，只在概览顶部出一条提示条。
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Button } from "../components/Button";
@@ -30,6 +32,7 @@ import { pageItem, springs } from "../lib/motion";
 import {
   backupSize,
   checkUpdates,
+  getConfig,
   getVersionSettings,
   identifyInstalledMods,
   lastCrash,
@@ -349,7 +352,8 @@ function CrashBanner({ report }: { report: CrashReport }) {
 // ============ 概览 ============
 interface OverviewProps {
   versionId: string;
-  identity: InstalledVersionDto | null;
+  /** 页面已在渲染前用扫盘结果确认过实例存在，这里必然拿得到身份，不再有「不在已安装列表中」这一态。 */
+  identity: InstalledVersionDto;
   settings: VersionSettingsDto;
   crash: CrashReport | null;
   updatableCount: number;
@@ -417,14 +421,8 @@ function OverviewTab({
           <span className="text-[21px] leading-tight font-extrabold tracking-[-0.01em] tabular-nums">
             {versionId}
           </span>
-          {identity ? (
-            <>
-              <Tag>MC {identity.mc_version}</Tag>
-              <Tag>{loaderText(identity)}</Tag>
-            </>
-          ) : (
-            <Tag tone="accent">不在已安装列表中</Tag>
-          )}
+          <Tag>MC {identity.mc_version}</Tag>
+          <Tag>{loaderText(identity)}</Tag>
           <Tag tone={settings.isolated ? "accent" : "plain"}>
             {settings.isolated ? "隔离" : "共享"}
           </Tag>
@@ -446,9 +444,9 @@ function OverviewTab({
         )}
       </div>
 
-      {/* 版本级设置：整体覆盖语义，读出完整对象改完写回。 */}
+      {/* 实例设置：整体覆盖语义，读出完整对象改完写回。 */}
       <div className="mt-7">
-        <SectionTitle title="版本级设置" />
+        <SectionTitle title="实例设置" />
         <Card>
           <SettingRow
             title="描述"
@@ -466,18 +464,9 @@ function OverviewTab({
               />
             }
           />
-          <SettingRow
-            title="收藏"
-            desc="收藏的实例排在版本列表前面"
-            control={
-              <Toggle
-                checked={settings.favorite}
-                onChange={(next) => void commit({ favorite: next })}
-                disabled={saving}
-                ariaLabel="收藏该实例"
-              />
-            }
-          />
+          {/* 「收藏」这一档随版本列表一起下线：它的唯一效果是把实例排到列表前面，
+              单实例下既无列表也无排序，留一个改了什么都不会发生的开关比不给更糟。
+              后端字段不动，saveSettings 每次都把原值原样写回，将来若要恢复不丢数据。 */}
           <SettingRow
             title="版本隔离"
             desc="覆盖全局隔离档位，决定存档与 Mod 落在版本目录还是共享的 .minecraft 根目录"
@@ -675,7 +664,7 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
 
       {rows.length === 0 ? (
         <div className="surface-panel rounded-panel px-[18px] py-2">
-          <EmptyState icon={<PackageIcon />} title="这个实例的 mods 目录还是空的" />
+          <EmptyState icon={<PackageIcon />} title="mods 目录还是空的" />
         </div>
       ) : filter === "updatable" ? (
         // 「可更新」这一档交给 UpdatePanel：它带勾选、风险确认与批量执行，
@@ -847,7 +836,7 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
     <div className="flex min-h-full min-w-0 flex-col">
       {events.length === 0 ? (
         <div className="surface-panel rounded-panel px-[18px] py-2">
-          <EmptyState icon={<LayersIcon />} title="这个实例还没有留下任何变更记录" />
+          <EmptyState icon={<LayersIcon />} title="还没有留下任何变更记录" />
         </div>
       ) : (
         // 事件流同样是连续扫读的长列表，与 Mod 清单取同一档托底，两个 tab 之间不出现材质跳档。
@@ -961,7 +950,7 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
 // ============ 页面 ============
 /** 一次读齐的实例卷宗。除更新检查（要走网络）外都是本地读取，一并 Promise.all 拿回来。 */
 interface Dossier {
-  identity: InstalledVersionDto | null;
+  identity: InstalledVersionDto;
   settings: VersionSettingsDto;
   mods: InstalledMod[];
   ledger: Ledger;
@@ -971,11 +960,23 @@ interface Dossier {
   crash: CrashReport | null;
 }
 
+/**
+ * 实例的解析结果。四态分开而不是用一个可空 id 混着表达：
+ * resolving 与 absent 长得像却是两件事——前者是还没读到 config，此时画「游戏没装」就是在骗人。
+ */
+type Resolution =
+  | { kind: "resolving" }
+  | { kind: "failed"; message: string }
+  | { kind: "absent" }
+  | { kind: "ready"; versionId: string };
+
 export function InstanceDetail() {
-  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const versionId = id ?? "";
+
+  const [resolution, setResolution] = useState<Resolution>({ kind: "resolving" });
+  // 未就绪时给空串：下面每个按实例取数的回调都以此短路，省掉一层「id 可能为空」的分支。
+  const versionId = resolution.kind === "ready" ? resolution.versionId : "";
 
   const [tab, setTab] = useState<TabKey>("overview");
   const [modFilter, setModFilter] = useState<ModFilter>("all");
@@ -993,12 +994,39 @@ export function InstanceDetail() {
   const [managedFilesError, setManagedFilesError] = useState<string | null>(null);
   const [modpackSync, setModpackSync] = useState<ModpackSyncState>({ kind: "idle" });
 
+  // 实例 id 来自 config，与磁盘状态是两回事：整合包装到一半失败、玩家手删版本目录，config 都还留着旧 id。
+  // 所以解析只负责取 id，是否真的存在一律由 load() 的扫盘结果说了算。
+  const resolve = useCallback(async () => {
+    setResolution({ kind: "resolving" });
+    try {
+      const cfg = await getConfig();
+      // 空串与 null 同义，都表示还没选中任何实例；漏掉空串会让下面全部取数被空 id 短路，卡在半张页面上。
+      const selected = cfg.selected_version;
+      setResolution(
+        selected === null || selected === ""
+          ? { kind: "absent" }
+          : { kind: "ready", versionId: selected },
+      );
+    } catch (e) {
+      setResolution({ kind: "failed", message: String(e) });
+    }
+  }, []);
+
   const load = useCallback(async () => {
     if (!versionId) return;
     setError(null);
     try {
-      const [scan, settings, mods, ledger, history, checks, backupBytes, crash] = await Promise.all([
-        listInstalled(),
+      // 先单独扫盘复核：id 指向的实例可能已经不在磁盘上，那时后面按版本读的七个调用全无意义，
+      // 且其中任何一个抛错都会被画成「读取失败」，把「游戏没装」这件事说成了故障。
+      const scan = await listInstalled();
+      const identity = scan.versions.find((v) => v.id === versionId) ?? null;
+      if (identity === null) {
+        setData(null);
+        setResolution({ kind: "absent" });
+        return;
+      }
+
+      const [settings, mods, ledger, history, checks, backupBytes, crash] = await Promise.all([
         getVersionSettings(versionId),
         listMods(versionId),
         listLedger(versionId),
@@ -1008,7 +1036,7 @@ export function InstanceDetail() {
         lastCrash(versionId),
       ]);
       setData({
-        identity: scan.versions.find((v) => v.id === versionId) ?? null,
+        identity,
         settings,
         mods,
         ledger,
@@ -1066,6 +1094,11 @@ export function InstanceDetail() {
       setManagedFilesError(String(e));
     }
   }, [versionId]);
+
+  // 先解析实例 id。下面那个 effect 的四个回调都以空 id 短路，id 落定后依赖变化会自动跑第二轮真正取数。
+  useEffect(() => {
+    void resolve();
+  }, [resolve]);
 
   useEffect(() => {
     setModpackSync({ kind: "idle" });
@@ -1181,15 +1214,42 @@ export function InstanceDetail() {
 
   const updatableCount = useMemo(() => rows.filter((r) => r.update).length, [rows]);
 
-  if (!versionId) {
-    // EmptyState 是内容片段不是容器（见组件头注），自己不带材质。同文件另外四处调用都包了一层，
-    // 唯独这条早退分支漏了——main 刻意不挂材质，漏包就等于这段字直接坐在照片上。
+  if (resolution.kind === "resolving") {
+    // 读 config 是本地调用，通常一闪而过；仍要占位，否则会先闪一下空态再跳出卷宗。
+    return (
+      <motion.div variants={pageItem} className="flex flex-col gap-3">
+        <Skeleton className="h-[92px] w-full" />
+        <Skeleton className="h-[160px] w-full" delay={0.08} />
+      </motion.div>
+    );
+  }
+
+  if (resolution.kind === "failed") {
+    return (
+      <motion.div
+        variants={pageItem}
+        className={`${dangerBar} flex items-center gap-3 text-[13px] text-danger`}
+        role="alert"
+      >
+        <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
+        <AlertIcon size={18} />
+        <span className="flex-1">读取启动器配置失败，无法确定要打开哪个实例：{resolution.message}</span>
+        <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={() => void resolve()}>
+          重试
+        </Button>
+      </motion.div>
+    );
+  }
+
+  if (resolution.kind === "absent") {
+    // 单实例下没有实例就等于没装游戏，而装游戏的唯一入口在启动屏（受管整合包），所以这里只给这一个出口。
+    // EmptyState 是内容片段不是容器（见组件头注），自己不带材质，main 也刻意不挂，故必须包一层。
     return (
       <motion.div variants={pageItem} className="surface-panel rounded-panel px-[18px] py-2">
         <EmptyState
-          icon={<AlertIcon />}
-          title="路由里没有实例 id，无法打开卷宗"
-          action={{ label: "返回版本列表", onClick: () => navigate("/versions") }}
+          icon={<PackageIcon />}
+          title="World of Kivotos 还没有安装，暂时没有卷宗可看"
+          action={{ label: "去启动屏安装", onClick: () => navigate("/") }}
         />
       </motion.div>
     );
@@ -1202,12 +1262,13 @@ export function InstanceDetail() {
       <motion.div variants={pageItem} className="surface-panel mb-5 rounded-panel px-5 pt-4 pb-3">
         <div className="flex items-baseline justify-between gap-6">
           <div className="flex min-w-0 items-baseline gap-4">
+            {/* 版本列表页已下线，这条返回只能指回启动屏——它是这个专用启动器唯一的上一级。 */}
             <button
               type="button"
-              onClick={() => navigate("/versions")}
+              onClick={() => navigate("/")}
               className="shrink-0 cursor-pointer text-[12px] font-semibold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
-              版本
+              启动屏
             </button>
             <h1 className="truncate text-[20px] font-extrabold tracking-[-0.01em] tabular-nums">
               {versionId}
@@ -1324,13 +1385,14 @@ export function InstanceDetail() {
                     <div className="mb-5">
                       <ManagedModpackPanel
                         status={managedStatus}
+                        instanceId={versionId}
                         sync={modpackSync}
                         onCheck={() => {
                           setModpackSync({ kind: "idle" });
                           void loadManagedStatus(true);
                         }}
                         onSync={(targetVersion) => void runModpackSync(targetVersion)}
-                        onInstallAsNew={() =>
+                        onInstallNewVersion={() =>
                           navigate(managedModpackInstallRoute(managedStatus.subscription.pointer_url))
                         }
                       />

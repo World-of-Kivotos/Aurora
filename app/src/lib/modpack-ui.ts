@@ -291,7 +291,8 @@ export function presentSyncFailure(failure: ModpackSyncFailure): SyncFailurePres
       return {
         title: "整合包状态已变化",
         reason: failure.detail,
-        action: "当前实例不能安全地原地应用此次变更。请作为新实例安装，现有实例与玩家数据会保留。",
+        action:
+          "当前实例不能安全地原地应用此次变更。需要按新清单另装一个实例，装好后启动器改认新的那一个；当前实例的文件会留在磁盘上，但不再出现在启动器中。",
       };
     case "filesystem":
       return {

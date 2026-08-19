@@ -10,7 +10,6 @@ import { AppShell } from "./components/AppShell";
 import { FirstRunWizard } from "./components/FirstRunWizard";
 import { Home } from "./pages/Home";
 import { Account } from "./pages/Account";
-import { Versions } from "./pages/Versions";
 import { InstanceDetail } from "./pages/InstanceDetail";
 import { Download } from "./pages/Download";
 import { Settings } from "./pages/Settings";
@@ -53,9 +52,10 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route index element={<Home />} />
               <Route path="account" element={<Account />} />
-              <Route path="versions" element={<Versions />} />
-              {/* 实例卷宗：id 即版本目录名，可能含空格与中文，路由参数天然承载不需要额外编码。 */}
-              <Route path="versions/:id" element={<InstanceDetail />} />
+              {/* 实例卷宗。Aurora 收敛成 World of Kivotos 专用启动器后全程只有一个实例，
+                  它的 id 存在后端 config 的 selected_version 里，所以这条路由不带参数：
+                  「装到哪」「管哪一台」都只有一个答案，把 id 写进地址栏只会多出一个可以对不上的副本。 */}
+              <Route path="instance" element={<InstanceDetail />} />
               <Route path="download" element={<Download />} />
               <Route path="settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />
