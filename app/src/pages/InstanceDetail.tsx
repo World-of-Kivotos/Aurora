@@ -78,8 +78,14 @@ const TABS: { key: TabKey; label: string; icon: typeof CubeIcon }[] = [
 /** 同行控件统一 40px 高，与下载页一致。 */
 const CTRL = "h-10";
 
+// 输入框走下沉档：它是寄生层，只能套在自足材质里（本页所有输入框都在 Card 或工具条面板内）。
+// 描边焊在材质里，所以这里不再写 border，也不靠 border 表达聚焦——聚焦只由 outline 承担，玻璃上仍可见。
 const inputCls =
-  "w-full rounded-control border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full surface-sunken rounded-control px-3.5 py-2.5 text-[14px] text-ink outline-none placeholder:text-ink/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+
+// 危险提示条：底仍是面板档（图上要能读），危险度只由左缘竖条与文字色承担。
+// 材质类把描边与投影焊在 box-shadow 里且属于无层 CSS，工具类的 ring/border 压不过它，故用实体竖条。
+const dangerBar = "surface-panel relative overflow-hidden rounded-panel px-4 py-3";
 
 const ISOLATION_OPTIONS: { value: IsolationOverride; label: string }[] = [
   { value: "follow_global", label: "跟随全局" },
@@ -138,14 +144,14 @@ function SearchField({
 }) {
   return (
     <div className={`relative ${className}`}>
-      <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink/30">
+      <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink/60">
         <SearchIcon size={16} />
       </span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`${CTRL} w-full rounded-control border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
+        className={`${CTRL} surface-sunken w-full rounded-control pr-3 pl-9 text-[14px] text-ink outline-none placeholder:text-ink/75 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
       />
     </div>
   );
@@ -166,7 +172,7 @@ function Segmented<T extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={`${CTRL} flex shrink-0 items-center gap-1 rounded-control bg-ink/[0.05] p-1`}
+      className={`${CTRL} surface-sunken flex shrink-0 items-center gap-1 rounded-control p-1`}
     >
       {options.map((o) => {
         const on = o.value === value;
@@ -178,13 +184,16 @@ function Segmented<T extends string>({
             aria-pressed={on}
             className={[
               "relative h-full cursor-pointer rounded-chip px-3 text-[13px] font-bold transition-colors",
-              on ? "text-paper-on" : "text-ink/60 hover:text-ink/75",
+              "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
+              on ? "text-ink" : "text-ink/75 hover:text-ink",
             ].join(" ")}
           >
             {on && (
+              // 分段控件的选中页是液态玻璃的四个白名单之一：小面积，滤镜成本可控。
+              // 套在下沉轨里，按「纸对纸无影」摘掉投影；剩下的受光边与高光足以读出「浮起的那一页」。
               <motion.span
                 layoutId={`seg-${ariaLabel}`}
-                className="absolute inset-0 rounded-chip bg-ink"
+                className="surface-liquid surface-nested absolute inset-0 rounded-chip"
                 transition={springs.tap}
               />
             )}
@@ -198,10 +207,10 @@ function Segmented<T extends string>({
 
 /** 元信息小标签：发丝底、无色彩语义，用于 MC 版本 / 加载器 / 平台这类事实性标注。 */
 function Tag({ children, tone = "plain" }: { children: ReactNode; tone?: "plain" | "accent" }) {
-  const cls =
-    tone === "accent"
-      ? "bg-accent/12 text-accent"
-      : "bg-ink/[0.07] text-ink/60";
+  // 素色档走下沉材质而不是自拌一层半透明底：小记号也在照片上，底色必须由材质层统一给。
+  // 强调档走实心 accent + 纸色字（4.77）：淡底配朱红字是全站最不该读不清的地方里最不清的一档
+  // （面板上 2.93，密集档 3.63），而这枚标签承载的是「不在已安装列表中」「可更新」这类结论。
+  const cls = tone === "accent" ? "bg-accent text-paper-on" : "surface-sunken text-ink/75";
   return (
     <span className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] font-semibold ${cls}`}>
       {children}
@@ -212,8 +221,8 @@ function Tag({ children, tone = "plain" }: { children: ReactNode; tone?: "plain"
 function SectionTitle({ title, note }: { title: string; note?: string }) {
   return (
     <h2 className="mb-3 flex items-baseline gap-3">
-      <span className="text-[11px] font-bold tracking-[0.22em] text-ink/60">{title}</span>
-      {note && <span className="text-[12px] text-ink/60">{note}</span>}
+      <span className="text-[11px] font-bold tracking-[0.22em] text-ink/75">{title}</span>
+      {note && <span className="text-[12px] text-ink/75">{note}</span>}
     </h2>
   );
 }
@@ -231,7 +240,7 @@ function SettingRow({
     <div className="flex items-center justify-between gap-6 border-b border-ink/9 py-[18px] first:pt-0 last:border-b-0 last:pb-0">
       <div className="min-w-0">
         <div className="text-[15px] font-bold">{title}</div>
-        <div className="mt-1 text-[12.5px] text-ink/60">{desc}</div>
+        <div className="mt-1 text-[12.5px] text-ink/75">{desc}</div>
       </div>
       <div className="shrink-0">{control}</div>
     </div>
@@ -256,17 +265,14 @@ function CrashBanner({ report }: { report: CrashReport }) {
   };
 
   return (
-    <div
-      className={[
-        "rounded-panel border px-4 py-3",
-        alarming ? "border-danger/35 bg-danger/[0.04]" : "border-ink/12 bg-paper-sink",
-      ].join(" ")}
-    >
+    <div className={dangerBar}>
+      {/* 有线索才亮红：竖条是这条提示条唯一的危险语义载体，无线索时整条退回中性面板。 */}
+      {alarming && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />}
       <div className="flex items-center gap-3">
         <span className={alarming ? "text-danger" : "text-ink/60"}>
           <AlertIcon size={18} />
         </span>
-        <span className={`flex-1 text-[13px] ${alarming ? "text-danger" : "text-ink/60"}`}>
+        <span className={`flex-1 text-[13px] ${alarming ? "text-danger" : "text-ink/75"}`}>
           {alarming
             ? `上次运行的日志里读出 ${findings} 条线索`
             : "上次运行的日志已归档，未读出已知的异常线索"}
@@ -284,7 +290,7 @@ function CrashBanner({ report }: { report: CrashReport }) {
       </div>
 
       {report.log_path && (
-        <p className="mt-2 truncate font-mono text-[11px] text-ink/60" title={report.log_path}>
+        <p className="mt-2 truncate font-mono text-[11px] text-ink/75" title={report.log_path}>
           {report.log_path}
         </p>
       )}
@@ -307,11 +313,11 @@ function CrashBanner({ report }: { report: CrashReport }) {
                         <span className="text-[14px] font-bold text-ink">{d.summary}</span>
                         <Tag>{d.category}</Tag>
                       </div>
-                      <p className="mt-1 text-[12.5px] text-ink/60">{d.advice}</p>
+                      <p className="mt-1 text-[12.5px] text-ink/75">{d.advice}</p>
                       {d.detail && (
-                        <p className="mt-1 font-mono text-[11.5px] text-ink/60">{d.detail}</p>
+                        <p className="mt-1 font-mono text-[11.5px] text-ink/75">{d.detail}</p>
                       )}
-                      <p className="mt-1 truncate font-mono text-[11px] text-ink/60" title={d.matched}>
+                      <p className="mt-1 truncate font-mono text-[11px] text-ink/75" title={d.matched}>
                         {d.matched}
                       </p>
                     </li>
@@ -326,7 +332,7 @@ function CrashBanner({ report }: { report: CrashReport }) {
                     {report.suspects.map((s) => (
                       <li key={s.mod_id} className="py-1 text-[13px] text-ink/75">
                         日志指向 <span className="font-mono">{s.file_name ?? s.mod_id}</span>
-                        {s.file_name && <span className="ml-2 text-[11.5px] text-ink/60">{s.mod_id}</span>}
+                        {s.file_name && <span className="ml-2 text-[11.5px] text-ink/75">{s.mod_id}</span>}
                       </li>
                     ))}
                   </ul>
@@ -406,7 +412,7 @@ function OverviewTab({
       )}
 
       {/* 身份条：这个实例「是谁、文件落在哪」，常驻概览顶部。 */}
-      <div className="rounded-panel border border-ink/12 bg-paper-sink px-[18px] py-4">
+      <div className="surface-panel rounded-panel px-[18px] py-4">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
           <span className="text-[21px] leading-tight font-extrabold tracking-[-0.01em] tabular-nums">
             {versionId}
@@ -425,14 +431,16 @@ function OverviewTab({
         </div>
 
         <div className="mt-3 flex items-baseline gap-3">
-          <span className="shrink-0 text-[11px] font-bold tracking-[0.18em] text-ink/60">工作目录</span>
+          <span className="shrink-0 text-[11px] font-bold tracking-[0.18em] text-ink/75">工作目录</span>
           <span className="min-w-0 flex-1 font-mono text-[12px] break-all text-ink/75">
             {settings.working_dir}
           </span>
         </div>
 
+        {/* 这句原来是朱红字，在面板玻璃上实算 3.40，正文门槛过不了。整句都是要读的内容而不是记号，
+            所以强调改由字重承担：周围是 ink/75，这里满墨加粗，层级差得出来且对比度回到 11.76。 */}
         {settings.forced_by_local_data && (
-          <p className="mt-2 text-[12px] text-accent">
+          <p className="mt-2 text-[12px] font-semibold text-ink">
             因目录内已有存档或 Mod 被强制隔离——此时把覆盖设为「不隔离」也不会生效。
           </p>
         )}
@@ -512,7 +520,7 @@ function OverviewTab({
               <Skeleton className="ml-auto h-9 w-20" />
             </div>
           ) : updatableCount === 0 ? (
-            <p className="text-[13px] text-ink/60">暂无待处理项。</p>
+            <p className="text-[13px] text-ink/75">暂无待处理项。</p>
           ) : (
             <ul className="m-0 list-none p-0">
               <li className="flex items-center justify-between gap-4">
@@ -643,12 +651,14 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
   return (
     <div className="min-w-0">
       {ownershipError && (
-        <div className="mb-4 flex items-center gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3 text-[13px] text-danger" role="alert">
+        <div className={`${dangerBar} mb-4 flex items-center gap-3 text-[13px] text-danger`} role="alert">
+          <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
           <AlertIcon size={18} />
           <span>无法确认整合包文件归属：{ownershipError}。为避免误改受管文件，管理开关已停用。</span>
         </div>
       )}
-      <div className="mb-4 flex items-center gap-3">
+      {/* 工具条自成一块面板：搜索框与分段轨都是寄生层，没有这层自足材质它们就直接压在照片上。 */}
+      <div className="surface-panel mb-4 flex items-center gap-3 rounded-panel px-3 py-3">
         <SearchField
           value={search}
           onChange={setSearch}
@@ -664,7 +674,9 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
       </div>
 
       {rows.length === 0 ? (
-        <EmptyState icon={<PackageIcon />} title="这个实例的 mods 目录还是空的" />
+        <div className="surface-panel rounded-panel px-[18px] py-2">
+          <EmptyState icon={<PackageIcon />} title="这个实例的 mods 目录还是空的" />
+        </div>
       ) : filter === "updatable" ? (
         // 「可更新」这一档交给 UpdatePanel：它带勾选、风险确认与批量执行，
         // 让这一档从只能看变成能动手，否则更新检查查出来也没有下一步。
@@ -675,9 +687,12 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
           onUpdated={() => void onReload()}
         />
       ) : shown.length === 0 ? (
-        <EmptyState icon={<SearchIcon />} title="没有匹配的内容" />
+        <div className="surface-panel rounded-panel px-[18px] py-2">
+          <EmptyState icon={<SearchIcon />} title="没有匹配的内容" />
+        </div>
       ) : (
-        <ul className="m-0 list-none p-0">
+        // Mod 清单是要长时间连续扫读的长列表，托最实的一档：ink/75 在它上面拿到 7.20，越过 AAA。
+        <ul className="surface-panel-strong m-0 list-none rounded-panel px-[18px] py-1">
           {shown.map((r) => {
             const meta = r.mod.metadata;
             const title = meta?.name ?? meta?.mod_id ?? r.key;
@@ -688,18 +703,20 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                    {/* 已禁用只靠一档灰度表达。15px 粗体属「大字」，ink/60 门槛是 3.0，
+                        在最实那档托底上实得 4.43，是全表里少数还能合法留在 ink/60 的位置。 */}
                     <span
                       className={`truncate text-[15px] font-bold ${r.mod.enabled ? "text-ink" : "text-ink/60"}`}
                     >
                       {title}
                     </span>
-                    {meta?.version && <span className="text-[12px] text-ink/60">{meta.version}</span>}
+                    {meta?.version && <span className="text-[12px] text-ink/75">{meta.version}</span>}
                     {meta && <Tag>{meta.loader}</Tag>}
                     {r.owner && <ModpackFileOwnership owner={r.owner} />}
                     {r.update && <Tag tone="accent">可更新 {r.update.latest.version_number}</Tag>}
                   </div>
 
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-ink/60">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-ink/75">
                     <span className="truncate font-mono">{r.mod.file_name}</span>
                     {r.entry ? (
                       <>
@@ -709,12 +726,14 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
                       </>
                     ) : (
                       <>
-                        <span className="text-ink/60">来源未知</span>
+                        <span>来源未知</span>
                         <button
                           type="button"
                           onClick={() => void identify()}
                           disabled={identifying}
-                          className="cursor-pointer font-semibold text-accent underline-offset-2 transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                          // 文字按钮的可点感原来靠朱红字，而 accent 在这档托底上只有 4.29，不到正文的 4.5。
+                          // 改成满墨常驻下划线：affordance 由下划线给，颜色回到全档通吃的满墨。
+                          className="cursor-pointer font-semibold text-ink underline underline-offset-2 transition-opacity hover:decoration-2 disabled:pointer-events-none disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
                         >
                           {identifying ? "识别中" : "识别"}
                         </button>
@@ -827,9 +846,12 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
   return (
     <div className="flex min-h-full min-w-0 flex-col">
       {events.length === 0 ? (
-        <EmptyState icon={<LayersIcon />} title="这个实例还没有留下任何变更记录" />
+        <div className="surface-panel rounded-panel px-[18px] py-2">
+          <EmptyState icon={<LayersIcon />} title="这个实例还没有留下任何变更记录" />
+        </div>
       ) : (
-        <ul className="m-0 list-none p-0">
+        // 事件流同样是连续扫读的长列表，与 Mod 清单取同一档托底，两个 tab 之间不出现材质跳档。
+        <ul className="surface-panel-strong m-0 list-none rounded-panel px-[18px] py-1">
           {events.map((e) => {
             const check = checkOf.get(e.id);
             const files = eventFiles(e);
@@ -842,16 +864,16 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                     <span className="text-[15px] font-bold">{EVENT_LABEL[e.kind]}</span>
-                    <span className="font-mono text-[12px] text-ink/60 tabular-nums">{fmtTime(e.at)}</span>
-                    {detail && <span className="font-mono text-[12px] text-ink/60">{detail}</span>}
+                    <span className="font-mono text-[12px] text-ink/75 tabular-nums">{fmtTime(e.at)}</span>
+                    {detail && <span className="font-mono text-[12px] text-ink/75">{detail}</span>}
                   </div>
                   {files.length > 0 && (
-                    <p className="mt-1 font-mono text-[11.5px] break-all text-ink/60">
+                    <p className="mt-1 font-mono text-[11.5px] break-all text-ink/75">
                       {files.join("、")}
                     </p>
                   )}
                   {check && !check.can_rollback && check.reason && (
-                    <p className="mt-1 text-[11.5px] text-ink/60">{check.reason}</p>
+                    <p className="mt-1 text-[11.5px] text-ink/75">{check.reason}</p>
                   )}
                 </div>
 
@@ -871,12 +893,13 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
         </ul>
       )}
 
-      {/* 备份是实打实的磁盘占用，常驻页尾显式告知，不让它在暗处自己长。 */}
-      <div className="mt-auto flex items-center gap-4 border-t border-ink/12 pt-4">
-        <span className="text-[13px] text-ink/60">
+      {/* 备份是实打实的磁盘占用，常驻页尾显式告知，不让它在暗处自己长。
+          它与上面的列表之间隔着一段留白，压的是照片而不是列表，所以要自带一层材质而非只留一条分隔线。 */}
+      <div className="surface-panel mt-auto flex items-center gap-4 rounded-panel px-[18px] py-3.5">
+        <span className="text-[13px] text-ink/75">
           备份占用 <span className="font-mono font-bold text-ink tabular-nums">{fmtBytes(backupBytes)}</span>
         </span>
-        <span className="text-[12px] text-ink/60">
+        <span className="text-[12px] text-ink/75">
           {rollbackable.length > 0
             ? `${rollbackable.length} 个事件仍可回滚`
             : "当前没有可回滚的事件"}
@@ -921,7 +944,7 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
             <p className="mt-3">清理后，以下事件将无法再回滚：</p>
             <ul className="mt-2 list-none p-0">
               {rollbackable.map((c) => (
-                <li key={c.event_id} className="font-mono text-[12.5px] text-ink/60">
+                <li key={c.event_id} className="font-mono text-[12.5px] text-ink/75">
                   {c.event_id}
                 </li>
               ))}
@@ -1159,8 +1182,10 @@ export function InstanceDetail() {
   const updatableCount = useMemo(() => rows.filter((r) => r.update).length, [rows]);
 
   if (!versionId) {
+    // EmptyState 是内容片段不是容器（见组件头注），自己不带材质。同文件另外四处调用都包了一层，
+    // 唯独这条早退分支漏了——main 刻意不挂材质，漏包就等于这段字直接坐在照片上。
     return (
-      <motion.div variants={pageItem}>
+      <motion.div variants={pageItem} className="surface-panel rounded-panel px-[18px] py-2">
         <EmptyState
           icon={<AlertIcon />}
           title="路由里没有实例 id，无法打开卷宗"
@@ -1172,40 +1197,77 @@ export function InstanceDetail() {
 
   return (
     <>
-      <motion.div variants={pageItem} className="mb-5 flex items-baseline justify-between gap-6">
-        <div className="flex min-w-0 items-baseline gap-4">
+      {/* 卷宗抬头：面包屑、标题、刷新与三面 tab 合成同一块面板。
+          它们本来就是同一组导航件，图铺满之后各自浮一片纸只会在照片上多出一道无意义的缝。 */}
+      <motion.div variants={pageItem} className="surface-panel mb-5 rounded-panel px-5 pt-4 pb-3">
+        <div className="flex items-baseline justify-between gap-6">
+          <div className="flex min-w-0 items-baseline gap-4">
+            <button
+              type="button"
+              onClick={() => navigate("/versions")}
+              className="shrink-0 cursor-pointer text-[12px] font-semibold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            >
+              版本
+            </button>
+            <h1 className="truncate text-[20px] font-extrabold tracking-[-0.01em] tabular-nums">
+              {versionId}
+            </h1>
+            <span className="shrink-0 text-[12px] text-ink/75">实例卷宗</span>
+          </div>
           <button
             type="button"
-            onClick={() => navigate("/versions")}
-            className="shrink-0 cursor-pointer text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            onClick={() => {
+              void load();
+              void loadUpdates();
+              void loadManagedStatus(true);
+              void loadManagedFiles();
+            }}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] font-semibold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 [&_svg]:h-3.5 [&_svg]:w-3.5"
           >
-            版本
+            <RefreshIcon />
+            刷新
           </button>
-          <h1 className="truncate text-[20px] font-extrabold tracking-[-0.01em] tabular-nums">
-            {versionId}
-          </h1>
-          <span className="shrink-0 text-[12px] text-ink/60">实例卷宗</span>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void load();
-            void loadUpdates();
-            void loadManagedStatus(true);
-            void loadManagedFiles();
-          }}
-          className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
-        >
-          <RefreshIcon />
-          刷新
-        </button>
+
+        {/* 分段 tab：选中下划线用共享 layoutId，切换时在标签之间滑过去而不是闪现。
+            这条基线收在面板内侧，左右都离圆角起弯处还有一段，不会与面板的圆角打架。 */}
+        <div className="mt-4 flex gap-1 border-b border-ink/12">
+          {TABS.map((t) => {
+            const on = t.key === tab;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                aria-current={on ? "page" : undefined}
+                className={[
+                  "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
+                  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
+                  on ? "font-extrabold text-ink" : "font-semibold text-ink/75 hover:text-ink",
+                ].join(" ")}
+              >
+                <Icon size={16} />
+                {t.label}
+                {on && (
+                  <motion.span
+                    layoutId="instance-tab-underline"
+                    className="absolute inset-x-0 -bottom-px h-[2px] bg-accent"
+                    transition={springs.tap}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </motion.div>
 
       {error && (
         <motion.div
           variants={pageItem}
-          className="mb-5 flex items-center gap-3 rounded-panel border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          className={`${dangerBar} mb-5 flex items-center gap-3 text-[13px] text-danger`}
         >
+          <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
           <AlertIcon size={18} />
           <span className="flex-1">{error}</span>
           <Button variant="secondary" icon={<RefreshIcon size={15} />} onClick={() => void load()}>
@@ -1217,9 +1279,10 @@ export function InstanceDetail() {
       {(managedStatusError || managedFilesError) && (
         <motion.div
           variants={pageItem}
-          className="mb-5 flex items-center gap-3 rounded-panel border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          className={`${dangerBar} mb-5 flex items-center gap-3 text-[13px] text-danger`}
           role="alert"
         >
+          <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
           <AlertIcon size={18} />
           <span className="flex-1">{managedStatusError ?? managedFilesError}</span>
           <Button
@@ -1234,37 +1297,6 @@ export function InstanceDetail() {
           </Button>
         </motion.div>
       )}
-
-      {/* 分段 tab：选中下划线用共享 layoutId，切换时在标签之间滑过去而不是闪现。 */}
-      <motion.div variants={pageItem} className="mb-6 flex gap-1 border-b border-ink/10">
-        {TABS.map((t) => {
-          const on = t.key === tab;
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              aria-current={on ? "page" : undefined}
-              className={[
-                "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
-                "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
-                on ? "font-extrabold text-ink" : "font-semibold text-ink/60 hover:text-ink/75",
-              ].join(" ")}
-            >
-              <Icon size={16} />
-              {t.label}
-              {on && (
-                <motion.span
-                  layoutId="instance-tab-underline"
-                  className="absolute inset-x-0 -bottom-px h-[2px] bg-accent"
-                  transition={springs.tap}
-                />
-              )}
-            </button>
-          );
-        })}
-      </motion.div>
 
       <motion.div variants={pageItem} className="flex min-h-0 flex-1 flex-col">
         {!data ? (

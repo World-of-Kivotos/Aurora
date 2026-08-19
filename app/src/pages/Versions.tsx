@@ -132,15 +132,20 @@ export function Versions() {
 
   return (
     <>
-      <motion.div variants={pageItem} className="mb-6 flex items-baseline justify-between">
-        <div className="flex items-baseline gap-4">
+      {/* 抬头条也得挂材质：背景图铺满全站之后，裸字直接压在照片上，一张暗图就把标题吃掉了。 */}
+      <motion.div
+        variants={pageItem}
+        className="surface-panel mb-4 flex items-baseline justify-between gap-4 rounded-panel px-5 py-4"
+      >
+        <div className="flex min-w-0 items-baseline gap-4">
           <h1 className="text-[20px] font-extrabold tracking-[-0.01em]">版本</h1>
-          <span className="text-[12px] text-ink/60">管理已安装的实例，点进查看内容与变更史</span>
+          <span className="truncate text-[12px] text-ink/75">管理已安装的实例，点进查看内容与变更史</span>
         </div>
+        {/* 悬停反馈交给 .surface-control，不再各写一份 hover 背景；焦点环在玻璃上仍要看得见。 */}
         <button
           type="button"
           onClick={() => void load()}
-          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink/60 transition-colors hover:text-ink [&_svg]:h-3.5 [&_svg]:w-3.5"
+          className="surface-control inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-control px-3 py-1.5 text-[12px] font-semibold text-ink/75 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 [&_svg]:h-3.5 [&_svg]:w-3.5"
         >
           <RefreshIcon />
           刷新
@@ -150,7 +155,7 @@ export function Versions() {
       {error && (
         <motion.div
           variants={pageItem}
-          className="mb-5 flex items-center gap-3 rounded-panel border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          className="surface-panel mb-4 flex items-center gap-3 rounded-panel border border-danger/35 px-4 py-3 text-[13px] text-danger"
         >
           <AlertIcon size={18} />
           <span className="flex-1">{error}</span>
@@ -160,96 +165,105 @@ export function Versions() {
         </motion.div>
       )}
 
-      {versions.length + broken.length === 0 ? (
-        <motion.div variants={pageItem}>
-          <EmptyState icon={<LayersIcon />} title="还没有安装任何版本，去「下载」装一个" />
-        </motion.div>
-      ) : (
-        <motion.ul variants={pageItem} className="m-0 list-none p-0">
-          {versions.map((v) => {
-            const s = splitId(v.id);
-            const isCur = v.id === current;
-            const st = stats[v.id];
-            return (
-              <li key={v.id} className="border-b border-ink/8 last:border-b-0">
-                {/* 整行进详情，行内单独一个控件设为当前——两个动作分开，不再靠同一次点击猜意图。 */}
-                <div className="group flex items-center gap-4 transition-colors hover:bg-ink/[0.03]">
-                  <button
-                    type="button"
-                    onClick={() => openDetail(v.id)}
-                    className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-6 py-[15px] text-left"
-                  >
-                    <span className="flex min-w-0 items-center gap-3">
-                      <span className="truncate text-[21px] font-bold tracking-[-0.01em] tabular-nums">
-                        {s.base}
-                      </span>
-                      {s.sfx && <span className="shrink-0 text-[14px] font-semibold text-ink/60">{s.sfx}</span>}
-                      {/* 与侧栏当前项竖规同一套语言：layoutId 让徽标从旧行滑到新行，
-                          把「哪个版本会被启动」这个答案的转移变成看得见的过程，而不是瞬移后要自己找。 */}
-                      {isCur && (
-                        <motion.span
-                          ref={badgeRef}
-                          layoutId={migrateBadge ? "current-version-badge" : undefined}
-                          transition={springs.soft}
-                          className="shrink-0 rounded-chip bg-accent/12 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
-                        >
-                          当前
-                        </motion.span>
-                      )}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-4 text-[12px] text-ink/60">
-                      {st && st.mods > 0 && (
-                        <span className="inline-flex items-center gap-1">
-                          <PackageIcon size={13} />
-                          {st.mods}
+      {/* 列表与空态共用一块 .surface-panel-strong 托底。两个理由缺一不可：
+          长列表要连续扫读，96% 那档买的是 AAA 余量；而行级的 .surface-control 是寄生层，
+          没有自足材质垫在下面就等于直接铺在照片上，字会压在图上。 */}
+      <motion.div variants={pageItem} className="surface-panel-strong rounded-panel p-1.5">
+        {versions.length + broken.length === 0 ? (
+          <div className="px-2">
+            <EmptyState icon={<LayersIcon />} title="还没有安装任何版本，去「下载」装一个" />
+          </div>
+        ) : (
+          <ul className="m-0 list-none space-y-1 p-0">
+            {versions.map((v) => {
+              const s = splitId(v.id);
+              const isCur = v.id === current;
+              const st = stats[v.id];
+              return (
+                <li key={v.id}>
+                  {/* 整行进详情，行内单独一个控件设为当前——两个动作分开，不再靠同一次点击猜意图。
+                      行底改用 .surface-control：悬停/按下的手感全站一处定义，行内不再自备 hover 背景。 */}
+                  <div className="surface-control group flex items-center gap-4 rounded-control pr-1 pl-3">
+                    <button
+                      type="button"
+                      onClick={() => openDetail(v.id)}
+                      className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-6 rounded-control py-3.75 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="truncate text-[21px] font-bold tracking-[-0.01em] tabular-nums">
+                          {s.base}
                         </span>
-                      )}
-                      <span>{v.mc_version !== v.id ? v.mc_version : ""}</span>
-                      <span className="font-mono">{loaderText(v)}</span>
-                    </span>
-                  </button>
-                  {/* 已是当前的行显示静态标记，避免出现一个点了没反应的按钮。
-                      槽位定宽：勾标记比「设为当前」窄约 28px，不定宽的话切换时左侧 flex-1 会跟着改宽，
-                      新旧两行的元数据列同时横跳，正好盖过徽标迁移那点平滑感。 */}
-                  <div className="mr-1 flex w-17 shrink-0 items-center justify-end">
-                    {isCur ? (
-                      <span
-                        aria-hidden="true"
-                        className="px-2 text-accent [&_svg]:h-4 [&_svg]:w-4"
-                        title="已是当前启动版本"
-                      >
-                        <CheckIcon />
+                        {s.sfx && <span className="shrink-0 text-[14px] font-semibold text-ink/75">{s.sfx}</span>}
+                        {/* 与侧栏当前项竖规同一套语言：layoutId 让徽标从旧行滑到新行，
+                            把「哪个版本会被启动」这个答案的转移变成看得见的过程，而不是瞬移后要自己找。 */}
+                        {isCur && (
+                          <motion.span
+                            ref={badgeRef}
+                            layoutId={migrateBadge ? "current-version-badge" : undefined}
+                            transition={springs.soft}
+                            // 实心底 + 纸色字：淡底朱红字在暗图上只有 2.93，而这枚徽标是「哪个版本会被启动」的答案。
+                            className="shrink-0 rounded-chip bg-accent px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] text-paper-on"
+                          >
+                            当前
+                          </motion.span>
+                        )}
                       </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void setAsCurrent(v.id)}
-                        title="设为当前启动版本"
-                        className="cursor-pointer rounded-chip px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/60 hover:!text-accent focus-visible:text-ink/60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-                      >
-                        设为当前
-                      </button>
-                    )}
+                      <span className="flex shrink-0 items-center gap-4 text-[12px] text-ink/75">
+                        {st && st.mods > 0 && (
+                          <span className="inline-flex items-center gap-1">
+                            <PackageIcon size={13} />
+                            {st.mods}
+                          </span>
+                        )}
+                        <span>{v.mc_version !== v.id ? v.mc_version : ""}</span>
+                        <span className="font-mono">{loaderText(v)}</span>
+                      </span>
+                    </button>
+                    {/* 已是当前的行显示静态标记，避免出现一个点了没反应的按钮。
+                        槽位定宽：勾标记比「设为当前」窄约 28px，不定宽的话切换时左侧 flex-1 会跟着改宽，
+                        新旧两行的元数据列同时横跳，正好盖过徽标迁移那点平滑感。 */}
+                    <div className="flex w-17 shrink-0 items-center justify-end">
+                      {isCur ? (
+                        <span
+                          aria-hidden="true"
+                          className="px-2 text-accent [&_svg]:h-4 [&_svg]:w-4"
+                          title="已是当前启动版本"
+                        >
+                          <CheckIcon />
+                        </span>
+                      ) : (
+                        // text-ink/0 是「悬停才显形」的机关而非色阶；显形后的落点按玻璃上的表提到 ink/75。
+                        <button
+                          type="button"
+                          onClick={() => void setAsCurrent(v.id)}
+                          title="设为当前启动版本"
+                          className="cursor-pointer rounded-chip px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/75 hover:text-accent! focus-visible:text-ink/75 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                        >
+                          设为当前
+                        </button>
+                      )}
+                    </div>
                   </div>
+                </li>
+              );
+            })}
+            {broken.map((b) => (
+              <li key={b.id}>
+                {/* 损坏项不可点，所以不给 .surface-control——控件底一挂就等于在说「这行能按」。 */}
+                <div className="flex items-center justify-between gap-6 rounded-control px-3 py-3.75">
+                  <span className="text-[21px] font-bold text-danger tabular-nums">{b.id}</span>
+                  <span className="flex items-center gap-2 text-[12px] text-danger/80">
+                    <span className="rounded-chip border border-danger/50 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em]">
+                      损坏
+                    </span>
+                    <span className="font-mono">{b.reason}</span>
+                  </span>
                 </div>
               </li>
-            );
-          })}
-          {broken.map((b) => (
-            <li key={b.id} className="border-b border-ink/8 last:border-b-0">
-              <div className="flex items-center justify-between gap-6 py-[15px]">
-                <span className="text-[21px] font-bold text-danger tabular-nums">{b.id}</span>
-                <span className="flex items-center gap-2 text-[12px] text-danger/80">
-                  <span className="rounded-chip border border-danger/50 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em]">
-                    损坏
-                  </span>
-                  <span className="font-mono">{b.reason}</span>
-                </span>
-              </div>
-            </li>
-          ))}
-        </motion.ul>
-      )}
+            ))}
+          </ul>
+        )}
+      </motion.div>
     </>
   );
 }

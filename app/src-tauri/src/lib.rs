@@ -19,7 +19,8 @@ use std::sync::Arc;
 
 use aurora_core::{
     detect_crash, Account, AccountType, AggregateResult, Aurora, BackgroundEntry, CoreEvent, CrashReport,
-    DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, History, InstallPlan,
+    DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, GlassMode, History,
+    InstallPlan,
     InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
     LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemorySettings, ModLoader,
     ManagedModpackFile, ManagedModpackStatus, ModVersionInfo, ModpackInstallOutcome,
@@ -1776,6 +1777,8 @@ struct AppearanceDto {
     plate: Option<PlateZoneDto>,
     /// 纸色遮罩强度（百分比）。
     veil: u8,
+    /// 玻璃模式（frost / liquid）。前端据此往 documentElement 写 data-glass。
+    glass: GlassMode,
 }
 
 fn appearance_dto(aurora: &Aurora) -> AppearanceDto {
@@ -1792,6 +1795,7 @@ fn appearance_dto(aurora: &Aurora) -> AppearanceDto {
                 p90: p.p90,
             }),
         veil: appearance.background_veil,
+        glass: appearance.glass,
     }
 }
 
@@ -1875,6 +1879,21 @@ async fn set_background_veil(
 ) -> Result<AppearanceDto, String> {
     let mut aurora = state.write().await;
     aurora.set_background_veil(veil);
+    aurora.save_config().await.map_err(|e| e.to_string())?;
+    Ok(appearance_dto(&aurora))
+}
+
+/// 切换玻璃模式（frost / liquid）。
+///
+/// 与背景走同一份外观配置：它同样是「这台机器上界面长什么样」，不该另立一处存储，
+/// 否则搬走 Aurora 文件夹时背景跟着走、玻璃模式留在原机器上。
+#[tauri::command]
+async fn set_glass_mode(
+    glass: GlassMode,
+    state: State<'_, RwLock<Aurora>>,
+) -> Result<AppearanceDto, String> {
+    let mut aurora = state.write().await;
+    aurora.set_glass_mode(glass);
     aurora.save_config().await.map_err(|e| e.to_string())?;
     Ok(appearance_dto(&aurora))
 }
@@ -2033,7 +2052,8 @@ pub fn run() {
             import_background,
             set_background,
             remove_background,
-            set_background_veil
+            set_background_veil,
+            set_glass_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

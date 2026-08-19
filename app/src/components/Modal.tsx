@@ -1,4 +1,4 @@
-// 弹窗：Portal 到 body 顶层，遮罩 + 居中纸面板。Esc 关闭、点遮罩关闭（点面板不关）。
+// 弹窗：Portal 到 body 顶层，幕布 + 居中玻璃面板。Esc 关闭、点遮罩关闭（点面板不关）。
 // 入场走 framer-motion（减少动效由全局 MotionConfig 降级）；打开时锁 body 滚动（可选）。
 // role=dialog + aria-modal，打开时焦点移入面板、关闭时归还先前焦点，保证键盘可达。
 
@@ -70,11 +70,13 @@ export function Modal({
           exit={{ opacity: 0 }}
           transition={springs.tap}
         >
-          <div
-            className="absolute inset-0 bg-ink/45"
-            onClick={onClose}
-            aria-hidden="true"
-          />
+          {/*
+            幕布用 .surface-veil 而不是单纯铺一层墨：它连背景的饱和度一起抽掉，
+            背景图整个退场，弹窗才成为唯一的注意力落点。
+            它同时把面板身下的底压到接近纯黑那一端——正好是对比度表里最不利的那一端，
+            所以面板取默认档 .surface-panel（ink/75 得 6.28）仍然过线，不需要为弹窗单独加实。
+          */}
+          <div className="surface-veil absolute inset-0" onClick={onClose} aria-hidden="true" />
           <motion.div
             ref={panelRef}
             role="dialog"
@@ -85,7 +87,7 @@ export function Modal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={springs.settle}
-            className={`relative z-10 flex max-h-[85vh] w-full ${sizeClass[size]} flex-col rounded-panel border border-ink/12 bg-paper focus:outline-none`}
+            className={`surface-panel relative z-10 flex max-h-[85vh] w-full ${sizeClass[size]} flex-col rounded-panel focus:outline-none`}
           >
             {title && (
               <header className="flex items-center justify-between gap-4 border-b border-ink/12 px-6 py-4">
@@ -94,7 +96,7 @@ export function Modal({
                   type="button"
                   onClick={onClose}
                   aria-label="关闭"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-chip text-ink/60 transition-colors hover:bg-ink/8 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="surface-control inline-flex h-7 w-7 items-center justify-center rounded-chip text-ink/75 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   <WinCloseIcon size={18} />
                 </button>

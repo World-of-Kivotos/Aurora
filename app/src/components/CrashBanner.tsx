@@ -19,7 +19,10 @@ interface CrashBannerProps {
   onOpenDetail: () => void;
   /** 每个可疑文件独立判定归属；归属未确认时必须关闭破坏性动作。 */
   ownerOf: (fileName: string) => ModpackFileOwner | null;
-  /** 是否浮在背景图上。由调用方下发而不是自己读外观，免得与外壳的判定漂移。 */
+  /**
+   * 是否浮在背景图上。由调用方下发而不是自己读外观，免得与外壳的判定漂移。
+   * 现在只决定投影：材质档不再随它变（见下方注释）。
+   */
   onPhoto: boolean;
 }
 
@@ -74,13 +77,18 @@ export function CrashBanner({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={springs.settle}
-      // 有图时改用磨砂：外壳整体是磨砂之后，一块全实心的纸就成了整窗唯一不透光的东西，
-      // 那正是「像贴纸」的由来。取更实的 92% 一档而不是外壳的 85%——这是报警面板，
-      // danger 文字压在它上面仍有 6.83:1（实心 paper-sink 基线是 7.65:1），可读性没让步。
+      // 材质取最实的 .surface-panel-strong（96%）而不是默认的 .surface-panel（86%）：
+      // 这是报警面板，玩家要在上面逐条读文件名再做破坏性决定，判据与「长列表买 AAA 余量」同源。
+      // 实算：danger 图标 7.48、ink/75 正文 7.20，都越过 7:1；在 86% 那档只有 6.28。
+      // 材质不再随 onPhoto 分支——96% 的纸色压在纸底上与压在照片上观感一致，
+      // onPhoto 只剩投影这一件事：压在照片上是实打实的两个平面要有影，
+      // 落在纸底页面上则是纸对纸，按 .surface-nested 把影子摘掉。
       className={[
-        "rounded-panel border border-danger p-4",
-        onPhoto ? "paper-frost-strong" : "bg-paper",
-      ].join(" ")}
+        "rounded-panel border border-danger p-4 surface-panel-strong",
+        onPhoto ? "" : "surface-nested",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       <div className="flex items-start gap-3">
         <AlertIcon size={20} className="mt-px shrink-0 text-danger" />
@@ -90,9 +98,9 @@ export function CrashBanner({
               {/* 空诊断不是异常，是「日志里没有已知特征」这个真实结论，如实说出来而不是拿空串糊过去。 */}
               {primary ? primary.summary : "游戏异常退出，日志里没有匹配到已知的崩溃特征"}
             </p>
-            <span className="shrink-0 truncate text-[12px] text-ink/60">{versionId}</span>
+            <span className="shrink-0 truncate text-[12px] text-ink/75">{versionId}</span>
           </div>
-          {primary && <p className="mt-1.5 text-[13px] leading-relaxed text-ink/60">{primary.advice}</p>}
+          {primary && <p className="mt-1.5 text-[13px] leading-relaxed text-ink/75">{primary.advice}</p>}
         </div>
       </div>
 
@@ -105,13 +113,17 @@ export function CrashBanner({
             return (
               <li
                 key={`${suspect.mod_id}:${file ?? ""}`}
-                className="flex items-center justify-between gap-3 rounded-control bg-paper-sink px-3 py-1"
+                // 可疑文件行是下沉块而不是控件底：整行不可点，可点的只有行尾那颗按钮。
+                // 「寄生层不得寄生在寄生层上」那条纪律是按最透的外壳（72%）解出来的，
+                // 这里的宿主是最实的 96%：行底 8% 叠按钮底 4% 合计 12% 墨洗后，
+                // ink/75 实算仍有 6.36（纯黑图端），离 4.5 还有一大截，故这一处按数走而不是按结论走。
+                className="flex items-center justify-between gap-3 rounded-control surface-sunken px-3 py-1"
               >
                 <span className="flex min-w-0 flex-1 items-baseline gap-2 text-[13px] text-ink/75">
                   <span className="shrink-0">日志指向</span>
                   <span className="truncate font-extrabold text-ink">{file ?? suspect.mod_id}</span>
                   {/* 卷宗对不上文件时只能报 mod id，此时没有可禁用的目标，说清楚而不是给个点不动的按钮。 */}
-                  {!file && <span className="shrink-0 text-[12px] text-ink/60">（卷宗未对上文件）</span>}
+                  {!file && <span className="shrink-0 text-[12px] text-ink/75">（卷宗未对上文件）</span>}
                 </span>
                 {file && owner === "player" && (
                   <Button
@@ -125,15 +137,15 @@ export function CrashBanner({
                   </Button>
                 )}
                 {file && owner === "modpack" && (
-                  <span className="shrink-0 text-[12px] text-ink/60">由整合包统一维护，不能单独禁用</span>
+                  <span className="shrink-0 text-[12px] text-ink/75">由整合包统一维护，不能单独禁用</span>
                 )}
                 {file && owner === null && (
-                  <span className="shrink-0 text-[12px] text-ink/60">文件归属尚未确认，暂不提供禁用操作</span>
+                  <span className="shrink-0 text-[12px] text-ink/75">文件归属尚未确认，暂不提供禁用操作</span>
                 )}
               </li>
             );
           })}
-          {overflow > 0 && <li className="px-3 pt-0.5 text-[12.5px] text-ink/60">等 {overflow} 个</li>}
+          {overflow > 0 && <li className="px-3 pt-0.5 text-[12.5px] text-ink/75">等 {overflow} 个</li>}
         </ul>
       )}
 
@@ -144,7 +156,7 @@ export function CrashBanner({
         <Button variant="secondary" className="h-10" onClick={onDismiss}>
           关闭
         </Button>
-        {extraDiagnoses > 0 && <span className="text-[12.5px] text-ink/60">另有 {extraDiagnoses} 条诊断</span>}
+        {extraDiagnoses > 0 && <span className="text-[12.5px] text-ink/75">另有 {extraDiagnoses} 条诊断</span>}
       </div>
     </motion.section>
   );

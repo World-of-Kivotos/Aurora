@@ -1,8 +1,12 @@
 /*
- * Aurora 设计系统 —— 编辑部（Editorial）方向，单一事实来源。
- * Tailwind v4 CSS-first：@theme 里的 token 自动生成工具类（bg-paper / text-ink / text-accent …）。
+ * Aurora 设计系统 —— 单一事实来源。
+ * Tailwind v4 CSS-first：@theme 里的 token 自动生成工具类（bg-paper / text-ink / rounded-panel …）。
  * 刻意的单一亮色世界：纸墨气质，暗色会与「印刷版面」概念打架，故不做暗色反相。
- * 页面/组件一律引用这里的 token，禁止在 JSX 写死品牌色值。
+ * 页面/组件一律引用这里的 token 与材质类，禁止在 JSX 写死品牌色值、圆角像素或 backdrop-filter。
+ *
+ * 本次改版的前提变了，后面所有数值都由它推出来：背景图从「只铺主页那一块」改成「铺满整个 app」，
+ * 于是每一页的每一块内容都压在照片上。旧那套只针对主页一块纸片算出来的对比度预算全部失效，
+ * 材质与文字档位是用 scripts/contrast-budget.mjs 重算的，不是拍的。改任何一个不透明度前先跑那个脚本。
  */
 
 @import "tailwindcss";
@@ -10,8 +14,8 @@
 @theme {
   /* 纸与墨 —— 唯一朱红墨点，极少量使用（状态/当前项/CTA hover/损坏危险色分离） */
   --color-paper: #f3f2f0; /* 版面纸底 */
-  --color-paper-sink: #ecebe7; /* 下沉块（账户卡、设置行） */
-  --color-paper-on: #f6f4f0; /* 深底上的“纸色”字/图标 */
+  --color-paper-sink: #ecebe7; /* 无图回退时的下沉块底色 */
+  --color-paper-on: #f6f4f0; /* 深底上的“纸色”字/图标，玻璃的受光边也用它 */
   --color-ink: #14161a; /* 墨；层级只用下面规定的那几档，不要另造 */
   --color-accent: #c8352f; /* 唯一强调 */
   --color-danger: #8a2018; /* 危险语义（损坏版本），与强调分离 */
@@ -30,12 +34,22 @@
    *   control 可操作物 —— 按钮/输入/选择器/可点行/窗口按钮/头像/进度轨（30 处）
    *   chip    小记号 —— 徽标/小图标按钮/分段控件内页/下拉项（35 处）
    *
-   * 当前取值与迁移前逐像素相同（panel/control 原本都是 3px，chip 原本 2px），
-   * 所以令牌化这一步是零视觉变化；换皮时才动这三个数。
+   * 从 3/3/2 的锐角编辑版面改成圆角。取值不是等比缩放，是按「同心圆角」定的：
+   * 一个圆角盒子套另一个时，内半径 = 外半径 - 间距，两个角才是同心的，视觉上不打架。
+   *   16（panel）- 6（卡片内常用的 p-1.5 级内边距）= 10 -> control
+   *   10（control）- 4（分段控件内页的内缩）= 6 -> chip
+   * 所以 16 / 10 / 6 这条链在真实嵌套里是自洽的，随手挑三个「好看的数」做不到这点。
+   *
+   * 容器与控件必须是两个值（16 vs 10）：这正是上一步把它们拆开的理由。同一个半径会让
+   * 一颗按钮和一整块卡片的角看起来同样「重」，而按钮尺度小得多，同半径在它身上占比过大，
+   * 会读成药丸而不是控件。
+   *
+   * 硬纪律：一律写 rounded-panel / rounded-control / rounded-chip，严禁再出现 rounded-[Npx]。
+   * 例外只有一个：真正的正圆（头像、滑块钮、滚动条）继续用 rounded-full。
    */
-  --radius-panel: 3px;
-  --radius-control: 3px;
-  --radius-chip: 2px;
+  --radius-panel: 16px;
+  --radius-control: 10px;
+  --radius-chip: 6px;
 }
 
 @layer base {
@@ -62,83 +76,350 @@
 }
 
 /*
- * 文字灰阶：全站只有这几档，新增界面一律从中挑，不要另造中间值。
+ * ============================================================================
+ * 一、文字灰阶：全站只有这几档，新增界面一律从中挑，不要另造中间值。
+ * ============================================================================
  *
- *   text-ink       15.90:1  主   标题、关键值、当前项
+ * 纸底（无背景图时的回退）上的老账，仍然有效：
+ *   text-ink       16.19:1  主   标题、关键值、当前项
  *   text-ink/75     7.56:1  次   支撑正文、说明文字
- *   text-ink/60     4.56:1  弱   标签、元数据 —— 正文可读的下限，不能再低
+ *   text-ink/60     4.56:1  弱   标签、元数据
  *   text-ink/30     1.94:1  装饰 仅限 aria-hidden 图标与纯记号，不承载任何信息
  *
- * 对比度按纸底 #f3f2f0 算。60% 这条线是解出来的不是拍的：正文要 4.5:1 就需要
- * 至少 60% 不透明度，47% 才勉强够大字的 3:1。曾经这里有 15 档、204 个使用点，
- * 其中 106 处（52%）连 3:1 都不到——不是玻璃暴露的问题，纸底上本来就读不清。
+ * 但图铺满全站之后，判据不再是纸底而是玻璃。玻璃上的账（脚本实算，见下节表格）是：
  *
- * 想表达更细的层级请动字号与字重，不要去调灰度：可读区间只有 60%~100% 这一段，
- * 再往下切分只会切出读不出来的档位。
+ *   >>> 玻璃上的正文下限统一为 ink/75。ink/60 在任何一档玻璃上都过不了 4.5，只能做大字/图标。 <<<
  *
- * 两个例外，都不是色阶：
- *   - Titlebar / Sidebar 的 onPhoto 分支用 70/75/80，那是磨砂那套预算（见 paper-frost 注释），
- *     磨砂上只有满墨与 80 过得了 4.5，与这里的纸底档位互不通用。
- *   - Versions 的 text-ink/0 是「悬停才显形」的机关，不是颜色档。
+ * 这条不是保守，是解出来的：要让 ink/60 在纯黑图上达到正文的 4.5，纸色得压到 98.5% 不透明度，
+ * 那时玻璃已经名存实亡。所以正确做法是把字提上来，而不是把玻璃调实——
+ * 「某档材质在纯黑图上连满墨都过不了 4.5 才必须调实」，那条硬底线全档都通过（最差 8.19）。
+ *
+ * 对迁移的直接指令：原先用 text-ink/60 承载的标签与元数据，一律提到 text-ink/75。
+ * ink/60 只剩两个合法用途：大字（>=18.66px 或 >=14px 粗体）与图标（门槛 3:1，全档通过）。
+ * ink/30 维持原样，只给 aria-hidden 的纯装饰。
+ *
+ * 想表达更细的层级请动字号与字重，不要去调灰度：可读区间只剩 ink/75~100 这一段，
+ * 再往下切分只会切出读不出来的档位。曾经这里有 15 档、204 个使用点，其中 106 处连 3:1 都不到。
+ *
+ * 一个例外：Versions 的 text-ink/0 是「悬停才显形」的机关，不是颜色档。
+ *
+ * ----------------------------------------------------------------------------
+ * 二、对比度预算实算结果 —— node scripts/contrast-budget.mjs 的输出，原样抄录
+ * ----------------------------------------------------------------------------
+ * 口径：WCAG 相对亮度；alpha 合成在 sRGB 空间做（与浏览器一致）；
+ * 取「材质压在纯黑图上」与「压在纯白图上」两端里更不利的那端。
+ * blur/saturate/brightness 对纯黑纯白两个极值不改变数值，故极值分析只看 alpha 合成。
+ *
+ * 各档材质在两端的实际底色：
+ *   材质                        纯黑图上                纯白图上
+ *   .surface-shell              175,174,173 (L=0.425)   246,246,244 (L=0.919)
+ *   .surface-panel              209,208,206 (L=0.632)   245,244,242 (L=0.904)
+ *   .surface-panel-strong       233,232,230 (L=0.810)   243,243,241 (L=0.893)
+ *   .surface-liquid             194,194,192 (L=0.537)   245,245,243 (L=0.910)
+ *   .surface-control 静息/外壳   169,168,167 (L=0.393)   237,237,235 (L=0.845)
+ *   .surface-control 悬停/外壳   163,162,161 (L=0.362)   228,228,227 (L=0.774)
+ *   .surface-sunken /面板       194,193,192 (L=0.535)   227,226,225 (L=0.761)
+ *
+ * 对比度矩阵（两端取最不利那端；最不利端一律是纯黑图，因为字是墨色）：
+ *   材质                      ink/60  ink/70  ink/75  ink/80  ink/90  满墨
+ *   .surface-shell              3.49    4.43    4.99    5.60    6.92    8.19
+ *   .surface-panel              4.06    5.42    6.28    7.26    9.51   11.76
+ *   .surface-panel-strong       4.43    6.10    7.20    8.50   11.61   14.83
+ *   .surface-liquid             3.82    5.00    5.73    6.54    8.35   10.13
+ *   .surface-control 静息/外壳   3.38    4.25    4.76    5.31    6.50    7.63
+ *   .surface-control 悬停/外壳   3.27    4.07    4.53    5.03    6.09    7.10
+ *   .surface-control 悬停/面板   3.82    4.99    5.71    6.52    8.32   10.09
+ *   .surface-sunken /外壳       3.27    4.07    4.53    5.03    6.09    7.10
+ *   .surface-sunken /面板       3.82    4.99    5.71    6.52    8.32   10.09
+ *
+ * 结论（正文 >=4.5 / 大字图标 >=3.0）：
+ *   全部九种组合的 ink/75 都 >= 4.53，全部的 ink/60 都 >= 3.27。
+ *   于是得到一条不用按材质分档的简单规则：正文 ink/75 起，大字与图标 ink/60 起。
+ *   最坏的那一格是 4.53（墨洗层压在外壳上），余量只有 0.03——它是本系统的临界点，
+ *   谁要再往那条链上加一层墨都会跌破，见下面「寄生层」那条纪律。
+ *
+ * 求解出来的不透明度下限（纸色压在纯黑图上）：
+ *   满墨正文 >=4.5（硬底线）   52.5%
+ *   ink/75 正文 >=4.5          67.0%   <- .surface-shell 取 72% 的依据（留 5 个点余量）
+ *   ink/70 正文 >=4.5          73.0%
+ *   ink/60 正文 >=4.5          98.5%   <- 玻璃上放弃 ink/60 做正文的依据
+ *   ink/60 大字 >=3.0          61.5%
+ *
+ * ----------------------------------------------------------------------------
+ * 二之二、彩色文字：accent 不是文字色（脚本第六节实算）
+ * ----------------------------------------------------------------------------
+ * 上面那张表只覆盖墨色通道，于是 accent 当字用的地方从来没被任何一格数字拦住过。补算结果：
+ *
+ *   accent 满色    外壳 2.37   面板 3.40   密集档 4.29   液态 2.93   控件底压面板 2.92
+ *   danger 满色    外壳 4.13   面板 5.93   密集档 7.48   液态 5.11   控件底压面板 5.09
+ *
+ * 于是三条硬约束：
+ *   1. accent 不得作文字色。最实的一档上也只有 4.29，正文门槛全档不达标。它的合法用途是
+ *      实心块的底、纯装饰，以及门槛只要 3.0 的 aria-hidden 图标（且不得落在外壳上，那里 2.37）。
+ *   2. 状态徽标（「当前」「可更新」「不在已安装列表中」这类）一律「实心 accent 底 + paper-on 字」，
+ *      实算 4.77 且与背景图无关——底不透明，所以它是本系统里唯一不受照片影响的强调写法。
+ *      曾经用的 bg-accent/12 淡底最高只到 4.06，暗图上跌破 3.0，禁止再用。
+ *   3. danger 满色可当正文，但仅限面板档及以上；danger/85（控件底上 4.12）与 danger/80（3.80）
+ *      一律不得出现——稀释红比稀释墨掉得更快，红本身的相对亮度已经贴着门槛。
+ *
+ * 配套的描边约定：危险告警条（图标 + 危险文字 + rounded-panel 描边）统一 border-danger/35。
+ * 30/35/40 三个值在视觉上分不出来，但同一个部件在九个文件里出现三种写法就是设计系统失效的样子；
+ * 取 35 是因为它已经是多数派。真正的实心 border-danger 留给最重的那一档（崩溃横幅、错误 Toast）。
  */
 
 /*
- * 压在自定义背景图上的纸片。
+ * ============================================================================
+ * 三、材质层：组件只准引用下面这些类名，严禁自己拼 backdrop-filter / background 半透明
+ * ============================================================================
  *
- * 这是「去阴影」那条规则唯一的例外，适用边界要说死：只有当一块纸面压在图片上时才允许投影，
- * 纸对纸永远无影。理由不是审美——版面上纸与纸同处一个平面，没有高差就不该有影子；
- * 而纸压在照片上是实打实的两个平面，杂志排版里图上压白块也必然带投影或出血边。
- * 不加影子它看起来会像在图上「挖了个洞」，而不是「压在上面」。
- */
-.paper-on-photo {
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--color-ink) 8%, transparent),
-    0 10px 28px color-mix(in srgb, var(--color-ink) 14%, transparent);
-}
-
-/*
- * 磨砂纸：铺了背景图时，外壳（标题栏、侧栏）与主页那块纸片改用这种材质。
+ * 分两族，先分清楚再选：
  *
- * 图铺满整窗之后，外壳与内容区底下本来就是同一张图，半透 + 背景模糊让它透上来，
- * 那道缝就自然没有了。这跟「拿一条渐变去衔接两块不同的底」是两回事——后者试过，
- * 实拍是一条发灰的脏带子（原委见 PageBackground 里「顶部不做渐隐」那段行内注释），
- * 因为它掩饰的是差异本身。
+ *   自足材质（自带纸色 + 自带 backdrop-filter，可以直接压在照片上）
+ *     .surface-shell         外壳：标题栏、侧栏。全站最透，让背景图透上来。
+ *     .surface-panel         内容容器：卡片、分区、弹窗、下拉面板、告警块。
+ *     .surface-panel-strong  信息密集区托底：长列表、表格、日志台。最实的一档。
+ *     .surface-liquid        小件浮层：侧栏游戏行、主 CTA、Toast、分段控件选中页。
+ *
+ *   寄生层（只铺一层墨洗，不带 backdrop-filter，必须套在某个自足材质里面）
+ *     .surface-control       控件底：按钮、可点行的静息底。自带悬停/按下态。
+ *     .surface-sunken        下沉块：输入框、进度轨、代码块底。
+ *
+ *   修饰符
+ *     .surface-nested        去掉投影。给「套在别的材质里面」的容器用。
+ *     .surface-veil          弹窗遮罩（压暗背景以聚焦），不是材质，是幕布。
+ *
+ * 为什么下沉与控件不做成玻璃，而做成墨洗：
+ * 不透明度在两种图上的方向是相反的——图暗时越不透明越亮，图亮时越不透明越暗。
+ * 所以「下沉块比它的容器更深」这件事，用不透明度根本表达不了：同一个 82% 的纸片
+ * 在暗图上比 86% 的面板更暗，在亮图上却更亮，一张图里成立换张图就翻过来。
+ * 墨洗（往墨色方向压）在两端方向一致，是唯一能稳定表达「下沉/按下」的手段。
+ * 这也正好对上 Apple 那条「不要把一层浅色半透明叠在另一层浅色半透明上」——
+ * 叠两层玻璃既毁可读性又白烧一次 backdrop 采样。
+ *
+ * 寄生层的两条硬纪律（脚本第五节实测支撑）：
+ *   1. 寄生层不得寄生在寄生层上。外壳上墨洗总浓度到 10% 时 ink/75 就掉到 4.42，跌破 4.5；
+ *      control(4%) 再套 sunken(8%) 合计约 12%，直接出局。要下沉就别再要控件底，二选一。
+ *      唯一例外，且只在 96% 那一档成立：宿主是 .surface-panel-strong 时，sunken(8%) 套
+ *      control(4%) 后 ink/75 实算 6.27，离门槛还有一大截（CrashBanner 的可疑文件行就是这一例）。
+ *      要用这个例外必须先跑一遍脚本把数算出来写进注释；照抄到更透的宿主上一律跌破，不许省这一步。
+ *   2. 寄生层不得直接铺在照片上。它没有纸色，铺在照片上等于没有底，字会直接压在图上。
+ *
+ * 投影规则（沿用「纸对纸永远无影」，按新语境重述）：
+ * 只有直接压在照片上的那一层才带投影，套在别的材质里面的一律无影。
+ * 理由不变——版面上纸与纸同处一个平面，没有高差就不该有影子；而纸压在照片上是实打实的
+ * 两个平面，不加影子它看起来会像在图上「挖了个洞」，而不是「压在上面」。
+ * 投影已经焊进 .surface-panel / .surface-panel-strong / .surface-liquid，
+ * 用了这三个就不要再叠 .paper-on-photo；确实嵌套时加 .surface-nested 把影子摘掉。
+ *
+ * 描边一律用 inset box-shadow 而不是 border：border 会撑大盒子，
+ * 加一个材质类就把布局挤歪，在 10 个 agent 并行改 32 个组件的场景里这是最贵的一类返工。
  *
  * saturate 是必需项不是装饰：只做 blur 会把透上来的颜色一并洗成灰，
- * 补一档饱和才留得住照片的色气，否则磨砂区会比周围的图暗淡一截，等于换了种方式露馅。
+ * 补一档饱和才留得住照片的色气，否则玻璃区会比周围的图暗淡一截，等于换了种方式露馅。
+ * 越透的那档 saturate 给得越高（外壳 155% > 面板 145% > 密集档 130%），
+ * 因为透上来的照片越多，被 blur 洗掉的色也越多，要补的量正比于透过来的量。
  *
- * 不透明度 65%：图确实透得上来，玻璃感才成立。85% 曾是这里的取值，但纸色本身接近纯白，
- * 85% 压在浅色图上与纯纸色只差几个色阶，肉眼分不出——那等于这层磨砂白做了。
+ * blur 半径反过来跟着不透明度走而不是跟着面积走：96% 之下只剩一成能透上来，
+ * 给它 28px 的大半径纯属白烧 GPU，肉眼一个像素的差别都看不出来。
  *
- * 能放到 65%，前提是外壳里那几个弱色阶在有图时一并加粗（见 Titlebar 与 Sidebar 的 onPhoto 分支）。
- * 以下都是把纸色按 65% 合成到纯黑图上（veil=0，最不利）再按 WCAG 算的：
- *
- *   窗口按钮   ink/50 -> 2.57（不达标）  加粗到 ink/70 -> 3.93   门槛 3.0
- *   未选中导航 ink/55 -> 2.86（不达标）  加粗到 ink/80 -> 4.82   门槛 4.5
- *
- * 顺序不能反：是先有「有图时加粗」，才敢把不透明度放下来。谁要把那两处 onPhoto 分支删掉，
- * 必须同时把这里推回 83% 以上，否则外壳文字直接跌破门槛。
- *
- * 唯一明知不达标仍然放行的是选中项那道 accent 竖规（65% 下 1.94，门槛 3.0）。
- * 它是品牌色、不能加粗，但它是冗余编码——当前项同时有 font-extrabold 与满墨字（6.7:1），
- * 竖规从来不是唯一线索，它弱一点不构成可达性阻塞。
- *
- * 这段推翻了本文件早先「不能让装不装背景变成两套排版」那条结论。当时的语境是
- * 「为了保住磨砂而牺牲排版」，现在反过来：不动那两处字重，磨砂在浅色图上根本看不出来，
- * 功能等于没做。为让一个特性真正成立而让外壳字重差一档，这笔账划算。
+ * Chromium 的两个坑，改组件时会撞上：
+ *   - 带 backdrop-filter 的元素会成为后代 position:fixed 的包含块。
+ *     下拉面板/浮层如果用 fixed 定位，父级别挂材质类，否则定位基准会悄悄变成父盒子。
+ *   - 带 backdrop-filter 的元素自成层叠上下文，z-index 只在它内部有意义。
  */
-.paper-frost {
-  background: color-mix(in srgb, var(--color-paper) 65%, transparent);
-  backdrop-filter: blur(20px) saturate(140%);
-}
 
-/* 同种材质、更实的一档：主页右下那块纸片承载版本与账户，字必须始终清楚，不跟外壳共享下限。 */
-.paper-frost-strong {
-  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
-  backdrop-filter: blur(24px) saturate(140%);
+:root {
+  /*
+   * 玻璃的共享零件。改这里等于全站换材质；组件侧只引用材质类，不要引用这些变量。
+   * 用变量而不是把值抄进每个类，是为了让 .surface-nested 能只摘掉投影而不动描边。
+   */
+  --glass-rim: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 9%, transparent);
+  /* 顶缘受光的亮边：暗图上玻璃靠它显出厚度，亮图上它自然隐没。液态模式才开。 */
+  --glass-sheen: inset 0 1px 0 color-mix(in srgb, var(--color-paper-on) 55%, transparent);
+  --glass-lift:
+    0 1px 2px color-mix(in srgb, var(--color-ink) 8%, transparent),
+    0 10px 28px color-mix(in srgb, var(--color-ink) 14%, transparent);
+  /* 小件浮层的浅一档投影：面小则影浅，用大面的影子会让一颗按钮看起来飘在半空。 */
+  --glass-lift-low:
+    0 1px 2px color-mix(in srgb, var(--color-ink) 8%, transparent),
+    0 4px 12px color-mix(in srgb, var(--color-ink) 12%, transparent);
 }
 
 /*
+ * 外壳。全站最透的一档，72%。
+ *
+ * 上一版是 65%，且必须靠「有图时把外壳文字加粗到 ink/80」才勉强达标。72% 换来的是：
+ * 标准色阶的 ink/75 在纯黑图上得 4.99，直接过正文门槛，外壳不再需要一套自己的排版规则。
+ * 多出的 7 个点几乎看不出来（纸色本身接近纯白，差别要到 85% 才开始明显），
+ * 却买断了整条「onPhoto 分支」的维护成本——那些分支现在是余量而不是及格线，删不删都不会跌破。
+ *
+ * 不带描边也不带投影：它是窗口框本身，框上再画框就成了套娃。
+ * 侧栏右缘/标题栏下缘要不要一条发丝线由组件自己定（方向不同，没法焊进一个类）。
+ */
+.surface-shell {
+  background-color: color-mix(in srgb, var(--color-paper) 72%, transparent);
+  backdrop-filter: blur(28px) saturate(155%);
+}
+
+/* 内容容器。86%：ink/75 得 6.28，元数据档 ink/60 得 4.06（够图标不够正文，与全站规则一致）。 */
+.surface-panel {
+  background-color: color-mix(in srgb, var(--color-paper) 86%, transparent);
+  backdrop-filter: blur(20px) saturate(145%);
+  box-shadow: var(--glass-rim), var(--glass-lift);
+}
+
+/*
+ * 信息密集区托底。96%。
+ *
+ * 它跟 .surface-panel 的区别要说死，否则会被随手混用：96% 让 ink/75 拿到 7.20，
+ * 越过 WCAG AAA 的 7:1。长列表、表格、日志台是要长时间连续扫读的地方，
+ * 密集小字在 AA 的 6.28 上读久了会累，这一档买的是 AAA 的余量，不是「更好看」。
+ * 反过来说，不长时间扫读的内容不要用它——96% 已经几乎看不出玻璃，滥用等于把图挡光。
+ */
+.surface-panel-strong {
+  background-color: color-mix(in srgb, var(--color-paper) 96%, transparent);
+  backdrop-filter: blur(12px) saturate(130%);
+  box-shadow: var(--glass-rim), var(--glass-lift);
+}
+
+/*
+ * 小件浮层。80%，是唯一响应液态模式的材质（frost 模式下就是一档更透的面板）。
+ * 只准给小件用，原因见下面「液态玻璃的使用边界」。
+ */
+.surface-liquid {
+  background-color: color-mix(in srgb, var(--color-paper) 80%, transparent);
+  backdrop-filter: blur(14px) saturate(170%);
+  box-shadow: var(--glass-rim), var(--glass-lift-low);
+}
+
+/*
+ * 下沉块：输入框、进度轨、代码块底。墨洗 8%，不带 backdrop-filter（寄生层）。
+ * 内投影而不是外投影：下沉的语义是「凹进去」，光从上方来，所以暗边在上缘。
+ */
+.surface-sunken {
+  background-color: color-mix(in srgb, var(--color-ink) 8%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 10%, transparent),
+    inset 0 1px 2px color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+
+/*
+ * 控件底：按钮、可点行的静息底。墨洗 4%，悬停 8%。
+ *
+ * 8% 是上限不是选择：外壳上墨洗到 10% 时 ink/75 就跌破 4.5（实算 4.42）。
+ * 所以按下态不能靠继续加墨来表达，改用「描边加深 + 上缘内投影」做压进去的观感——
+ * 既不动底色对比度，也不用 transform 缩放（缩放会让整行文字在按下瞬间发虚）。
+ *
+ * 悬停/按下写在这里而不是让每个组件各写一遍：32 个组件里可点物的交互反馈必须完全一致，
+ * 一处一个手感就是「同一个东西看起来不一样」，那是设计系统失效的第一个征兆。
+ */
+.surface-control {
+  background-color: color-mix(in srgb, var(--color-ink) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 8%, transparent);
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.surface-control:hover:not(:disabled):not([aria-disabled="true"]) {
+  background-color: color-mix(in srgb, var(--color-ink) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 12%, transparent);
+}
+
+.surface-control:active:not(:disabled):not([aria-disabled="true"]) {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 16%, transparent),
+    inset 0 1px 3px color-mix(in srgb, var(--color-ink) 10%, transparent);
+}
+
+/*
+ * 套在别的材质里面时摘掉投影。只改投影，描边保留——
+ * box-shadow 没法只覆盖列表里的一项，所以投影走变量，这个类只把变量清零。
+ */
+.surface-nested {
+  --glass-lift: 0 0 transparent;
+  --glass-lift-low: 0 0 transparent;
+}
+
+/*
+ * 弹窗遮罩：压暗并抽掉背景的饱和度，把注意力逼到弹窗上（Apple 的 dim to focus）。
+ *
+ * 这里刻意铺墨而不是用 brightness 等比压暗：等比压暗保住照片本身的色彩关系，
+ * 而遮罩要的恰恰相反——「背景退场」，把色相连同亮度一起洗掉正是它想要的效果。
+ */
+.surface-veil {
+  background-color: color-mix(in srgb, var(--color-ink) 42%, transparent);
+  backdrop-filter: blur(4px) saturate(70%);
+}
+
+/*
+ * ============================================================================
+ * 四、液态玻璃的使用边界 —— 这条是硬约束，不是风格建议
+ * ============================================================================
+ *
+ * 液态玻璃的正统做法是 SVG 位移滤镜（feDisplacementMap）做边缘折射。实测两个问题：
+ *
+ *   1. 性能：位移滤镜在宽度 >800px 的元素上会把合成器打到掉帧，而内容区正好超标。
+ *      滤镜成本随被采样面积走，一块跨屏的面板每帧都要重采一遍整个背景。
+ *   2. 依赖 DOM：url(#filter) 必须指向同文档里的 <svg><filter>，
+ *      而 Chromium 对 backdrop-filter: url() 与外部/data: URI 引用的支持并不可靠，
+ *      一旦解析成功但渲染失败，元素会连基础模糊一起丢掉——那是比没做更糟的失败模式。
+ *
+ * 所以这里落的是「边缘折射的 CSS 近似」：高饱和 + 微提亮的镜片底，
+ * 加顶缘受光亮边、底缘暗边、斜向高光扫过。没有真折射，但玻璃的厚度感来自边缘而不是中央，
+ * 近似能拿到八成观感、零 GPU 风险。真位移滤镜留给以后有性能预算时再说。
+ *
+ * 允许用 .surface-liquid 的地方，穷举，不得扩大：
+ *   - 侧栏的游戏行
+ *   - 主 CTA（开始游戏按钮）
+ *   - Toast
+ *   - 分段控件的选中页
+ * 除此之外一律用 .surface-panel / .surface-panel-strong 的毛玻璃。大面不上液态。
+ *
+ * ============================================================================
+ * 五、两个视觉模式：frost（纯毛玻璃）与 liquid（毛玻璃 + 小件液态）
+ * ============================================================================
+ *
+ * 开关是 :root 上的 data 属性：<html data-glass="liquid">。缺省（无属性）= frost，
+ * 所以属性读不出来、还没水合、或者以后被删掉，界面都落在保守的那一档上，不会出现无底浮层。
+ * 只做 CSS 侧；切换 UI 由别的 agent 接，React 侧只需要往 documentElement 上写这一个属性。
+ *
+ * 两个模式的不透明度完全相同，这是刻意的：液态模式只叠「提亮向」的边缘与高光，
+ * 不动任何一层的纸色比例，所以上面那张对比度表在两个模式下同时成立，
+ * 不需要维护两套预算。谁要在液态模式里调不透明度，就必须重跑脚本再补一张表。
+ */
+:root[data-glass="liquid"] .surface-liquid {
+  backdrop-filter: blur(10px) saturate(200%) brightness(1.05);
+  /* 斜向高光：模拟一块玻璃的受光面与背光面，只加亮不加暗，故不影响墨字对比度。 */
+  background-image: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--color-paper-on) 42%, transparent) 0%,
+    transparent 38%,
+    transparent 74%,
+    color-mix(in srgb, var(--color-paper-on) 20%, transparent) 100%
+  );
+  box-shadow:
+    var(--glass-sheen),
+    var(--glass-rim),
+    inset 0 -1px 0 color-mix(in srgb, var(--color-ink) 12%, transparent),
+    var(--glass-lift-low);
+}
+
+/* 液态模式下大面也补一道顶缘亮边，让小件与大面读起来是同一种材料；纯 box-shadow，零滤镜成本。 */
+:root[data-glass="liquid"] .surface-panel,
+:root[data-glass="liquid"] .surface-panel-strong {
+  box-shadow: var(--glass-sheen), var(--glass-rim), var(--glass-lift);
+}
+
+/*
+ * 压在照片上的纸片投影。现在只是 --glass-lift 的一个别名：
+ * 投影已经焊进三档自足材质，这个类只留给「自己不是材质、但确实直接压在图上」的极少数元素。
+ * 与 .surface-panel 等同时使用会把影子叠两遍，禁止。
+ */
+.paper-on-photo {
+  box-shadow: var(--glass-lift);
+}
+
  * 压暗层：纸色字裸压在偏暗的图上时，垫在文字底下把最亮那一成拉进达标区。
  *
  * 用 brightness 直接压照片本身，而不是铺一层墨色。铺墨等于在彩色照片上盖灰纱，
@@ -226,3 +507,32 @@
   border: 2px solid transparent;
   background-clip: padding-box;
 }
+
+/*
+ * 无障碍降级：系统开了「减少透明度」或「提高对比度」时，玻璃整体退成实心纸。
+ * 这不是可选的礼貌——半透明材质对低视力用户是实打实的阅读障碍，而这套系统里
+ * 玻璃承担的是装饰功能，退成实心不损失任何信息。
+ * 选择器带上液态那条的形态，是为了压过 :root[data-glass="liquid"] 的高特指度，
+ * 否则液态模式下的高光渐变会活过降级。
+ */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .surface-shell,
+  .surface-panel,
+  .surface-panel-strong,
+  .surface-liquid,
+  :root[data-glass="liquid"] .surface-liquid {
+    background-color: var(--color-paper);
+    background-image: none;
+    backdrop-filter: none;
+  }
+
+  .surface-sunken {
+    background-color: var(--color-paper-sink);
+  }
+
+  .surface-veil {
+    background-color: color-mix(in srgb, var(--color-ink) 62%, transparent);
+    backdrop-filter: none;
+  }
+}
+

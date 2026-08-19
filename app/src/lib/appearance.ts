@@ -5,7 +5,7 @@
 //
 // 浏览器（mock 开发环境）里没有这个协议，用一张内联 SVG 顶上，让版式在浏览器里也看得出效果。
 
-import { getAppearance, type AppearanceDto, type PlateZone } from "./ipc";
+import { getAppearance, type AppearanceDto, type GlassMode, type PlateZone } from "./ipc";
 
 /** 协议在 Windows WebView 里的形态。macOS/Linux 是 aurora-bg://localhost，但 Aurora 只出桌面 Windows。 */
 const ORIGIN = "http://aurora-bg.localhost";
@@ -50,7 +50,40 @@ export const EMPTY_APPEARANCE: AppearanceDto = {
   tint: null,
   plate: null,
   veil: 0,
+  glass: "frost",
 };
+
+/**
+ * 玻璃模式落到 DOM 上的唯一一处写入：`<html data-glass="liquid">`。
+ *
+ * 只有液态档写属性，frost 档把属性删掉而不是写成 "frost"。CSS 侧的契约是「缺省即 frost」，
+ * 写一个显式的 frost 值等于给同一个状态造出两种形态（缺省与显式），
+ * 那么以后谁写了 data-glass="frosted" 之类的错别字也会静默落在保守档上而没人发现。
+ *
+ * 取 documentElement 而不是某个容器：CSS 选择器是 :root[data-glass="liquid"]，
+ * 而且弹窗与 Toast 都 Portal 到 body 之外的层，挂在应用容器上它们就吃不到。
+ *
+ * 形参只要 dataset 而不是整个 HTMLElement：这条规则值得用例守住，而测试跑在 node 环境里
+ * 没有真 DOM。收窄到实际用到的那一个成员，真元素照样满足，用例也不必为它引一整个 jsdom。
+ */
+export function applyGlassMode(mode: GlassMode, root: { dataset: DOMStringMap }): void {
+  if (mode === "liquid") {
+    root.dataset.glass = "liquid";
+  } else {
+    delete root.dataset.glass;
+  }
+}
+
+/*
+ * 以下这套「裸字可读性判定」在玻璃换皮时被整体删掉过一次, 此处按原样恢复。
+ * 删它的理由是换皮后右下角那撮信息恒定坐在一块材质上, 判定看似没了用处;
+ * 但恒定上材质正是被否掉的那个做法 —— 一块纸压在照片上, 无论做得多透,
+ * 都还是在图里挖了一块出来。恢复裸字就必须连它的判定一起恢复,
+ * 否则字色写死成墨色, 换一张深色壁纸就直接读不出来。
+ *
+ * 数据链路一直是通的: Rust 侧 background.rs 的 plate_zone_of 始终在采样右下角的 p10/p90,
+ * AppearanceDto.plate 也始终在传, 被删的只是前端这一段消费逻辑。
+ */
 
 /**
  * 主页右下角那撮信息该怎么摆。
@@ -134,14 +167,18 @@ export function plateMode(plate: PlateZone | null, veil: number): PlateMode {
 }
 
 /**
- * 背景图当前是否正在显示——外壳与浮层据此决定用不用磨砂纸。
+ * 背景图当前是否正在显示——外壳与浮层据此决定用不用玻璃材质。
  *
- * 判定只在这里定义一次。外壳（AppShell）与 Toast 分处两棵子树、各自拿得到 pathname 与 appearance，
- * 两边各写一遍是能跑，但「哪些页面铺图」这条规则一改就会漂移，
- * 届时会出现外壳已经磨砂、右下角的提示却仍按无图渲染这种错配。
+ * 判据只剩「装没装壁纸」这一条。上一版还要求 pathname === "/"，因为那时图只铺主页；
+ * 全站铺图之后那半条判据成了假命题：内页照样压在图上，还按它判会让内页的标题栏与侧栏
+ * 退回不透明纸色，在图上切出两块硬边——正是磨砂当初要消掉的那种缝。
+ *
+ * 判定仍然只在这里定义一次。标题栏与侧栏分处两棵子树，两边各写一遍是能跑，
+ * 但「什么时候算压在图上」这条规则一改就会漂移，届时会出现标题栏已经上玻璃、
+ * 侧栏却仍按无图渲染这种错配。
  */
-export function photoShowsOn(pathname: string, background: string | null): boolean {
-  return pathname === "/" && background !== null;
+export function photoShows(background: string | null): boolean {
+  return background !== null;
 }
 
 /** 纸色遮罩上限，与后端的 MAX_BACKGROUND_VEIL 对齐。 */

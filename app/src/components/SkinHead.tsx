@@ -91,10 +91,13 @@ export function SkinHead({ uuid, name, size }: { uuid: string; name: string; siz
   }, [uuid, size]);
 
   if (failed) {
+    // 回落块是满墨实块而不是玻璃：它要在铺满全站的照片上一眼认出来，
+    // 而墨底纸字 16:1 在任何一张图上都成立，半透明反而会跟身下的面板糊成一层。
+    // 字号跟着 size 走：靠继承的话，同一枚回落块在 44px 的账户行与将来别处的小头像里会一个大一个小。
     return (
       <span
-        style={{ width: size, height: size }}
-        className="grid shrink-0 place-items-center rounded-control bg-ink font-extrabold text-paper-on"
+        style={{ width: size, height: size, fontSize: Math.round(size * 0.44) }}
+        className="grid shrink-0 place-items-center rounded-control bg-ink leading-none font-extrabold text-paper-on"
         aria-label={name}
       >
         {initialOf(name)}

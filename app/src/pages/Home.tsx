@@ -1,11 +1,10 @@
-// 主页：极简启动屏 —— 报头 + 巨号当前版本号（左上）+ 皮肤头像账户 chip 与开始游戏（右下）。
+// 主页：极简启动屏 —— 右下角一块信息面板，竖排 状态 / 当前版本 / 当前账户 / 启动键，上方整版留白。
 // 已安装版本列表移交「版本」页；主页只聚焦"以谁的身份、启动哪个版本"这一个动作。
 // 真调 IPC：入场并行 current_account + list_installed；启动走 launch_game + 日志窗；错误显式冒泡不吞。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { PageHeader } from "../components/PageHeader";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { CrashBanner } from "../components/CrashBanner";
@@ -53,40 +52,36 @@ function loaderText(v: InstalledVersionDto): string {
   return l.version ? `${l.kind} ${l.version}` : l.kind;
 }
 
-// 右下角那撮内容的几种形态。
+// 右下角那撮内容的三种形态。恒定铺一块材质的做法已被否掉: 一块纸压在照片上,
+// 无论做得多透, 都还是在图里挖了一块出来; 真正融进去的做法是让字自己适应它压着的那片图。
 //
-// 没有背景图时坐在纸底上，与改动前一模一样——不装背景的人不该因为这个功能看到任何变化。
-//
-// 有图时首选不要纸片：字直接压在图上，字色由后端量出的区域亮度决定（见 appearance.ts
-// 的 plateMode）。一块纸压在图上无论做得多透，都还是在图里挖了一块出来；
-// 真正融进去的做法是让字自己适应它压着的那片图。
-//
-// 图撑不住裸字时才退回磨砂纸片：区域明暗跨度大到墨色字与纸色字都到不了 4.5:1，
-// 或这张图是本功能上线前导入的、还没量过。那两种情况下纸片是唯一稳妥的兜底。
+// 全站铺图之后判定范围确实变了, 但启动屏仍是唯一把字裸压在图上的地方 ——
+// 别的页面文字都落在容器材质上, 走 app.css 那张实算表; 这里走按图取样的 plateMode。
+// 两套账各管各的场景, 不冲突。
 const PLATE_BARE = "mt-auto flex flex-col items-end gap-6 pt-10";
-// 裸字：不铺底，只靠字色。右对齐与间距沿用纸片那套，换形态时版位不跳。
+// 裸字: 不铺底, 只靠字色。右对齐与间距沿用纸片那套, 换形态时版位不跳。
 const PLATE_NAKED = "mt-auto ml-auto flex flex-col items-end gap-6 pt-10";
-// 兜底纸片。投影保留——纸压在照片上是实打实的两个平面，理由见 app.css 里 paper-on-photo 的注释。
+// 兜底纸片: 图明暗跨度大到两种字色都撑不住时才用。走信息密集档, 它最实。
 const PLATE_FROSTED =
-  "mt-auto ml-auto flex flex-col items-end gap-6 rounded-panel paper-frost-strong px-7 py-6 paper-on-photo";
+  "surface-panel-strong mt-auto ml-auto flex flex-col items-end gap-6 rounded-panel px-7 py-6";
 
 export function Home() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { appearance } = useAppearance();
+  // 只剩一个用处：崩溃横条据此决定要不要投影（压在照片上是两个平面要有影，
+  // 落在纯纸底上是纸对纸、由它自己挂 .surface-nested 摘掉）。字色与底色都归材质管，页面不再参与。
   const onPhoto = appearance.background !== null;
-  // 有图时先问一句这块图撑不撑得住裸字。撑得住就不要纸片，字直接压上去。
+  // 有图时先问一句这块图撑不撑得住裸字。撑得住就不要纸片, 字直接压上去。
   const mode = onPhoto ? plateMode(appearance.plate, appearance.veil) : "plate";
   const naked = mode !== "plate";
   /**
-   * 裸字模式下的字色。`shade` 是纸片模式沿用的原色阶，`tier` 是它在层级里的档位。
+   * 裸字模式下的字色。shade 是纸片模式沿用的原色阶, tier 是它在层级里的档位。
    *
-   * 两种裸字档的余量天差地别，不能套同一套规则：
-   * 满墨字压在浅色图上，准入线只保证满强度达到 4.5:1——同一底色下 ink/70 仅 3.48:1、
-   * ink/50 仅 2.39:1，就算底色亮到 p10=200，ink/50 也才 3.25:1，所以这一档只能全满墨，
-   * 层级交给字号与字重。
-   * 纸色字压在压暗后的深色图上则宽裕得多：满白 8.80、85% 得 6.91、70% 仍有 5.29，
-   * 三级都过得了 4.5，层级该还回来就还回来，全篇一个白只会读成一张扁平清单。
+   * 两种裸字档的余量天差地别, 不能套同一套规则:
+   * 满墨字压在浅色图上, 准入线只保证满强度达到 4.5:1, 所以这一档只能全满墨,
+   * 层级交给字号与字重; 纸色字压在压暗后的深色图上则宽裕得多, 三级都过得了 4.5,
+   * 层级该还回来就还回来, 全篇一个白只会读成一张扁平清单。
    */
   const fg = (shade: string, tier: "mid" | "weak") =>
     mode === "ink"
@@ -273,35 +268,17 @@ export function Home() {
 
   return (
     <>
-      {/* 有背景图时不画报头：「主页」这个标题的信息量为零（侧栏已经高亮着），
-          整版留给图更干净；真正有价值的状态字并进下面那块纸片。 */}
-      {!onPhoto && (
-        <motion.div variants={pageItem}>
-          <PageHeader
-            title="主页"
-            subtitle="以选中的账户与版本启动游戏"
-            right={
-              <>
-                <div className="text-[10px] font-bold tracking-[0.22em] text-ink/60">状态</div>
-                <div className="mt-1.5 font-mono text-[12px] tracking-[0.08em] text-ink/60 tabular-nums">
-                  {status}
-                </div>
-              </>
-            }
-          />
-        </motion.div>
-      )}
+      {/* 这一页刻意没有报头。原先那个「主页」标题在侧栏改成游戏行之后已经没有对应的导航项，
+          副标题「以选中的账户与版本启动游戏」重复了下面那块面板正在展示的三件事，
+          留着只是占掉启动屏最值钱的整版留白。唯一有信息量的状态字并进面板首行，
+          于是「有图画一套、无图画另一套」的两条渲染路径也一并收成一条。 */}
 
-      {/* 有图时同样改磨砂纸。paper-frost-strong 与 Card 自带的 bg-paper-sink 都设背景，
-          前者是无层（unlayered）自定义类、后者在 Tailwind 的 utilities 层里，
-          按 CSS Cascade 5 无层样式无条件胜出，结果是确定的而不是碰运气。
-          注：这里的 border-danger/40 目前是失效的（被 Card 基类的 border-ink/9 压掉，
-          同层同特异性、按生成顺序判负），那是既有缺陷，要给 Card 加 tone 才治得了，本次未动。 */}
+      {/* 错误块：告警语态由图标与朱红字承担。容器材质走 Card（.surface-panel），页面不再自铺磨砂。
+          原来挂在这里的 border-danger/40 已删——它本来就被 Card 基类的描边压掉、从未生效，
+          材质化之后描边改走 inset box-shadow，更没有它的位置。危险语态的容器变体要治，
+          得给 Card 加 tone，那是 Card 自己的事。 */}
       {error && (
-        <Card
-          variants={pageItem}
-          className={`mb-6 flex items-center gap-4 border-danger/40 ${onPhoto ? "paper-frost-strong paper-on-photo" : ""}`}
-        >
+        <Card variants={pageItem} className="mb-6 flex items-center gap-4">
           <span className="text-danger [&_svg]:h-5 [&_svg]:w-5">
             <AlertIcon />
           </span>
@@ -314,15 +291,16 @@ export function Home() {
 
       {/* 崩溃横条：被动触发的止损入口，不常驻也不打断启动流程。完整诊断在实例卷宗页。 */}
       {/* 玩家点「关闭」是止损动作的收尾，一条报警横条瞬间蒸发更像界面又出了故障，而不是「这次点击生效了」；
-          AnimatePresence 留出退场时间，让它淡着上滑走掉。外层这层纸在有背景图时自带投影
-          （app.css 的 paper-on-photo），必须与内层横条同步淡出，否则会先剩一圈没有主体的影子。 */}
+          AnimatePresence 留出退场时间，让它淡着上滑走掉。
+          投影已焊进横条自己的材质，这层壳只管外边距与退场，不再补 paper-on-photo——
+          两处都画影子会叠成一圈重影。 */}
       <AnimatePresence>
         {crash && (
           <motion.div
             variants={pageItem}
             exit={{ opacity: 0, y: -8 }}
             transition={springs.settle}
-            className={`mb-6 ${onPhoto ? "paper-on-photo" : ""}`}
+            className="mb-6"
           >
             <CrashBanner
               onPhoto={onPhoto}
@@ -338,31 +316,37 @@ export function Home() {
         )}
       </AnimatePresence>
 
-      {/* 启动屏：右下角竖排 版本信息 → 账户 → 放大 Start，上方大留白 */}
-      <motion.section variants={pageItem} aria-label="启动" className="flex min-h-0 flex-1 flex-col">
+      {/* 启动屏: 右下角竖排 状态 -> 版本信息 -> 账户, 再往下是放大的 Start, 上方大留白。
+       *
+       * 这撮信息按三态渲染: 无图坐纸底 / 有图且撑得住就裸字压图 / 图撑不住才退回磨砂纸片。
+       * 判定见 appearance.ts 的 plateMode, 数据来自 Rust 侧对右下角这块区域的 p10/p90 取样。
+       * 恒定铺一块材质试过, 被否掉: 纸压在照片上永远是在图里挖了一块出来, 启动屏整版留给图
+       * 才是这一屏的版面语言, 可读性该由字色去适应图, 而不是拿一块底把图盖住。
+       */}
+      <motion.section
+        variants={pageItem}
+        aria-label="启动"
+        className="flex min-h-0 flex-1 flex-col items-end gap-5"
+      >
         <div
           className={
             !onPhoto
               ? PLATE_BARE
               : naked
                 ? // 基色定在容器上而不是逐个节点写。版本名与账户名本来就没写颜色类、
-                  // 靠继承 body 的墨色，压在深色图上直接看不见——逐处去补是治标，
-                  // 往后谁再加一行不写颜色的文字就会重犯。定在容器上，新增节点自动就是对的。
+                  // 靠继承 body 的墨色, 压在深色图上直接看不见 —— 逐处去补是治标,
+                  // 往后谁再加一行不写颜色的文字就会重犯。定在容器上, 新增节点自动就是对的。
                   `${PLATE_NAKED} ${mode === "paperOn" ? "text-paper-on" : "text-ink"}`
                 : PLATE_FROSTED
           }
         >
-          {onPhoto && (
-            <div className="flex items-baseline gap-2.5 self-end">
-              <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/60", "weak")}`}>状态</span>
-              {/* 比报头里那份状态值深一档：ink/60 压在不透明纸上是 4.56:1，勉强过线，
-                  而这里底下是 92% 磨砂，剩的余量不够，掉到 4.3 上下。只改这一处，
-                  报头那份（无背景图时才渲染）保持原样，免得「装不装背景」变成两套字色。 */}
-              <span className={`font-mono text-[12px] tracking-[0.08em] ${fg("text-ink/60", "mid")} tabular-nums`}>
-                {status}
-              </span>
-            </div>
-          )}
+          <div className="flex items-baseline gap-2.5 self-end">
+            <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/75", "weak")}`}>状态</span>
+            <span className={`font-mono text-[12px] tracking-[0.08em] ${fg("text-ink/75", "mid")} tabular-nums`}>
+              {status}
+            </span>
+          </div>
+
           {/* 版本信息：实例名(主，粗大) + MC版本 · 加载器 · Mod数(次，细小) */}
           {current ? (
             <div className="max-w-[460px] text-right">
@@ -370,13 +354,13 @@ export function Home() {
                 {current.id}
               </div>
               {versionMeta && (
-                <div className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/60", "mid")}`}>
+                <div className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/75", "mid")}`}>
                   {versionMeta}
                 </div>
               )}
             </div>
           ) : (
-            <div className={`text-right text-[15px] font-bold ${fg("text-ink/60", "weak")}`}>
+            <div className={`text-right text-[15px] font-bold ${fg("text-ink/75", "weak")}`}>
               {loading ? "读取中…" : "尚未安装版本"}
             </div>
           )}
@@ -386,34 +370,40 @@ export function Home() {
             <div className="flex items-center gap-3">
               <SkinHead uuid={account.uuid} name={account.name} size={44} />
               <div className="min-w-0 text-right">
-                <div className="truncate text-[16px] leading-tight font-extrabold">{account.name}</div>
-                <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/60", "weak")}`}>
+                <div className="truncate text-[16px] leading-tight font-extrabold">
+                  {account.name}
+                </div>
+                <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/75", "weak")}`}>
                   {ACCOUNT_TYPE_LABEL[account.account_type]}
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex flex-col items-end gap-2">
-              <span className={`text-[13px] ${fg("text-ink/60", "weak")}`}>
+              <span className={`text-[13px] ${fg("text-ink/75", "weak")}`}>
                 {loading ? "正在读取账户…" : "还没有账户"}
               </span>
               {!loading && (
-                <Button variant="secondary" onClick={() => void handleCreateOffline()} disabled={busy}>
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleCreateOffline()}
+                  disabled={busy}
+                >
                   创建离线账户
                 </Button>
               )}
             </div>
           )}
-
-          {/* 主操作：手写体 Aurora 启动动效（竖线扫左 → 按真实进度写字 → 进程起+2s → Stop）。日志后台存。 */}
-          <LaunchControl
-            onDark={mode === "paperOn"}
-            phase={launchPhase}
-            disabled={!canLaunch}
-            onStart={() => void handlePlay()}
-            onStop={() => void handleStop()}
-          />
         </div>
+
+        {/* 主操作：手写体 Aurora 启动动效（竖线扫左 → 按真实进度写字 → 进程起+2s → Stop）。日志后台存。 */}
+        <LaunchControl
+          onDark={mode === "paperOn"}
+          phase={launchPhase}
+          disabled={!canLaunch}
+          onStart={() => void handlePlay()}
+          onStop={() => void handleStop()}
+        />
       </motion.section>
     </>
   );

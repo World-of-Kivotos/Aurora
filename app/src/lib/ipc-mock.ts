@@ -7,6 +7,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   CrashDiagnosis,
   CrashReport,
+  GlassMode,
   History,
   HistoryEvent,
   InstallPlan,
@@ -282,11 +283,14 @@ const APPEARANCE: {
   tint: string | null;
   plate: { p10: number; p90: number } | null;
   veil: number;
+  glass: GlassMode;
 } = {
   background: "雪山黄昏.jpg",
   tint: "#4a6274",
   plate: { p10: 96, p90: 158 },
   veil: 0,
+  // 与后端默认同档：浏览器预览默认落在保守的毛玻璃上，切过去才看得出液态到底加了什么。
+  glass: "frost",
 };
 
 function appearanceDto() {
@@ -966,6 +970,10 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
       APPEARANCE.tint = null;
       APPEARANCE.plate = null;
     }
+    return appearanceDto() as T;
+  }
+  if (cmd === "set_glass_mode") {
+    APPEARANCE.glass = _args?.glass as GlassMode;
     return appearanceDto() as T;
   }
   if (cmd === "set_background_veil") {

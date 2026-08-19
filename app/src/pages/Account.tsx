@@ -33,8 +33,12 @@ const TYPE_LABEL: Record<AccountType, string> = {
   authlib_injector: "外置登录",
 };
 
+// 输入框走下沉块：它是寄生层（只铺墨洗、不带 backdrop-filter），本页所有输入都在弹窗里，
+// 宿主是弹窗那层自足材质，符合「寄生层不得直接铺在照片上」。
+// 悬停/聚焦不再改描边色——材质的描边是 inset 阴影，再挂一条 border 会撑大盒子；
+// 聚焦的可见性由 focus-visible 的朱红焦点环承担（文本框在 Chromium 里点选也会命中 focus-visible）。
 const INPUT_CLS =
-  "w-full rounded-control border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink/60 hover:border-ink/40 focus:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "surface-sunken w-full rounded-control px-3.5 py-2.5 text-[14px] text-ink outline-none placeholder:text-ink/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 interface TextFieldProps {
   label: string;
@@ -257,14 +261,15 @@ export function Account() {
 
       <motion.div variants={pageItem}>
         {loadError ? (
-          <div className="rounded-panel border border-danger/40 bg-paper p-[18px]">
+          // 告警块用默认档材质。危险语态由图标与朱红字承担，不再靠一圈 border-danger：
+          // 材质的描边走 inset 阴影，容器要分语态得由材质层出变体，页面自己加边框只会打架。
+          // 报错正文用满档 danger 而不是 danger/80——后者压在这档玻璃上实算 4.26，不到 4.5。
+          <div className="surface-panel rounded-panel p-[18px]">
             <div className="flex items-start gap-3 text-danger">
               <AlertIcon size={20} className="mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <div className="text-[14px] font-bold">读取账户失败</div>
-                <div className="mt-1 font-mono text-[12px] break-words text-danger/80">
-                  {loadError}
-                </div>
+                <div className="mt-1 font-mono text-[12px] break-words text-danger">{loadError}</div>
               </div>
             </div>
             <div className="mt-4">
@@ -274,15 +279,25 @@ export function Account() {
             </div>
           </div>
         ) : accounts === null ? (
-          <p className="font-mono text-[12px] tracking-[0.06em] text-ink/60">正在读取账户…</p>
+          // 读取中与空态这两句原本是裸字，从前靠内页的纸底托着；图铺满全站之后身下是照片，
+          // 必须自带一档材质。w-fit 让这块纸只包住那一行，不至于为一句话铺满整行。
+          <p className="surface-panel w-fit rounded-panel px-4 py-3 font-mono text-[12px] tracking-[0.06em] text-ink/75">
+            正在读取账户…
+          </p>
         ) : accounts.length === 0 ? (
-          <EmptyState icon={<UserIcon />} title="还没有账户，用下方入口添加一个开始游戏。" />
+          <div className="surface-panel rounded-panel px-5 py-2">
+            <EmptyState icon={<UserIcon />} title="还没有账户，用下方入口添加一个开始游戏。" />
+          </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {/* 删除账户后 load() 重取会让卡片凭空消失、栅格硬跳位；靠 AnimatePresence 与 layout 让退场和重排连续可见。 */}
             <AnimatePresence initial={false}>
               {accounts.map((a) => {
                 const isCurrent = a.uuid === currentUuid;
+                // 「当前」那一档强调用 outline 而不是 border 或 ring：材质的描边是 ink/9 的 inset
+                // 阴影，强调不出「当前」；border 会让两态差出 1px 把栅格挤歪（原来靠两态都留边框绕开），
+                // 而 ring 在 Tailwind v4 里也是写 box-shadow，会被材质那条无层规则整条覆盖掉。
+                // outline 画在边框盒之外、不占布局、不与 box-shadow 争同一个属性。
                 return (
                   <motion.div
                     key={a.uuid}
@@ -292,8 +307,8 @@ export function Account() {
                     exit={{ opacity: 0, scale: 0.96 }}
                     transition={springs.settle}
                     className={[
-                      "flex flex-col rounded-panel border bg-paper-sink p-4",
-                      isCurrent ? "border-ink" : "border-ink/10",
+                      "surface-panel flex flex-col rounded-panel p-4",
+                      isCurrent ? "outline-1 outline-ink" : "",
                     ].join(" ")}
                   >
                     <div className="flex items-center gap-3.5">
@@ -306,13 +321,15 @@ export function Account() {
                             <motion.span
                               layoutId="current-account-badge"
                               transition={springs.soft}
-                              className="shrink-0 rounded-chip bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
+                              // 实心 accent 底 + 纸色字（4.77）。原先的 bg-accent/12 淡底配朱红字
+                              // 在暗照片上只有 2.93，连图标的 3.0 都不到——徽标恰恰是最该一眼认出的那类字。
+                              className="shrink-0 rounded-chip bg-accent px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-paper-on"
                             >
                               当前
                             </motion.span>
                           )}
                         </div>
-                        <div className="mt-0.5 text-[12px] text-ink/60">
+                        <div className="mt-0.5 text-[12px] text-ink/75">
                           {TYPE_LABEL[a.account_type]}
                         </div>
                       </div>
@@ -335,8 +352,10 @@ export function Account() {
         )}
       </motion.div>
 
-      <motion.div variants={pageItem} className="mt-9">
-        <h2 className="mb-4 text-[12px] font-bold tracking-[0.16em] text-ink/60">添加账户</h2>
+      {/* 添加入口收进一块分区面板：小节标题本来是裸字，压在照片上读不出来；
+          而三颗按钮各自的控件底是寄生层，也需要一层自足材质托着才合法。一块面板同时解决两件事。 */}
+      <motion.div variants={pageItem} className="surface-panel mt-9 rounded-panel px-5 py-5">
+        <h2 className="mb-4 text-[12px] font-bold tracking-[0.16em] text-ink/75">添加账户</h2>
         <div className="flex flex-wrap gap-3">
           <Button
             variant="primary"
@@ -370,7 +389,8 @@ export function Account() {
             <p className="text-[13.5px] text-ink/75">
               在浏览器打开下方网址，并输入配对码完成登录：
             </p>
-            <div className="mt-3 rounded-panel border border-ink/12 bg-paper-sink px-4 py-3 text-center">
+            {/* 配对码是要照抄的一串字符，按代码块处理：下沉块托底，寄生在弹窗那层材质上。 */}
+            <div className="surface-sunken mt-3 rounded-panel px-4 py-3 text-center">
               <div className="font-mono text-[26px] font-bold tracking-[0.3em] text-ink tabular-nums">
                 {deviceCode.user_code}
               </div>
@@ -385,10 +405,10 @@ export function Account() {
                 </Button>
               </div>
             </div>
-            <p className="mt-4 text-[12.5px] text-ink/60">{deviceCode.message}</p>
+            <p className="mt-4 text-[12.5px] text-ink/75">{deviceCode.message}</p>
           </div>
         ) : (
-          <p className="text-[13.5px] text-ink/60">正在向微软申请配对码，请稍候…</p>
+          <p className="text-[13.5px] text-ink/75">正在向微软申请配对码，请稍候…</p>
         )}
       </Modal>
 

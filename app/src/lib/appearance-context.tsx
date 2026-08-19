@@ -4,7 +4,7 @@
 // 拉一次，是为了让设置页改完当场生效——否则得等下次进主页重新拉取，中间那段界面在说谎。
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { EMPTY_APPEARANCE, loadAppearance } from "./appearance";
+import { applyGlassMode, EMPTY_APPEARANCE, loadAppearance } from "./appearance";
 import type { AppearanceDto } from "./ipc";
 
 interface AppearanceState {
@@ -21,6 +21,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadAppearance().then(setAppearance);
   }, []);
+
+  // 玻璃模式是 CSS 侧的全局开关（:root[data-glass]），所以它落在 DOM 根上而不是某棵子树里。
+  // 跟着同一份 appearance 走：设置页改完把新 DTO 推进来，这里当场把属性改掉，
+  // 不需要第二条通路，也就不存在「配置已改、界面还是旧材质」的中间态。
+  useEffect(() => {
+    applyGlassMode(appearance.glass, document.documentElement);
+  }, [appearance.glass]);
 
   const applyAppearance = useCallback((next: AppearanceDto) => setAppearance(next), []);
 

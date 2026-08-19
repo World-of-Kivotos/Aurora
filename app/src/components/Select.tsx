@@ -117,14 +117,17 @@ export function Select<T extends string>({
         onClick={() => (open ? setOpen(false) : openList())}
         onKeyDown={onKeyDown}
         className={[
-          "flex w-full items-center justify-between gap-3 rounded-control border bg-paper px-3.5 py-2.5",
-          "text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          "surface-control flex w-full items-center justify-between gap-3 rounded-control px-3.5 py-2.5",
+          "text-[14px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
           "disabled:pointer-events-none disabled:opacity-45",
-          open ? "border-ink" : "border-ink/16 hover:border-ink/40",
+          // 展开态用 outline 表达：材质的描边是无层的 inset 阴影，工具类的 ring/shadow 覆不掉它，
+          // 而 outline 既不参与那场冲突也不占布局；聚焦时 focus-visible 变体特异性更高，会盖成朱红。
+          open ? "outline-2 -outline-offset-1 outline-ink/35" : "",
           className ?? "",
         ].join(" ")}
       >
-        <span className={selected ? "text-ink" : "text-ink/60"}>
+        {/* 占位符只能降到 ink/75：玻璃上 ink/60 过不了正文 4.5，弱化改用与选中值的满墨做对比。 */}
+        <span className={selected ? "text-ink" : "text-ink/75"}>
           {selected ? selected.label : placeholder}
         </span>
         <svg
@@ -145,6 +148,9 @@ export function Select<T extends string>({
 
       <AnimatePresence>
         {open && (
+          // 取最实的一档而不是默认档：这层浮在别的玻璃之上，两层同档半透明叠起来谁也看不清，
+          // 浮层必须比身下的容器更实才立得住；96% 顺带把长选项列表推过 AAA，正是这一档的本职。
+          // 投影已焊在材质里，且浮层是真高差，故不加 .surface-nested。
           <motion.ul
             role="listbox"
             id={listId}
@@ -152,7 +158,7 @@ export function Select<T extends string>({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={springs.tap}
-            className="absolute z-40 mt-1.5 max-h-64 w-full overflow-y-auto rounded-panel border border-ink/16 bg-paper p-1 shadow-[0_8px_24px_-12px_rgba(20,22,26,0.45)]"
+            className="surface-panel-strong absolute z-40 mt-1.5 max-h-64 w-full overflow-y-auto rounded-panel p-1"
           >
             {options.map((opt, i) => {
               const isSelected = opt.value === value;

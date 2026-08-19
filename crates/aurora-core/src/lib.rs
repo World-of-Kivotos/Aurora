@@ -53,7 +53,7 @@ pub mod versions;
 pub use background::{BACKGROUNDS_DIR, BackgroundEntry};
 pub use compat::{Compatibility, InstanceMatch, classify};
 pub use config::{
-    AppearanceSettings, AuroraConfig, BackgroundRef, ConfigStore, DownloadSourcePolicy,
+    AppearanceSettings, AuroraConfig, BackgroundRef, ConfigStore, DownloadSourcePolicy, GlassMode,
     MAX_BACKGROUND_VEIL, MemorySettings, NamedDirectory,
 };
 pub use crashdiag::{CrashReport, CrashSuspect};

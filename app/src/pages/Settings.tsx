@@ -33,6 +33,7 @@ import {
   switchGameDirectory,
   updateConfig,
   setGameDirectory,
+  setGlassMode,
   detectJava,
   installJava,
   onCoreEvent,
@@ -42,11 +43,15 @@ import {
   type GameDirectoryEntry,
   type IsolationPolicy,
   type JavaInstallationDto,
+  type GlassMode,
   type NamedDirectory,
 } from "../lib/ipc";
+import { useAppearance } from "../lib/appearance-context";
 
+// 输入框取下沉档。它是寄生层，永远套在分区卡片里，不会直接压在照片上，符合寄生层的落位约束。
+// 描边交给 .surface-sunken 的 inset 阴影，不再自带 border：加减材质类时盒子尺寸不变，省掉一次整页重排。
 const inputCls =
-  "w-full rounded-control border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "surface-sunken w-full rounded-control px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 /**
  * 带内嵌提交按钮的输入框：按钮压在输入框右侧内部，不再与输入框并排。
@@ -93,7 +98,8 @@ function InputWithAction({
         className={[
           "absolute top-1 right-1 bottom-1 inline-flex shrink-0 cursor-pointer items-center gap-1.5",
           "rounded-chip px-3 text-[13px] font-bold whitespace-nowrap",
-          "bg-ink/[0.07] text-ink/75 transition-colors hover:bg-ink hover:text-paper-on",
+          // 实心墨底而不是再铺一层墨洗：它压在输入框的下沉层上，两层墨洗相加会越过单元素 8% 的浓度上限。
+          "bg-ink text-paper-on transition-colors hover:bg-accent",
           "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
           "disabled:pointer-events-none disabled:opacity-45",
         ].join(" ")}
@@ -109,6 +115,12 @@ const DOWNLOAD_SOURCE_OPTIONS: { value: DownloadSourcePolicy; label: string }[] 
   { value: "auto", label: "自动（按网络择优）" },
   { value: "official_first", label: "官方源优先" },
   { value: "mirror_first", label: "镜像源优先" },
+];
+
+// 两档写成人话而不是 frost / liquid：设置项要让人在不知道内部术语的前提下选得对。
+const GLASS_OPTIONS: { value: GlassMode; label: string }[] = [
+  { value: "frost", label: "磨砂玻璃" },
+  { value: "liquid", label: "液态玻璃" },
 ];
 
 const ISOLATION_OPTIONS: { value: IsolationPolicy; label: string }[] = [
@@ -138,23 +150,35 @@ const JAVA_SOURCE_LABEL: Record<JavaInstallationDto["source"], string> = {
   managed: "托管",
 };
 
-// 分区外壳：小标题 + 下沉卡片，整块参与页面 stagger 入场。
+/**
+ * 分区外壳：标题收进卡片内部，整块参与页面 stagger 入场。
+ *
+ * 标题原先摆在卡片外面。背景图铺满全站之后那里是裸露的照片，11px 的小标题没有任何底可依，
+ * 遇上亮图直接消失；收进卡片就自动落在分区卡片那一档材质的对比度预算里。
+ */
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <motion.div variants={pageItem} className="mt-7 first:mt-0">
-      <h2 className="mb-3 text-[11px] font-bold tracking-[0.22em] text-ink/60">{title}</h2>
-      <Card>{children}</Card>
+    <motion.div variants={pageItem} className="mt-5 first:mt-0">
+      <Card>
+        <h2 className="mb-3.5 text-[11px] font-bold tracking-[0.22em] text-ink/75">{title}</h2>
+        <div>{children}</div>
+      </Card>
     </motion.div>
   );
 }
 
-// 设置行：左侧标题+说明，右侧控件槽（定宽）。
+/**
+ * 设置行：左侧标题+说明，右侧控件槽（定宽）。
+ *
+ * 分隔线从 ink/9 加到 ink/12。设置页是全站最密的「标题+说明+控件」堆叠，而分区卡片本身半透明，
+ * 底下照片的纹理会把太淡的发丝线吃掉，行与行于是糊成一片；ink/12 在纯黑与纯白两端都还立得住。
+ */
 function Row({ title, desc, control }: { title: string; desc: string; control: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-6 border-b border-ink/9 py-[18px] first:pt-0 last:border-b-0 last:pb-0">
+    <div className="flex items-center justify-between gap-6 border-b border-ink/12 py-[18px] first:pt-0 last:border-b-0 last:pb-0">
       <div className="min-w-0">
         <div className="text-[15px] font-bold">{title}</div>
-        <div className="mt-1 text-[12.5px] text-ink/60">{desc}</div>
+        <div className="mt-1 text-[12.5px] text-ink/75">{desc}</div>
       </div>
       <div className="shrink-0">{control}</div>
     </div>
@@ -164,6 +188,8 @@ function Row({ title, desc, control }: { title: string; desc: string; control: R
 export function Settings() {
   const { toast } = useToast();
   const { reduceMotion, setReduceMotion } = useMotionPref();
+  // 外观走全局 context 而不是本页各拉一次：改完当场生效，否则外壳还按旧材质渲染。
+  const { appearance, applyAppearance } = useAppearance();
 
   const [tab, setTab] = useState<SettingsTab>("launcher");
 
@@ -264,6 +290,17 @@ export function Settings() {
       toast("已保存", "success");
     } catch (e) {
       setConfig(prev);
+      toast(String(e), "error");
+    }
+  };
+
+  // 玻璃模式没有乐观更新：它只有两档、后端一个赋值就返回，抢那一次往返不值得多一条回滚路径。
+  // 失败照常 toast 并保持旧值——DTO 没换，界面上那个 Select 也就还停在原来那一档。
+  const applyGlass = async (glass: GlassMode) => {
+    try {
+      applyAppearance(await setGlassMode(glass));
+      toast("已保存", "success");
+    } catch (e) {
       toast(String(e), "error");
     }
   };
@@ -487,48 +524,64 @@ export function Settings() {
         <PageHeader title="设置" subtitle={activeTab.subtitle} />
       </motion.div>
 
-      {/* 一级分区：启动器自身的行为 vs 影响游戏运行的设置。与下载页同一套 tab 语言。 */}
-      <motion.div variants={pageItem} className="mb-6 flex gap-1 border-b border-ink/10">
-        {TABS.map((t) => {
-          const on = t.key === tab;
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              aria-current={on ? "page" : undefined}
-              className={[
-                "relative -mb-px flex cursor-pointer items-center gap-2 px-3 pb-2.5 text-[14px] transition-colors",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                on ? "font-extrabold text-ink" : "font-semibold text-ink/60 hover:text-ink/75",
-              ].join(" ")}
-            >
-              <Icon size={16} />
-              {t.label}
-              {on && (
-                <motion.span
-                  layoutId="settings-tab-underline"
-                  className="absolute inset-x-0 -bottom-px h-[2px] bg-accent"
-                  transition={springs.tap}
-                />
-              )}
-            </button>
-          );
-        })}
+      {/*
+        一级分区：启动器自身的行为 vs 影响游戏运行的设置。
+
+        从下划线页签改成分段控件。理由是背景图铺满全站之后，原先那排标签直接裸露在照片上，
+        既没有底也没法靠色阶救——一条 2px 下划线撑不起一整排文字的可读性。
+        容器给一档面板玻璃把文字接住，选中页用液态玻璃：它是设计契约点名允许液态的四处之一，
+        面积也确实只有一颗控件那么大。layoutId 让那块玻璃在两页之间滑过去，
+        比一根下划线更能交代「当前在哪一页」。
+      */}
+      <motion.div variants={pageItem} className="mb-6">
+        <div className="surface-panel inline-flex gap-1 rounded-panel p-1.5">
+          {TABS.map((t) => {
+            const on = t.key === tab;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                aria-current={on ? "page" : undefined}
+                className={[
+                  "relative flex cursor-pointer items-center gap-2 rounded-control px-4 py-2 text-[14px] transition-colors",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                  on ? "font-extrabold text-ink" : "font-semibold text-ink/75 hover:text-ink",
+                ].join(" ")}
+              >
+                {on && (
+                  <motion.span
+                    layoutId="settings-tab-active"
+                    aria-hidden="true"
+                    className="surface-liquid surface-nested absolute inset-0 rounded-control"
+                    transition={springs.tap}
+                  />
+                )}
+                {/* 选中片是绝对定位的兄弟节点，会盖住普通流里的文字；内容自己定位一次才回到它上面。 */}
+                <span className="relative flex items-center gap-2">
+                  <Icon size={16} />
+                  {t.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </motion.div>
 
       {configLoading && (
         <motion.div variants={pageItem}>
           <Card>
-            <p className="py-2 text-[13.5px] text-ink/60">载入配置中…</p>
+            <p className="py-2 text-[13.5px] text-ink/75">载入配置中…</p>
           </Card>
         </motion.div>
       )}
 
       {!configLoading && configError && (
         <motion.div variants={pageItem}>
-          <Card className="border-danger/40">
+          {/* 危险描边走 outline：Card 的底改成材质类之后描边是 inset 阴影，外部再传 border-* 已经没有着力点，
+              而 outline 既不参与 box-shadow 的叠加、也不撑大盒子。 */}
+          <Card className="outline-2 outline-danger/45">
             <div className="flex items-start gap-3">
               <span className="text-danger">
                 <AlertIcon size={20} />
@@ -613,9 +666,9 @@ export function Settings() {
                     </Section>
 
                     <Section title="目录">
-                      <div className="border-b border-ink/9 py-[18px] first:pt-0">
+                      <div className="border-b border-ink/12 py-[18px] first:pt-0">
                         <div className="text-[15px] font-bold">游戏目录</div>
-                        <div className="mt-1 text-[12.5px] text-ink/60">.minecraft 所在位置，变更后需重新扫描版本</div>
+                        <div className="mt-1 text-[12.5px] text-ink/75">.minecraft 所在位置，变更后需重新扫描版本</div>
                         <div className="mt-3">
                           <InputWithAction
                             label="游戏目录"
@@ -628,11 +681,11 @@ export function Settings() {
                           />
                         </div>
                       </div>
-                      <div className="border-b border-ink/9 py-[18px]">
+                      <div className="border-b border-ink/12 py-[18px]">
                         <div className="flex items-center justify-between gap-4">
                           <div>
                             <div className="text-[15px] font-bold">文件夹列表</div>
-                            <div className="mt-1 text-[12.5px] text-ink/60">
+                            <div className="mt-1 text-[12.5px] text-ink/75">
                               可以并存多个 .minecraft，点「切换」把某个设为当前；移除只删记录，不动磁盘文件
                             </div>
                           </div>
@@ -651,30 +704,28 @@ export function Settings() {
                           {dirs.map((d) => (
                             <li
                               key={d.path}
-                              className="flex items-center gap-3 rounded-control border border-ink/10 bg-paper px-3 py-2.5"
+                              className="surface-sunken flex items-center gap-3 rounded-control px-3 py-2.5"
                             >
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-2">
                                   <span className="truncate text-[13.5px] font-bold">{d.name}</span>
+                                  {/* 「当前」用实心朱红配纸色字，不用朱红洗底配朱红字：10px 的朱红压在半透明朱红上，
+                                      在玻璃那一档底色上算不到 4.5，而它恰恰是这一列里最该一眼认出来的记号。 */}
                                   {d.is_current && (
-                                    <span className="shrink-0 rounded-chip bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
+                                    <span className="shrink-0 rounded-chip bg-accent px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-paper-on">
                                       当前
                                     </span>
                                   )}
                                   {!d.available && (
                                     <span
                                       title="这个位置现在访问不到（盘没挂或已被删除），记录仍然保留"
-                                      className="shrink-0 rounded-chip border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/60"
+                                      className="shrink-0 rounded-chip border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/75"
                                     >
                                       不可达
                                     </span>
                                   )}
                                 </span>
-                                <span
-                                  className={`mt-0.5 block truncate font-mono text-[11px] ${
-                                    d.available ? "text-ink/60" : "text-ink/60"
-                                  }`}
-                                >
+                                <span className="mt-0.5 block truncate font-mono text-[11px] text-ink/75">
                                   {d.path}
                                 </span>
                               </span>
@@ -685,7 +736,7 @@ export function Settings() {
                                     onClick={() => void switchDir(d.path, d.name)}
                                     disabled={dirsBusy || !d.available}
                                     title={d.available ? undefined : "位置访问不到，无法切过去"}
-                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/75 transition-colors hover:bg-ink hover:text-paper-on focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     切换
                                   </button>
@@ -693,7 +744,7 @@ export function Settings() {
                                     type="button"
                                     onClick={() => void removeDir(d.path)}
                                     disabled={dirsBusy}
-                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/75 transition-colors hover:text-danger focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     移除
                                   </button>
@@ -704,14 +755,14 @@ export function Settings() {
                         </ul>
 
                         {discovered.length > 0 && (
-                          <div className="mt-3 rounded-panel border border-ink/10 bg-paper-sink px-3 py-2.5">
-                            <div className="text-[12px] font-bold text-ink/60">发现未记录的文件夹</div>
+                          <div className="surface-sunken mt-3 rounded-panel px-3 py-2.5">
+                            <div className="text-[12px] font-bold text-ink/75">发现未记录的文件夹</div>
                             <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
                               {discovered.map((d) => (
                                 <li key={d.path} className="flex items-center gap-3">
                                   <span className="min-w-0 flex-1">
                                     <span className="block truncate text-[12.5px] font-bold">{d.name}</span>
-                                    <span className="block truncate font-mono text-[11px] text-ink/60">
+                                    <span className="block truncate font-mono text-[11px] text-ink/75">
                                       {d.path}
                                     </span>
                                   </span>
@@ -719,7 +770,7 @@ export function Settings() {
                                     type="button"
                                     onClick={() => void adoptDir(d.name, d.path)}
                                     disabled={dirsBusy}
-                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/75 transition-colors hover:bg-ink hover:text-paper-on focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     添加
                                   </button>
@@ -731,8 +782,8 @@ export function Settings() {
                       </div>
 
                       <div className="py-[18px] last:pb-0">
-                        <div className="text-[12.5px] text-ink/60">数据目录</div>
-                        <div className="mt-1 font-mono text-[12px] break-all text-ink/60">{config.data_dir}</div>
+                        <div className="text-[12.5px] text-ink/75">数据目录</div>
+                        <div className="mt-1 font-mono text-[12px] break-all text-ink/75">{config.data_dir}</div>
                       </div>
                     </Section>
 
@@ -743,13 +794,13 @@ export function Settings() {
                           <span
                             className={[
                               "rounded-chip px-2 py-0.5 text-[11px] font-bold tracking-[0.08em]",
-                              config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/60",
+                              config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/75",
                             ].join(" ")}
                           >
                             {config.has_client_id ? "已配置" : "未配置"}
                           </span>
                         </div>
-                        <div className="mt-1 text-[12.5px] text-ink/60">
+                        <div className="mt-1 text-[12.5px] text-ink/75">
                           自定义 Azure 应用的 client_id，用于微软正版登录；出于安全不回显已保存的值
                         </div>
                         <div className="mt-3">
@@ -769,7 +820,33 @@ export function Settings() {
                   </>
                 )}
 
-                <Section title="界面">
+                {/*
+                  外观一节按「先定底图，再定压在图上的材质，最后定动效」重排，原先是动效在前、背景在后。
+                  玻璃模式（frost / liquid）改的是所有材质处理这张图的方式，人得先看见图才谈得上挑材质，
+                  所以它的位置在背景与动效之间。
+                  选中值与背景同属一份外观配置（后端 AppearanceSettings），不另立存储；
+                  往 documentElement 写 data-glass 的活由 AppearanceProvider 统一做，这里只负责改配置。
+                */}
+                <Section title="外观">
+                  {/* BackgroundPicker 根节点自带 first:pt-0 / last:pb-0，作为独子会把自己的上下内边距全部归零，
+                      所以下边距由这层包裹给，否则它会直接贴上分隔线。 */}
+                  <div className="border-b border-ink/12 pb-[18px]">
+                    <BackgroundPicker />
+                  </div>
+                  <Row
+                    title="玻璃模式"
+                    desc="磨砂只有模糊；液态再给主按钮、Toast 与分段控件加一道受光亮边与斜向高光"
+                    control={
+                      <div className="w-[240px]">
+                        <Select
+                          ariaLabel="玻璃模式"
+                          value={appearance.glass}
+                          options={GLASS_OPTIONS}
+                          onChange={(v) => void applyGlass(v)}
+                        />
+                      </div>
+                    }
+                  />
                   <Row
                     title="减少动态效果"
                     desc="降低或关闭界面动画（防晕动 / 低性能设备）"
@@ -777,9 +854,6 @@ export function Settings() {
                       <Toggle ariaLabel="减少动态效果" checked={reduceMotion} onChange={setReduceMotion} />
                     }
                   />
-                  <div className="border-t border-ink/9">
-                    <BackgroundPicker />
-                  </div>
                 </Section>
 
                 <Section title="关于">
@@ -787,7 +861,7 @@ export function Settings() {
                     <div className="flex items-center justify-between gap-4">
                       <div className="min-w-0">
                         <div className="text-[15px] font-bold">启动器更新</div>
-                        <div className="mt-1 text-[12.5px] text-ink/60">{updateHint}</div>
+                        <div className="mt-1 text-[12.5px] text-ink/75">{updateHint}</div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2.5">
                         {update?.kind === "available" ? (
@@ -813,13 +887,13 @@ export function Settings() {
                     </div>
 
                     {update?.kind === "available" && update.notes && (
-                      <p className="mt-3 mb-0 rounded-panel bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/75">
+                      <p className="surface-sunken mt-3 mb-0 rounded-panel px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/75">
                         {update.notes}
                       </p>
                     )}
 
                     {updating && (
-                      <p className="mt-2.5 font-mono text-[12px] text-ink/60 tabular-nums">
+                      <p className="mt-2.5 font-mono text-[12px] text-ink/75 tabular-nums">
                         {updateProgress}
                       </p>
                     )}
@@ -850,7 +924,7 @@ export function Settings() {
                               if (e.key === "Enter") e.currentTarget.blur();
                             }}
                           />
-                          <span className="text-ink/60">/</span>
+                          <span className="text-ink/75">/</span>
                           <input
                             type="number"
                             min={0}
@@ -899,7 +973,7 @@ export function Settings() {
                       }
                     />
                   )}
-                  <div className="border-b border-ink/9 py-[18px]">
+                  <div className="border-b border-ink/12 py-[18px]">
                     <div className="mb-3 flex items-center justify-between gap-4">
                       <div className="text-[15px] font-bold">本机检测</div>
                       <Button
@@ -912,7 +986,7 @@ export function Settings() {
                       </Button>
                     </div>
 
-                    {javaLoading && <p className="py-2 text-[13.5px] text-ink/60">扫描本机 Java…</p>}
+                    {javaLoading && <p className="py-2 text-[13.5px] text-ink/75">扫描本机 Java…</p>}
 
                     {!javaLoading && javaError && (
                       <div className="flex items-start gap-3 py-1">
@@ -932,20 +1006,20 @@ export function Settings() {
                         {javas.map((j) => (
                           <li
                             key={j.path}
-                            className="flex items-center justify-between gap-4 rounded-chip border border-ink/9 bg-paper px-3.5 py-2.5"
+                            className="surface-sunken flex items-center justify-between gap-4 rounded-control px-3.5 py-2.5"
                           >
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-[14px] font-bold tabular-nums">Java {j.version.major}</span>
-                                <span className="font-mono text-[11px] text-ink/60">{j.version.raw}</span>
+                                <span className="font-mono text-[11px] text-ink/75">{j.version.raw}</span>
                               </div>
-                              <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/60">{j.path}</div>
+                              <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/75">{j.path}</div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
-                              <span className="rounded-chip border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
+                              <span className="rounded-chip border border-ink/16 px-2 py-0.5 text-[11px] text-ink/75">
                                 {j.is_64bit ? "64 位" : "32 位"}
                               </span>
-                              <span className="rounded-chip border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
+                              <span className="rounded-chip border border-ink/16 px-2 py-0.5 text-[11px] text-ink/75">
                                 {JAVA_SOURCE_LABEL[j.source]}
                               </span>
                             </div>
@@ -957,7 +1031,7 @@ export function Settings() {
 
                   <div className="pt-[18px]">
                     <div className="text-[15px] font-bold">下载运行时</div>
-                    <div className="mt-1 text-[12.5px] text-ink/60">按主版本号获取由启动器托管的 JRE（如 8 / 17 / 21）</div>
+                    <div className="mt-1 text-[12.5px] text-ink/75">按主版本号获取由启动器托管的 JRE（如 8 / 17 / 21）</div>
                     <div className="mt-3 flex items-center gap-2.5">
                       <input
                         type="number"
@@ -974,7 +1048,7 @@ export function Settings() {
                       </Button>
                     </div>
                     {installing && coreStatus && (
-                      <p className="mt-2.5 font-mono text-[12px] break-words text-ink/60">{coreStatus}</p>
+                      <p className="mt-2.5 font-mono text-[12px] break-words text-ink/75">{coreStatus}</p>
                     )}
                   </div>
                 </Section>

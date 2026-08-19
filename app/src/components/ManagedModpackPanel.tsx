@@ -1,3 +1,17 @@
+// 受管整合包面板：一个实例的整合包身份、版本差与同步进度/失败现场。
+//
+// 材质分层（与 UpdatePanel / ModpackInstallFlow / InstallPlanPreview 同一套）：
+// 只有 ManagedModpackPanel 这一整块直接压在照片上，故只有它挂 .surface-panel；
+// 里面的进度块、失败块、完成条一律不挂材质，靠描边与语义色（accent / danger）区分。
+// 分层深的界面上，第二层玻璃买不到任何层次，只会把两层背景糊在一起。
+//
+// ModpackSyncProgressView / ModpackSyncFailureView 被 ModpackInstallFlow 复用，那边同样是
+// 「面板里面」的位置，所以这两个视图默认无材质这件事在两个宿主下都成立，不需要开参数。
+//
+// 朱红只作填充不作文字：accent 压在 .surface-panel 上实算 3.41，够图标（3.0）不够小字（4.5）。
+// 因此徽标从「朱红 10% 底 + 朱红字」翻成「朱红实底 + 纸色字」（纸色压朱红 4.78）；
+// 图标与描边继续用 accent，那是图形不是文字。
+
 import { Button } from "./Button";
 import { AlertIcon, CheckIcon, DownloadIcon, PackageIcon, RefreshIcon } from "./icons";
 import {
@@ -35,7 +49,7 @@ function versionsOf(status: ManagedModpackStatus): KnownModpackVersions | null {
 function VersionValue({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="min-w-0 flex-1">
-      <div className="text-[11px] font-bold tracking-[0.16em] text-ink/60">{label}</div>
+      <div className="text-[11px] font-bold tracking-[0.16em] text-ink/75">{label}</div>
       <div className="mt-1 truncate font-mono text-[17px] font-extrabold text-ink tabular-nums">
         {value ?? "尚未同步"}
       </div>
@@ -60,14 +74,15 @@ export function ModpackSyncProgressView({
       : null;
 
   return (
-    <div className="mt-4 rounded-panel border border-accent/25 bg-accent/[0.035] px-4 py-3.5" role="status">
+    <div className="mt-4 rounded-panel border border-accent/25 px-4 py-3.5" role="status">
       <div className="flex items-baseline gap-3">
         <span className="text-[13px] font-bold text-ink">{SYNC_STAGE_LABEL[progress.stage]}</span>
-        <span className="font-mono text-[11.5px] text-ink/60 tabular-nums">{count}</span>
-        {bytes && <span className="ml-auto font-mono text-[11.5px] text-ink/60 tabular-nums">{bytes}</span>}
+        <span className="font-mono text-[11.5px] text-ink/75 tabular-nums">{count}</span>
+        {bytes && <span className="ml-auto font-mono text-[11.5px] text-ink/75 tabular-nums">{bytes}</span>}
       </div>
+      {/* 进度轨是下沉块（.surface-sunken），圆角走 control 档——圆角角色与材质角色是两条正交的轴。 */}
       <div
-        className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-ink/10"
+        className="surface-sunken mt-2.5 h-1.5 overflow-hidden rounded-control"
         role="progressbar"
         aria-label="整合包同步进度"
         aria-valuemin={0}
@@ -77,7 +92,7 @@ export function ModpackSyncProgressView({
         <div className="h-full bg-accent transition-[width]" style={{ width: `${percent}%` }} />
       </div>
       {progress.current_file && (
-        <p className="mt-2 truncate font-mono text-[11.5px] text-ink/60" title={progress.current_file}>
+        <p className="mt-2 truncate font-mono text-[11.5px] text-ink/75" title={progress.current_file}>
           {progress.current_file}
         </p>
       )}
@@ -92,7 +107,7 @@ export function ModpackSyncFailureView({
 }) {
   const presentation = presentSyncFailure(failure);
   return (
-    <div className="mt-4 rounded-panel border border-danger/40 bg-danger/[0.04] px-4 py-3.5" role="alert">
+    <div className="mt-4 rounded-panel border border-danger/35 px-4 py-3.5" role="alert">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 shrink-0 text-danger">
           <AlertIcon size={18} />
@@ -100,7 +115,7 @@ export function ModpackSyncFailureView({
         <div className="min-w-0">
           <p className="font-mono text-[13px] font-bold break-all text-danger">{presentation.title}</p>
           <p className="mt-1 text-[12.5px] leading-relaxed text-danger">{presentation.reason}</p>
-          <p className="mt-1.5 text-[12px] leading-relaxed text-ink/60">{presentation.action}</p>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-ink/75">{presentation.action}</p>
         </div>
       </div>
     </div>
@@ -124,7 +139,7 @@ export function ManagedModpackPanel({
   const updateAvailable = status.kind === "ready" && displayedVersions !== null && modpackUpdateAvailable(displayedVersions);
 
   return (
-    <section aria-labelledby="managed-modpack-title" className="rounded-panel border border-ink/12 bg-paper-sink p-[18px]">
+    <section aria-labelledby="managed-modpack-title" className="surface-panel rounded-panel p-[18px]">
       <div className="flex flex-wrap items-start gap-4">
         <span className="mt-0.5 shrink-0 text-accent">
           <PackageIcon size={20} />
@@ -134,16 +149,16 @@ export function ManagedModpackPanel({
             <h2 id="managed-modpack-title" className="text-[15px] font-extrabold text-ink">
               受管整合包
             </h2>
-            <span className="rounded-chip bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold text-accent">
+            <span className="rounded-chip bg-accent px-1.5 py-0.5 text-[11px] font-bold text-paper-on">
               {status.subscription.pack_id}
             </span>
             {status.kind === "ready" && status.source === "cache" && (
-              <span className="rounded-chip bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60">
+              <span className="rounded-chip surface-sunken px-1.5 py-0.5 text-[11px] text-ink/75">
                 上次成功缓存
               </span>
             )}
           </div>
-          <p className="mt-1 truncate font-mono text-[11px] text-ink/60" title={status.subscription.pointer_url}>
+          <p className="mt-1 truncate font-mono text-[11px] text-ink/75" title={status.subscription.pointer_url}>
             {status.subscription.pointer_url}
           </p>
         </div>
@@ -181,12 +196,12 @@ export function ManagedModpackPanel({
       {displayedVersions?.latest.note && <p className="mt-3 text-[12.5px] leading-relaxed text-ink/75">{displayedVersions.latest.note}</p>}
 
       {status.kind === "unavailable" && (
-        <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/30 px-3.5 py-3 text-danger" role="alert">
+        <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/35 px-3.5 py-3 text-danger" role="alert">
           <AlertIcon size={17} className="mt-0.5 shrink-0" />
           <div className="min-w-0">
             <p className="text-[13px] font-bold">暂时无法检查可用版本</p>
             <p className="mt-1 text-[12px] leading-relaxed break-words">{status.detail}</p>
-            {status.last_known && <p className="mt-1.5 text-[11.5px] text-ink/60">上次成功缓存仍可用于展示；现有实例可以继续启动。</p>}
+            {status.last_known && <p className="mt-1.5 text-[11.5px] text-ink/75">上次成功缓存仍可用于展示；现有实例可以继续启动。</p>}
           </div>
         </div>
       )}
@@ -220,11 +235,11 @@ export function ManagedModpackPanel({
         </div>
       )}
 
-      <p className="mt-4 text-[11.5px] leading-relaxed text-ink/60">
+      <p className="mt-4 text-[11.5px] leading-relaxed text-ink/75">
         该实例的受管 Mod 由整合包统一维护，单独的平台更新检查已停用，避免产生无法进入服务器的版本偏差。
       </p>
       {target && sync.kind === "idle" && !updateAvailable && (
-        <p className="mt-1 text-[11.5px] text-ink/60">当前已是可用版本 {target}。</p>
+        <p className="mt-1 text-[11.5px] text-ink/75">当前已是可用版本 {target}。</p>
       )}
     </section>
   );
@@ -235,7 +250,7 @@ export function ModpackFileOwnership({ owner }: { owner: ModpackFileOwner }) {
   return (
     <span
       className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] font-semibold ${
-        managed ? "bg-accent/10 text-accent" : "bg-ink/[0.07] text-ink/60"
+        managed ? "bg-accent text-paper-on" : "surface-sunken text-ink/75"
       }`}
       title={managed ? "由整合包统一维护，不能单独移除" : "玩家自行安装，可按普通 Mod 管理"}
     >

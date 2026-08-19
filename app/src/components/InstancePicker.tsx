@@ -130,8 +130,12 @@ function modsDirOf(workingDir: string): string {
 }
 
 // 非正式通道必须显眼：玩家有权知道自己在装预览版。
+// 显眼不能靠朱红字：accent 作文字在控件底上只有 2.92~3.16，全档过不了正文的 4.5。
+// 改成实心块 + 纸色字（4.77，底不透明所以与背景图无关），与 UpdatePanel 的通道徽标同一套写法。
 function channelTone(channel: ReleaseChannel): string {
-  return channel === "release" ? "text-ink/60" : "text-accent";
+  return channel === "release"
+    ? "text-ink/75"
+    : "rounded-chip bg-accent px-1.5 py-0.5 text-paper-on";
 }
 
 export function InstancePicker({
@@ -367,13 +371,13 @@ export function InstancePicker({
     <>
       <div className="mr-auto min-w-0 text-left">
         {!selected ? (
-          <span className="text-[12px] text-ink/60">未选中实例</span>
+          <span className="text-[12px] text-ink/75">未选中实例</span>
         ) : settingErr ? (
           <span className="text-[12px] break-words text-danger">
             读取工作目录失败：{settingErr}
           </span>
         ) : !setting ? (
-          <span className="text-[12px] text-ink/60">正在解析工作目录…</span>
+          <span className="text-[12px] text-ink/75">正在解析工作目录…</span>
         ) : (
           <>
             <div
@@ -382,7 +386,7 @@ export function InstancePicker({
             >
               将写入 {modsDirOf(setting.working_dir)}
             </div>
-            <div className="mt-0.5 text-[11px] text-ink/60">
+            <div className="mt-0.5 text-[11px] text-ink/75">
               {setting.isolated
                 ? setting.forced_by_local_data
                   ? "版本隔离：开（该版本目录下已有本地数据，强制隔离）"
@@ -412,15 +416,17 @@ export function InstancePicker({
       {/* matches 为空且无错时也走骨架：首帧 effect 还没起跑，否则会闪一帧「没有实例」的假空态。 */}
       {loading || (!matches && !error) ? (
         <div className="grid grid-cols-2 gap-5 max-[860px]:grid-cols-1">
+          {/* 骨架框只留发丝描边、不铺底：Skeleton 自身就是一层墨洗，再垫一层下沉块会把
+              单元素墨洗总量推过 8% 的上限（app.css 第五节），而它身下的弹窗面板已经是自足材质。 */}
           <div className="flex flex-col gap-2">
             {Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="rounded-panel border border-ink/8 bg-paper-sink/60 px-3.5 py-3">
+              <div key={i} className="rounded-panel border border-ink/9 px-3.5 py-3">
                 <Skeleton className="h-[15px] w-2/5" delay={i * 0.06} />
                 <Skeleton className="mt-2 h-[11px] w-3/5" delay={i * 0.06 + 0.08} />
               </div>
             ))}
           </div>
-          <div className="rounded-panel border border-ink/8 bg-paper-sink/60 p-4">
+          <div className="rounded-panel border border-ink/9 p-4">
             <Skeleton className="h-[11px] w-20" />
             <Skeleton className="mt-3 h-[17px] w-2/3" delay={0.08} />
             <Skeleton className="mt-2.5 h-[11px] w-full" delay={0.16} />
@@ -428,7 +434,9 @@ export function InstancePicker({
           </div>
         </div>
       ) : error ? (
-        <div className="flex items-start gap-3 rounded-panel border border-danger/35 bg-paper-sink px-4 py-3">
+        <div className="flex items-start gap-3 rounded-panel border border-danger/35 px-4 py-3">
+          {/* 告警框不铺底：它里面站着一颗 secondary 按钮（.surface-control 是寄生层），
+              再给外框铺一层下沉墨洗就成了寄生套寄生。危险语义由描边与文字色承担，底交给弹窗面板。 */}
           <span className="mt-px shrink-0 text-danger">
             <AlertIcon size={18} />
           </span>
@@ -470,10 +478,10 @@ export function InstancePicker({
               .map((g) => (
                 <section key={g.tier} className="mb-4 last:mb-0">
                   <header className="mb-2 flex items-baseline gap-2">
-                    <h3 className="m-0 text-[11px] font-bold tracking-[0.18em] text-ink/60">
+                    <h3 className="m-0 text-[11px] font-bold tracking-[0.18em] text-ink/75">
                       {g.label}
                     </h3>
-                    <span className="text-[11px] text-ink/60">{g.note}</span>
+                    <span className="text-[11px] text-ink/75">{g.note}</span>
                   </header>
                   <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
                     {g.items.map((m) => {
@@ -486,11 +494,11 @@ export function InstancePicker({
                             aria-pressed={on}
                             onClick={() => selectInstance(m.version_id)}
                             className={[
-                              "flex w-full cursor-pointer flex-col items-start rounded-control border px-3 py-2 text-left transition-colors",
+                              "flex w-full cursor-pointer flex-col items-start rounded-control px-3 py-2 text-left",
                               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                              on
-                                ? "border-ink bg-ink text-paper-on"
-                                : "border-ink/10 bg-paper-sink hover:border-ink/35",
+                              // 选中态是满墨实块，不挂材质：材质类是无层样式，会盖掉工具类的 bg-ink。
+                              // 静息/悬停/按下三态一并交给 .surface-control，这里不再自写 hover。
+                              on ? "bg-ink text-paper-on transition-colors" : "surface-control",
                             ].join(" ")}
                           >
                             <span className="flex w-full items-center gap-2">
@@ -500,8 +508,10 @@ export function InstancePicker({
                               {m.already_installed && (
                                 <span
                                   title={`已装 ${m.already_installed}`}
+                                  // 未选中态原为朱红字，在控件底上只有 2.92，正文门槛不达标；
+                                  // 这行是「这个实例已经装了哪一版」的事实陈述，改回满墨即可，不必抢眼。
                                   className={`ml-auto flex min-w-0 shrink items-center gap-1 text-[11px] ${
-                                    on ? "text-paper-on/70" : "text-accent"
+                                    on ? "text-paper-on/70" : "text-ink"
                                   }`}
                                 >
                                   <CheckIcon size={12} />
@@ -511,15 +521,16 @@ export function InstancePicker({
                             </span>
                             <span
                               className={`mt-0.5 truncate font-mono text-[10.5px] tabular-nums ${
-                                on ? "text-paper-on/55" : "text-ink/60"
+                                on ? "text-paper-on/55" : "text-ink/75"
                               }`}
                             >
                               MC {m.mc_version} · {loaderText(m.loaders)}
                             </span>
                             {m.compatibility.kind === "mismatch" && (
                               <span
+                                // 满档 danger 而不是 danger/85：后者压在控件底上实算 4.38，差 0.12 过不了正文。
                                 className={`mt-1 text-[11px] ${
-                                  on ? "text-paper-on/70" : "text-danger/85"
+                                  on ? "text-paper-on/70" : "text-danger"
                                 }`}
                               >
                                 {m.compatibility.reason}
@@ -538,8 +549,10 @@ export function InstancePicker({
           <div className="min-w-0">
             {selected && (
               <>
-                <div className="rounded-panel border border-ink/12 bg-paper-sink p-4">
-                  <div className="text-[10px] font-bold tracking-[0.2em] text-ink/60">
+                {/* 详情卡取自足材质而非下沉块：它内部要放按钮与版本行（都是 .surface-control 寄生层），
+                    寄生层不得寄生在寄生层上。套在弹窗面板里，故用 .surface-nested 摘掉投影。 */}
+                <div className="surface-panel surface-nested rounded-panel p-4">
+                  <div className="text-[10px] font-bold tracking-[0.2em] text-ink/75">
                     将安装的版本
                   </div>
 
@@ -561,33 +574,35 @@ export function InstancePicker({
                         </span>
                       </div>
                       <div
-                        className="mt-1 truncate font-mono text-[12px] text-ink/60"
+                        className="mt-1 truncate font-mono text-[12px] text-ink/75"
                         title={selectedVersion.version_number}
                       >
                         {selectedVersion.version_number}
                       </div>
+                      {/* 标签与值的层级改由墨阶拉开（ink/75 对满墨）而不是再往下切灰度：
+                          玻璃上的正文下限就是 ink/75，标签一档已经踩在线上，只能把值往上提。 */}
                       <dl className="mt-3 mb-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[12px]">
-                        <dt className="text-ink/60">MC 版本</dt>
-                        <dd className="m-0 min-w-0 text-ink/75">
+                        <dt className="text-ink/75">MC 版本</dt>
+                        <dd className="m-0 min-w-0 text-ink">
                           {gameVersionText(selectedVersion.game_versions)}
                         </dd>
-                        <dt className="text-ink/60">加载器</dt>
-                        <dd className="m-0 min-w-0 text-ink/75">
+                        <dt className="text-ink/75">加载器</dt>
+                        <dd className="m-0 min-w-0 text-ink">
                           {loaderText(selectedVersion.loaders)}
                         </dd>
-                        <dt className="text-ink/60">文件</dt>
+                        <dt className="text-ink/75">文件</dt>
                         <dd
-                          className="m-0 min-w-0 truncate font-mono text-ink/75"
+                          className="m-0 min-w-0 truncate font-mono text-ink"
                           title={selectedVersion.file_name}
                         >
                           {selectedVersion.file_name}
                         </dd>
-                        <dt className="text-ink/60">大小</dt>
-                        <dd className="m-0 min-w-0 text-ink/75 tabular-nums">
+                        <dt className="text-ink/75">大小</dt>
+                        <dd className="m-0 min-w-0 text-ink tabular-nums">
                           {formatSize(selectedVersion.file_size)}
                         </dd>
-                        <dt className="text-ink/60">发布</dt>
-                        <dd className="m-0 min-w-0 text-ink/75 tabular-nums">
+                        <dt className="text-ink/75">发布</dt>
+                        <dd className="m-0 min-w-0 text-ink tabular-nums">
                           {selectedVersion.date_published
                             ? selectedVersion.date_published.slice(0, 10)
                             : "日期未标注"}
@@ -595,7 +610,7 @@ export function InstancePicker({
                       </dl>
                     </>
                   ) : (
-                    <p className="mt-2 mb-0 text-[13px] text-ink/60">
+                    <p className="mt-2 mb-0 text-[13px] text-ink/75">
                       该实例下没有匹配的版本，需要自行指定要装哪一个。
                     </p>
                   )}
@@ -613,13 +628,13 @@ export function InstancePicker({
                       <button
                         type="button"
                         onClick={() => setShowAllVersions((v) => !v)}
-                        className="cursor-pointer text-[11px] text-ink/60 underline-offset-2 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        className="cursor-pointer text-[11px] text-ink/75 underline-offset-2 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                       >
                         {showAllVersions ? "只看配得上的" : "显示全部版本"}
                       </button>
                     )}
                     {requiredDeps > 0 && (
-                      <span className="text-[11px] text-ink/60">
+                      <span className="text-[11px] text-ink/75">
                         {requiredDeps} 项必需依赖会随本次安装一并装入
                       </span>
                     )}
@@ -656,7 +671,7 @@ export function InstancePicker({
                               </Button>
                             </div>
                           ) : ranked.length === 0 ? (
-                            <p className="m-0 text-[12px] text-ink/60">
+                            <p className="m-0 text-[12px] text-ink/75">
                               {showAllVersions
                                 ? "该工程在平台上没有可用版本。"
                                 : "没有配得上这个实例的版本。点上方「显示全部版本」可自行挑一个强装。"}
@@ -681,11 +696,11 @@ export function InstancePicker({
                                     aria-checked={picked}
                                     onClick={() => chooseVersion(v)}
                                     className={[
-                                      "flex w-full cursor-pointer flex-col items-start rounded-control border px-3 py-2 text-left transition-colors",
+                                      "flex w-full cursor-pointer flex-col items-start rounded-control px-3 py-2 text-left",
                                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                                       picked
-                                        ? "border-ink bg-ink text-paper-on"
-                                        : "border-ink/10 bg-paper hover:border-ink/35",
+                                        ? "bg-ink text-paper-on transition-colors"
+                                        : "surface-control",
                                     ].join(" ")}
                                   >
                                     <span className="flex w-full items-center gap-2">
@@ -706,8 +721,9 @@ export function InstancePicker({
                                           picked
                                             ? "text-paper-on/60"
                                             : vTier === "mismatch"
-                                              ? "text-danger/80"
-                                              : "text-ink/60"
+                                              ? // danger/80 在控件底上只有 4.02，10px 常规字重不吃大字豁免，一律走满档。
+                                                "text-danger"
+                                              : "text-ink/75"
                                         }`}
                                       >
                                         {TIER_BADGE[vTier]}
@@ -715,7 +731,7 @@ export function InstancePicker({
                                     </span>
                                     <span
                                       className={`mt-0.5 w-full truncate text-[11px] ${
-                                        picked ? "text-paper-on/55" : "text-ink/60"
+                                        picked ? "text-paper-on/55" : "text-ink/75"
                                       }`}
                                     >
                                       {gameVersionText(v.game_versions)} · {loaderText(v.loaders)}
@@ -746,14 +762,14 @@ export function InstancePicker({
                 )}
 
                 {selected.compatibility.kind === "unknown" && (
-                  <p className="mt-3 mb-0 text-[12.5px] leading-relaxed text-ink/60">
+                  <p className="mt-3 mb-0 text-[12.5px] leading-relaxed text-ink/75">
                     平台没给全这个版本的兼容元数据，判不出行不行。可以先装上试，不对劲再从 Mod
                     管理里停用。
                   </p>
                 )}
 
                 {selected.already_installed && (
-                  <p className="mt-3 mb-0 text-[12.5px] leading-relaxed text-ink/60">
+                  <p className="mt-3 mb-0 text-[12.5px] leading-relaxed text-ink/75">
                     该实例已装 <span className="font-mono">{selected.already_installed}</span>
                     ，确认后会按所选版本写入 mods 目录。
                   </p>

@@ -1,123 +1,52 @@
-// plateMode 决定主页右下角那撮字是裸压在图上还是退回纸片，直接决定可读性，
-// 所以这里不测「返回了某个值」，而是独立复算 WCAG 对比度，验证它给出的每一档都真的达标。
+// photoShows 决定外壳（标题栏、侧栏）要不要上玻璃材质：装了壁纸就上，没装就保持不透明纸色。
 //
-// 对比度这套公式在测试里重写一遍是有意的：与 appearance.ts 共用实现的话，
-// 常数写错、合成顺序写反都测不出来——两边一起错，断言照样通过。
+// 全站铺图之前它还有半条「只在主页」的判据，现在连路由参数都不存在了——
+// 「路由不参与判定」由函数签名本身守住，不必再靠用例守，所以这里只验剩下的那一条判据。
 
 import { describe, expect, it } from "vitest";
-import { plateMode, SCRIM_BRIGHTNESS, type PlateMode } from "./appearance";
-import type { PlateZone } from "./ipc";
+import { applyGlassMode, EMPTY_APPEARANCE, photoShows } from "./appearance";
 
-// ---- 独立实现的 WCAG 口径，作为判定的对照物 ----
-
-function lumaOfSrgb(srgb: number): number {
-  const c = srgb / 255;
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-
-function srgbOfLuma(luma: number): number {
-  return (luma <= 0.0031308 ? luma * 12.92 : 1.055 * luma ** (1 / 2.4) - 0.055) * 255;
-}
-
-function contrast(a: number, b: number): number {
-  const [hi, lo] = a > b ? [a, b] : [b, a];
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-const L_INK = lumaOfSrgb(22);
-const L_PAPER_ON = 0.905855;
-const PAPER_SRGB = 242;
-
-/** 取样值经柔化、压暗两层后的实际底色亮度。顺序必须是 图 -> 柔化 -> 压暗。 */
-function backdrop(sampled: number, veil: number, dim: number): number {
-  const image = srgbOfLuma(sampled / 255);
-  const veiled = PAPER_SRGB * (veil / 100) + image * (1 - veil / 100);
-  // 压暗是 CSS brightness()，对 sRGB 各通道等比缩放。
-  return lumaOfSrgb(veiled * dim);
-}
-
-/** 某一档在最不利端实际拿到的对比度。 */
-function achieved(mode: PlateMode, zone: PlateZone, veil: number): number {
-  if (mode === "ink") return contrast(backdrop(zone.p10, veil, 1), L_INK);
-  if (mode === "paperOn") return contrast(backdrop(zone.p90, veil, SCRIM_BRIGHTNESS), L_PAPER_ON);
-  throw new Error("plate 档没有裸字，不该问它对比度");
-}
-
-/** 声明的余量档位：比 AA 的 4.5 高一档，用来兜住 p10/p90 之外那一成像素。 */
-const TARGET = 5.5;
-
-describe("plateMode", () => {
-  it("没量过的图退回纸片，绝不拿未知底色赌可读性", () => {
-    expect(plateMode(null, 0)).toBe("plate");
-    expect(plateMode(null, 60)).toBe("plate");
+describe("photoShows", () => {
+  it("装了壁纸就算压在图上", () => {
+    expect(photoShows("wall.jpg")).toBe(true);
+    // 判据是「有没有这个字段」而不是字符串真值：空串在协议里不是合法文件名，
+    // 但真要出现，它代表的仍然是「设过一张图」，退回纸色反而会和外壳的其余部分对不上。
+    expect(photoShows("")).toBe(true);
   });
 
-  it("亮角落用满墨裸字", () => {
-    expect(plateMode({ p10: 200, p90: 250 }, 0)).toBe("ink");
+  it("没装壁纸时为假，免得没背景的人平白看到一层玻璃", () => {
+    expect(photoShows(null)).toBe(false);
+  });
+});
+
+// 玻璃模式的 DOM 契约。CSS 侧只认 :root[data-glass="liquid"]，缺省即 frost，
+// 所以这里要钉死的不是「写了什么」，而是「frost 档必须把属性拿掉」——
+// 写成 data-glass="frost" 在 CSS 上同样落在保守档，看起来没坏，
+// 但同一个状态从此有两种形态，下一个人再判断当前档位时就会两边都要判。
+describe("applyGlassMode", () => {
+  it("液态档写下属性", () => {
+    const root = { dataset: {} as DOMStringMap };
+    applyGlassMode("liquid", root);
+    expect(root.dataset.glass).toBe("liquid");
   });
 
-  it("暗角落用纸色裸字", () => {
-    expect(plateMode({ p10: 2, p90: 30 }, 0)).toBe("paperOn");
+  it("磨砂档删掉属性而不是写成 frost", () => {
+    const root = { dataset: { glass: "liquid" } as DOMStringMap };
+    applyGlassMode("frost", root);
+    expect("glass" in root.dataset).toBe(false);
   });
 
-  it("明暗横跨两端的角落退回纸片：两种字色都撑不住", () => {
-    expect(plateMode({ p10: 3, p90: 200 }, 0)).toBe("plate");
+  it("反复切换不残留上一次的值", () => {
+    const root = { dataset: {} as DOMStringMap };
+    applyGlassMode("liquid", root);
+    applyGlassMode("frost", root);
+    applyGlassMode("liquid", root);
+    expect(root.dataset.glass).toBe("liquid");
+    applyGlassMode("frost", root);
+    expect(root.dataset.glass).toBeUndefined();
   });
 
-  it("玩家实测的那张壁纸（p10=4 p90=66）走纸色裸字", () => {
-    const real: PlateZone = { p10: 4, p90: 66 };
-    expect(plateMode(real, 0)).toBe("paperOn");
-    // 不只断言档位，连它究竟拿到多少对比度也钉住，避免常数被改松了还悄悄通过。
-    expect(achieved("paperOn", real, 0)).toBeGreaterThan(6);
-  });
-
-  it("柔化会提亮底色，判定必须跟着变而不是无视它", () => {
-    // 柔化是压在图上的纸色层。判定若不把它算进去，整条滑条上档位会纹丝不动，
-    // 玩家拉满柔化后底色早已够亮，却还在按深色图渲染。
-    //
-    // 不钉死「在第几档翻」——那个点会随压暗手段调整而漂移，钉死只会让测试变成阻力。
-    // 要守住的是「柔化确实参与了判定」这个不变量。
-    const dark: PlateZone = { p10: 4, p90: 66 };
-    const seen = new Set<PlateMode>();
-    for (let veil = 0; veil <= 60; veil += 5) seen.add(plateMode(dark, veil));
-    expect(seen.size).toBeGreaterThan(1);
-    expect(plateMode(dark, 0)).toBe("paperOn");
-  });
-
-  it("柔化拉满后底色足够亮，深色图反过来可用满墨", () => {
-    expect(plateMode({ p10: 4, p90: 66 }, 60)).toBe("ink");
-  });
-
-  // 这是本文件的核心断言：凡是判成裸字的组合，实际对比度必须真的达标。
-  // 任何一个阈值常数被改松、或合成顺序被写反，都会在这里挂掉。
-  it("所有判成裸字的组合都必须实际达到声明的余量", () => {
-    let inkSeen = 0;
-    let paperSeen = 0;
-    for (let p10 = 0; p10 <= 255; p10 += 5) {
-      for (let p90 = p10; p90 <= 255; p90 += 5) {
-        for (const veil of [0, 15, 30, 45, 60]) {
-          const zone: PlateZone = { p10, p90 };
-          const mode = plateMode(zone, veil);
-          if (mode === "plate") continue;
-          if (mode === "ink") inkSeen++;
-          else paperSeen++;
-          expect(
-            achieved(mode, zone, veil),
-            `p10=${p10} p90=${p90} veil=${veil} 判成 ${mode} 却不达标`,
-          ).toBeGreaterThanOrEqual(TARGET - 1e-9);
-        }
-      }
-    }
-    // 防止上面那层循环因为「全都判成 plate」而空转通过。
-    expect(inkSeen).toBeGreaterThan(100);
-    expect(paperSeen).toBeGreaterThan(100);
-  });
-
-  it("裸字判定只看最不利那一端，不看均值", () => {
-    // 两者均值相同，但暗端差得远：靠均值判会给出同一档，靠 p10 判才会分开。
-    const even: PlateZone = { p10: 120, p90: 140 };
-    const skewed: PlateZone = { p10: 10, p90: 250 };
-    expect(plateMode(even, 0)).toBe("ink");
-    expect(plateMode(skewed, 0)).toBe("plate");
+  it("首屏初值落在保守档：配置还没读回来时不能先出一层液态", () => {
+    expect(EMPTY_APPEARANCE.glass).toBe("frost");
   });
 });

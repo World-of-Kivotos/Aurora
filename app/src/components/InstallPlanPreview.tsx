@@ -4,6 +4,14 @@
 // 1) 主项与依赖项在视觉上必须分得开，否则玩家会以为自己只装了一个 Mod；
 // 2) 后端 skipped 里的每一条都要原样列出——为了界面干净而藏掉「有东西没被自动装」是最坏的一种体面；
 // 3) 平台没给 file_size 时如实写「大小未知」，绝不拿 0 顶上凑一个好看的合计数字。
+//
+// 材质分层（与本组另外三个文件同一套）：这个面板只在 Modal 里用，弹窗本身已经是一档材质，
+// 所以这里从根到叶一层玻璃都不挂——条目、未处理分区、错误条一律只用描边与徽标区分。
+// 这条不是省事：Modal(玻璃) 里再套条目玻璃，两层半透明叠出来的是一团糊，层次反而更差。
+// 反过来说，若哪天要把它搬到弹窗外直接压在照片上，必须由新的宿主补一层 .surface-panel。
+//
+// 朱红只作填充不作文字：accent 压在 .surface-panel 上实算 3.41，够图标不够小字，
+// 故预发布通道徽标改成朱红实底 + 纸色字（4.78），示警强度反而比原来的浅底朱红字更高。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
@@ -74,7 +82,7 @@ function ChannelBadge({ channel }: { channel: ReleaseChannel }) {
     <span
       className={[
         "shrink-0 rounded-chip px-1.5 py-0.5",
-        preview ? "bg-accent/10 font-bold text-accent" : "bg-ink/[0.07] text-ink/60",
+        preview ? "bg-accent font-bold text-paper-on" : "surface-sunken text-ink/75",
       ].join(" ")}
     >
       {CHANNEL_LABEL[channel]}
@@ -84,7 +92,7 @@ function ChannelBadge({ channel }: { channel: ReleaseChannel }) {
 
 function ErrorBar({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-start gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3">
+    <div className="flex items-start gap-3 rounded-panel border border-danger/35 px-4 py-3">
       <span className="mt-0.5 shrink-0 text-danger [&_svg]:h-[18px] [&_svg]:w-[18px]">
         <AlertIcon />
       </span>
@@ -100,7 +108,7 @@ function ErrorBar({ message, onRetry }: { message: string; onRetry: () => void }
 function PlanRowSkeleton({ delay, indent }: { delay: number; indent: boolean }) {
   return (
     <li
-      className={`rounded-panel border border-ink/8 bg-paper-sink/60 px-3.5 py-3 ${indent ? "ml-6" : ""}`}
+      className={`rounded-control border border-ink/10 px-3.5 py-3 ${indent ? "ml-6" : ""}`}
     >
       <Skeleton className="h-[13px] w-2/3" delay={delay} />
       <Skeleton className="mt-2 h-[11px] w-1/3" delay={delay + 0.08} />
@@ -128,10 +136,14 @@ function PlanRow({
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...springs.soft, delay: Math.min(index, 10) * 0.03 }}
       className={[
-        "rounded-panel border px-3.5 py-3",
+        // 条目走 control 档圆角而不是 panel：它们缩在弹窗（16）里，同心圆角要求内半径小一档，
+        // 也与 UpdatePanel 的可更新行对齐——同一个功能组的列表条目不该有两种圆角。
+        "rounded-control border px-3.5 py-3",
         // 依赖项整体右缩进：层级靠版面位置表达，不靠额外的连线或图标。
         isDependency ? "ml-6" : "",
-        skipped ? "border-ink/8 bg-paper-sink/45 opacity-55" : "border-ink/10 bg-paper-sink",
+        // 条目不铺底色，只用描边：弹窗已经是一层材质，再给每一行铺一层半透明纸
+        // 只会把弹窗的底糊掉；已满足项继续靠整体降透明度退到背景里。
+        skipped ? "border-ink/8 opacity-55" : "border-ink/10",
       ].join(" ")}
     >
       <div className="flex items-start gap-2">
@@ -142,7 +154,7 @@ function PlanRow({
         {isDependency ? (
           <span
             title={`因 ${requiredByLabel} 需要`}
-            className="max-w-[46%] shrink-0 truncate rounded-chip bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60"
+            className="max-w-[46%] shrink-0 truncate rounded-chip surface-sunken px-1.5 py-0.5 text-[11px] text-ink/75"
           >
             因 {requiredByLabel} 需要
           </span>
@@ -153,14 +165,14 @@ function PlanRow({
         )}
       </div>
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-ink/60">
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-ink/75">
         <span className="font-mono tabular-nums">{v.version_number}</span>
         <ChannelBadge channel={v.release_channel} />
         <span className="font-mono tabular-nums">
           {v.file_size === null ? "大小未知" : formatBytes(v.file_size)}
         </span>
         {skipped && (
-          <span className="inline-flex items-center gap-1 rounded-chip border border-ink/20 px-1.5 py-0.5 text-ink/60">
+          <span className="inline-flex items-center gap-1 rounded-chip border border-ink/20 px-1.5 py-0.5 text-ink/75">
             <CheckIcon size={11} />
             已满足，将跳过
           </span>
@@ -237,9 +249,9 @@ export function InstallPlanPreview({
   return (
     <section aria-label="安装计划" aria-busy={loading} className="flex min-w-0 flex-col">
       <header className="mb-3 flex items-baseline gap-3">
-        <h2 className="shrink-0 text-[10px] font-bold tracking-[0.2em] text-ink/60">安装计划</h2>
-        <span className="min-w-0 truncate text-[12px] text-ink/60">落位到 {versionId}</span>
-        <span className="ml-auto shrink-0 font-mono text-[12px] text-ink/60 tabular-nums">
+        <h2 className="shrink-0 text-[10px] font-bold tracking-[0.2em] text-ink/75">安装计划</h2>
+        <span className="min-w-0 truncate text-[12px] text-ink/75">落位到 {versionId}</span>
+        <span className="ml-auto shrink-0 font-mono text-[12px] text-ink/75 tabular-nums">
           {plan === null ? "" : `${plan.items.length} 项`}
         </span>
       </header>
@@ -281,14 +293,16 @@ export function InstallPlanPreview({
             {plan.skipped.length > 0 && (
               <section className="mt-4 rounded-panel border border-ink/12 px-3.5 py-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-ink/30 [&_svg]:h-[15px] [&_svg]:w-[15px]">
+                  {/* 这个图标是在提示「有东西没被自动装」，属承载信息的图形（门槛 3:1），
+                      不能留在只给纯装饰用的 ink/30 档上。 */}
+                  <span className="text-ink/60 [&_svg]:h-[15px] [&_svg]:w-[15px]">
                     <AlertIcon />
                   </span>
-                  <h3 className="text-[10px] font-bold tracking-[0.2em] text-ink/60">未自动处理</h3>
+                  <h3 className="text-[10px] font-bold tracking-[0.2em] text-ink/75">未自动处理</h3>
                 </div>
                 <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
                   {plan.skipped.map((note, i) => (
-                    <li key={`${i}-${note}`} className="flex gap-2 text-[12.5px] leading-snug text-ink/60">
+                    <li key={`${i}-${note}`} className="flex gap-2 text-[12.5px] leading-snug text-ink/75">
                       <span aria-hidden="true" className="shrink-0 text-ink/30">
                         -
                       </span>
@@ -306,7 +320,7 @@ export function InstallPlanPreview({
         <div className="min-w-0">
           <p className="text-[13px] leading-tight font-bold text-ink">{footerText}</p>
           {summary.satisfied > 0 && (
-            <p className="mt-1 text-[11px] text-ink/60">
+            <p className="mt-1 text-[11px] text-ink/75">
               另有 {summary.satisfied} 项已装同版本，将跳过
             </p>
           )}

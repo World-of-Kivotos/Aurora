@@ -688,6 +688,14 @@ export interface PlateZone {
   p90: number;
 }
 
+/**
+ * 玻璃模式：界面材质用哪一套处理背景图。与后端 GlassMode 枚举同名同形（serde snake_case）。
+ *
+ * frost = 纯毛玻璃；liquid = 毛玻璃 + 小件液态（受光亮边与斜向高光）。
+ * 两档的纸色不透明度完全相同，所以对比度预算在两档下同时成立。
+ */
+export type GlassMode = "frost" | "liquid";
+
 /** 当前外观设置。background 为 null 表示纯纸面。 */
 export interface AppearanceDto {
   /** 当前背景在图库里的文件名。 */
@@ -698,6 +706,8 @@ export interface AppearanceDto {
   plate: PlateZone | null;
   /** 纸色遮罩强度（百分比）。 */
   veil: number;
+  /** 玻璃模式。前端据此往 documentElement 写 data-glass。 */
+  glass: GlassMode;
 }
 
 /** 图库里的一张背景图。 */
@@ -728,3 +738,7 @@ export const removeBackground = (file: string): Promise<AppearanceDto> =>
 
 export const setBackgroundVeil = (veil: number): Promise<AppearanceDto> =>
   invoke<AppearanceDto>("set_background_veil", { veil });
+
+/** 切换玻璃模式。与背景同属外观配置，不另立存储，换机器搬 Aurora 文件夹时一起走。 */
+export const setGlassMode = (glass: GlassMode): Promise<AppearanceDto> =>
+  invoke<AppearanceDto>("set_glass_mode", { glass });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mockInvoke } from "./ipc-mock";
-import type { ManagedModpackFile } from "./ipc";
+import type { AppearanceDto, ManagedModpackFile } from "./ipc";
 import type { CheckedManagedModpackStatus } from "./modpack-ui";
 
 describe("managed modpack browser mock", () => {
@@ -53,5 +53,33 @@ describe("managed modpack browser mock", () => {
         detail: expect.stringContaining("不会执行真实安装或写入磁盘"),
       },
     });
+  });
+});
+
+// 玻璃模式与背景共用一份外观 DTO。浏览器预览里也必须能真的切换并读回来，
+// 否则「不新造存储」这条约定在 mock 分支上就断了，而设置页在浏览器里正是走这一支。
+describe("glass mode mock", () => {
+  it("默认是磨砂档", async () => {
+    const dto = await mockInvoke<AppearanceDto>("get_appearance");
+    expect(dto.glass).toBe("frost");
+  });
+
+  it("切换后立刻回显，并且 get_appearance 也读得到同一个值", async () => {
+    const changed = await mockInvoke<AppearanceDto>("set_glass_mode", { glass: "liquid" });
+    expect(changed.glass).toBe("liquid");
+    await expect(
+      mockInvoke<AppearanceDto>("get_appearance").then((d) => d.glass),
+    ).resolves.toBe("liquid");
+
+    // 切回来，免得这条用例把状态漏给同文件里后跑的用例。
+    await mockInvoke<AppearanceDto>("set_glass_mode", { glass: "frost" });
+  });
+
+  it("切玻璃模式不动背景与柔化，两个设置项各管各的", async () => {
+    const before = await mockInvoke<AppearanceDto>("get_appearance");
+    const after = await mockInvoke<AppearanceDto>("set_glass_mode", { glass: "liquid" });
+    expect(after.background).toBe(before.background);
+    expect(after.veil).toBe(before.veil);
+    await mockInvoke<AppearanceDto>("set_glass_mode", { glass: "frost" });
   });
 });

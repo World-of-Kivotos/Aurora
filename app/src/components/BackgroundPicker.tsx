@@ -1,5 +1,8 @@
 // 设置页的背景选择器：图库缩略图网格 + 导入 + 柔化。
 //
+// 背景图从「只铺主页那一块」改成「铺满整个 app」之后，这里选的不再是一张装饰画，而是全站玻璃
+// 透上来的那层底。文案按新前提重写；缩略图卡片本身也压在照片上，故一律走材质类而非自拼半透明底。
+//
 // 缩略图直接用图库里那份 1920 宽的图，只靠 CSS 缩到卡片大小。为它们再存一套缩略图当然更省，
 // 但图库通常只有几张、且都在本地磁盘上，先按需要什么写什么。真到几十张再谈缓存。
 
@@ -157,9 +160,9 @@ export function BackgroundPicker() {
     <div className="py-[18px] first:pt-0 last:pb-0">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-[15px] font-bold">主页背景</div>
-          <div className="mt-1 text-[12.5px] text-ink/60">
-            图铺在主页内容区，右下角那块信息收进纸片，字始终在纸上。其余页面保持纸面不变。
+          <div className="text-[15px] font-bold">应用背景</div>
+          <div className="mt-1 text-[12.5px] text-ink/75">
+            这张图铺满整个启动器，标题栏、侧栏与每一页的面板都是压在它上面的玻璃。换一张就等于换掉整个界面的底色气质。
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
@@ -180,7 +183,7 @@ export function BackgroundPicker() {
       </div>
 
       {!canPickFile() && (
-        <p className="mt-2.5 text-[12px] text-ink/60">
+        <p className="mt-2.5 text-[12px] text-ink/75">
           浏览器预览模式下无法调用系统文件框，请在安装后的启动器里选图。
         </p>
       )}
@@ -197,7 +200,7 @@ export function BackgroundPicker() {
       {/* 占位文案只在「从没拿到过图库」时出现。reload() 每次都会置 loading，若增删后整棵 ul 随之卸载，
           AnimatePresence 就没有对象可 diff，退场与补位全部作废（Account 页同理，那边靠 accounts === null 区分）。 */}
       {loading && library.length === 0 ? (
-        <p className="mt-4 text-[12.5px] text-ink/60">正在读取图库…</p>
+        <p className="mt-4 text-[12.5px] text-ink/75">正在读取图库…</p>
       ) : library.length === 0 ? (
         <div className="mt-4">
           <EmptyState
@@ -229,24 +232,24 @@ export function BackgroundPicker() {
                     disabled={busy || active}
                     aria-current={active}
                     className={[
-                      "block w-full cursor-pointer overflow-hidden rounded-control border text-left transition-colors",
+                      // 卡片底一律 .surface-control：悬停/按下由材质统一给，组件不再自写 hover。
+                      // 使用中那张只换描边颜色、不换材质，两态都留 1px 边框，选中时才不会整块跳位。
+                      "surface-control block w-full cursor-pointer overflow-hidden rounded-control border text-left",
                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                      active
-                        ? "border-accent"
-                        : "border-ink/12 hover:border-ink/40 disabled:cursor-default",
+                      active ? "border-accent" : "border-transparent disabled:cursor-default",
                     ].join(" ")}
                   >
                     <img
                       src={libraryBackgroundUrl(entry.file)}
                       alt=""
                       loading="lazy"
-                      className="block h-[94px] w-full bg-paper-sink object-cover"
+                      className="block h-[94px] w-full object-cover"
                     />
-                    <div className="bg-paper px-2.5 py-2">
+                    <div className="px-2.5 py-2">
                       <div className="truncate text-[12.5px] font-bold" title={entry.file}>
                         {entry.file}
                       </div>
-                      <div className="mt-0.5 font-mono text-[11px] text-ink/60 tabular-nums">
+                      <div className="mt-0.5 font-mono text-[11px] text-ink/75 tabular-nums">
                         {sizeText(entry)}
                       </div>
                     </div>
@@ -286,12 +289,18 @@ export function BackgroundPicker() {
                     disabled={busy}
                     aria-label={`删除 ${entry.file}`}
                     className={[
-                      "absolute top-1.5 right-1.5 grid h-6 w-6 cursor-pointer place-items-center rounded-chip",
-                      "bg-paper/90 text-ink/60 opacity-0 transition-opacity",
+                      // 它浮在缩略图这张真照片上，必须自带底（寄生层没有纸色，等于没有底）。
+                      // 底取不透明纸色而不是玻璃：玻璃档带 backdrop-filter，而这颗按钮是按图库条目
+                      // 逐张渲染的，图库有多少张就有多少层真在跑的模糊——opacity-0 只是把合成结果调透明，
+                      // 采样与模糊照跑不误，等于按用户导入的图片数量线性烧 GPU。
+                      // 同一张缩略图上的「使用中」徽标本来就是实心块，这里跟它同一套语言。
+                      "bg-paper absolute top-1.5 right-1.5 grid h-6 w-6 cursor-pointer place-items-center rounded-chip",
+                      "text-ink/75 opacity-0 transition-opacity",
                       "group-hover:opacity-100 focus-visible:opacity-100",
-                      // 长按期间撤掉 hover 的整块 danger 填充：底色与推进中的覆盖层同为 danger 时，
-                      // 进度就完全看不见了，而「看得见还剩多久」正是长按确认的全部意义。
-                      holding ? "" : "hover:bg-danger hover:text-paper-on",
+                      // 悬停改成只翻图标颜色，不再整块填 danger：材质类是无层样式，工具类的 bg-* 压不过它；
+                      // 顺带解掉了旧的冲突——底色与推进中的覆盖层同为 danger 时进度会完全看不见，
+                      // 而「看得见还剩多久」正是长按确认的全部意义，原先只能靠 holding 分支绕开。
+                      "hover:text-danger",
                       "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
                     ].join(" ")}
                   >
@@ -327,7 +336,7 @@ export function BackgroundPicker() {
         <div className="mt-5 flex items-center gap-4 border-t border-ink/9 pt-4">
           <div className="min-w-0">
             <div className="text-[13.5px] font-bold">柔化</div>
-            <div className="mt-0.5 text-[12px] text-ink/60">图太花时压一层纸色</div>
+            <div className="mt-0.5 text-[12px] text-ink/75">图太花时压一层纸色</div>
           </div>
           <input
             type="range"
@@ -342,7 +351,7 @@ export function BackgroundPicker() {
             onPointerUp={() => commitVeil(veilInput)}
             onKeyUp={() => commitVeil(veilInput)}
           />
-          <span className="w-[42px] shrink-0 text-right font-mono text-[12px] text-ink/60 tabular-nums">
+          <span className="w-[42px] shrink-0 text-right font-mono text-[12px] text-ink/75 tabular-nums">
             {veilInput}%
           </span>
         </div>

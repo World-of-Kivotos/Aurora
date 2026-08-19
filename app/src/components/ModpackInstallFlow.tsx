@@ -1,3 +1,10 @@
+// 一键安装整合包：地址输入 + 四步进度 + 失败现场。
+//
+// 材质分层（与本组另外三个文件同一套）：整块面板直接压在照片上，只有它挂 .surface-panel；
+// 里面的步骤条、失败块、完成条一律不挂第二层玻璃，靠描边与语义色区分。
+// 地址输入框是「下沉块」，用寄生的 .surface-sunken——寄生层不能直接铺在照片上，
+// 但它此刻套在面板里，合规；也正因为如此，这个组件必须始终自带面板底，不能被剥成裸片使用。
+
 import { useState } from "react";
 import { Button } from "./Button";
 import {
@@ -90,13 +97,13 @@ function InstallSteps({ state }: { state: ModpackInstallState }) {
                   ? "border-ink bg-ink text-paper-on"
                   : active
                     ? "border-accent bg-accent text-paper-on"
-                    : "border-ink/20 text-ink/60"
+                    : "border-ink/30 text-ink/75"
               }`}
               aria-hidden="true"
             >
               {done ? <CheckIcon size={11} /> : index + 1}
             </div>
-            <span className={`block text-[11.5px] leading-snug ${active || done ? "font-bold text-ink" : "text-ink/60"}`}>
+            <span className={`block text-[11.5px] leading-snug ${active || done ? "font-bold text-ink" : "text-ink/75"}`}>
               {step.label}
             </span>
           </li>
@@ -108,14 +115,14 @@ function InstallSteps({ state }: { state: ModpackInstallState }) {
 
 function SetupFailure({ failure }: { failure: ModpackInstallProblem }) {
   return (
-    <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/40 bg-danger/[0.04] px-4 py-3.5" role="alert">
+    <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/35 px-4 py-3.5" role="alert">
       <span className="mt-0.5 shrink-0 text-danger">
         <AlertIcon size={18} />
       </span>
       <div className="min-w-0">
         <p className="text-[13px] font-bold text-danger">{failure.title}</p>
         <p className="mt-1 text-[12.5px] leading-relaxed break-words text-danger">{failure.detail}</p>
-        <p className="mt-1.5 text-[12px] leading-relaxed text-ink/60">{failure.action}</p>
+        <p className="mt-1.5 text-[12px] leading-relaxed text-ink/75">{failure.action}</p>
       </div>
     </div>
   );
@@ -140,7 +147,7 @@ export function ModpackInstallFlow({
   };
 
   return (
-    <section aria-labelledby="modpack-install-title" className="rounded-panel border border-ink/12 bg-paper-sink p-[18px]">
+    <section aria-labelledby="modpack-install-title" className="surface-panel rounded-panel p-[18px]">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 shrink-0 text-accent">
           <PackageIcon size={20} />
@@ -149,14 +156,14 @@ export function ModpackInstallFlow({
           <h2 id="modpack-install-title" className="text-[16px] font-extrabold text-ink">
             安装服务器整合包
           </h2>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-ink/60">
+          <p className="mt-1 text-[12.5px] leading-relaxed text-ink/75">
             Aurora 会从地址读取版本要求，安装 Minecraft 与加载器，再用同一套同步流程写入整合包文件。
           </p>
         </div>
       </div>
 
       <div className="mt-5">
-        <label htmlFor="modpack-pointer-url" className="text-[12px] font-bold text-ink/60">
+        <label htmlFor="modpack-pointer-url" className="text-[12px] font-bold text-ink/75">
           整合包地址
         </label>
         <div className="mt-1.5 flex gap-2">
@@ -176,7 +183,12 @@ export function ModpackInstallFlow({
             placeholder="https://example.com/api/v1/pack/latest"
             aria-invalid={validationError !== null}
             aria-describedby={validationError ? "modpack-pointer-error" : undefined}
-            className="h-10 min-w-0 flex-1 rounded-control border border-ink/16 bg-paper px-3.5 font-mono text-[13px] text-ink transition-colors outline-none placeholder:text-ink/45 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-55"
+            // 输入框改用下沉块：不透明度在暗图与亮图上方向相反，「凹进去」只有墨洗表达得稳。
+            // 原来的 hover/focus 换描边一并去掉——文本框在 Chromium 里点击也会命中 :focus-visible，
+            // 朱红焦点环对鼠标用户同样出现，再叠一圈换色描边只是重复告知。
+            // 占位符走 ink/75：13px 常规字重不吃大字豁免，而 ink/60 在下沉块上只有 3.27~3.82，
+            // 全站另外五处输入框都已迁到 ink/75，这里是唯一漏掉的一处。
+            className="surface-sunken h-10 min-w-0 flex-1 rounded-control px-3.5 font-mono text-[13px] text-ink outline-none placeholder:text-ink/75 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-55"
           />
           {builtIn && pointerUrl.trim() !== builtIn.pointer_url && (
             <Button
@@ -215,7 +227,7 @@ export function ModpackInstallFlow({
           <div className="flex items-center gap-2.5 text-[13px] text-ink/75">
             <CheckIcon size={16} />
             已创建实例 <span className="font-mono font-bold text-ink">{state.instance_id}</span>
-            <span className="text-ink/60">整合包 {state.installed_version}</span>
+            <span className="text-ink/75">整合包 {state.installed_version}</span>
           </div>
         </div>
       )}
@@ -235,7 +247,7 @@ export function ModpackInstallFlow({
             {running ? "正在安装" : state.kind === "failed" ? "重新安装" : "检查并安装"}
           </Button>
         )}
-        <span className="text-[11.5px] text-ink/60">安装与后续更新共用同一同步路径</span>
+        <span className="text-[11.5px] text-ink/75">安装与后续更新共用同一同步路径</span>
       </div>
     </section>
   );

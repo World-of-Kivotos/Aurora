@@ -17,7 +17,7 @@ use image::ImageReader;
 use image::imageops::FilterType;
 use serde::Serialize;
 
-use crate::config::{BackgroundRef, MAX_BACKGROUND_VEIL, PlateZone};
+use crate::config::{BackgroundRef, GlassMode, MAX_BACKGROUND_VEIL, PlateZone};
 use crate::error::{CoreError, Result};
 use crate::facade::Aurora;
 
@@ -218,6 +218,14 @@ impl Aurora {
     /// 设置纸色遮罩强度，超出上限即钳到上限。
     pub fn set_background_veil(&mut self, veil: u8) {
         self.config_mut().appearance.background_veil = veil.min(MAX_BACKGROUND_VEIL);
+    }
+
+    /// 切换玻璃模式。
+    ///
+    /// 与背景无关：没装壁纸时它照样有意义——玻璃在纯纸底上仍然会画受光亮边，
+    /// 所以这里不做「没有背景就拒绝」的门，那只会让设置项在半数场景里点了没反应。
+    pub fn set_glass_mode(&mut self, glass: GlassMode) {
+        self.config_mut().appearance.glass = glass;
     }
 
     /// 把图库里某张图的字节读出来，供自定义协议直接吐给 WebView。
@@ -936,5 +944,31 @@ mod tests {
             aurora.config().appearance.background_veil,
             MAX_BACKGROUND_VEIL
         );
+    }
+
+    #[test]
+    fn glass_mode_defaults_to_frost_and_round_trips() {
+        let tmp = tempfile::tempdir().expect("临时目录");
+        let mut aurora = aurora_at(tmp.path());
+        // 缺省必须是保守那一档：液态是叠加效果，默认开等于把没验过的观感强加给所有人。
+        assert_eq!(aurora.config().appearance.glass, GlassMode::Frost);
+
+        aurora.set_glass_mode(GlassMode::Liquid);
+        assert_eq!(aurora.config().appearance.glass, GlassMode::Liquid);
+        aurora.set_glass_mode(GlassMode::Frost);
+        assert_eq!(aurora.config().appearance.glass, GlassMode::Frost);
+    }
+
+    #[test]
+    fn glass_mode_serde_uses_snake_case_and_tolerates_old_config() {
+        // 前端按字符串比较，序列化形态一旦漂成 "Liquid" 就会静默退回 frost，界面上看不出错。
+        let json = serde_json::to_string(&GlassMode::Liquid).expect("序列化");
+        assert_eq!(json, "\"liquid\"");
+
+        // 本功能上线前写下的 appearance 段没有 glass 字段，必须照常读出来并落在 frost。
+        let old: crate::config::AppearanceSettings =
+            serde_json::from_str(r#"{"background":null,"background_veil":20}"#).expect("反序列化");
+        assert_eq!(old.glass, GlassMode::Frost);
+        assert_eq!(old.background_veil, 20);
     }
 }

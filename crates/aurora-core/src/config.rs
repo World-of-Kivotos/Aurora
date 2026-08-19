@@ -96,6 +96,22 @@ impl Default for MemorySettings {
     }
 }
 
+/// 玻璃模式：界面材质用哪一套处理背景图。
+///
+/// 缺省是 `Frost`，而且这个默认值是安全侧而不是审美选择：配置读不出来、字段是老版本写的、
+/// 或者以后这个枚举被删掉，界面都落在纯毛玻璃这一档，不会出现「浮层带高光却没有底」的样子。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlassMode {
+    /// 纯毛玻璃。所有材质只有模糊与饱和，零额外合成开销。
+    #[default]
+    Frost,
+    /// 毛玻璃 + 小件液态：只给白名单里那几个小件补受光亮边与斜向高光。
+    ///
+    /// 两档的纸色不透明度完全相同，所以对比度预算表在两档下同时成立，不必维护两套。
+    Liquid,
+}
+
 /// 界面外观设置。
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -107,6 +123,8 @@ pub struct AppearanceSettings {
     /// 文字都落在不透明纸片上，可读性本不依赖它；这是给花图留的退路——
     /// 玩家的壁纸什么样都有，压一层纸色能把整屏观感拉回来。
     pub background_veil: u8,
+    /// 玻璃模式。与背景同属外观，一起落进这份配置，才能随 Aurora 文件夹一起搬家。
+    pub glass: GlassMode,
 }
 
 /// 纸色遮罩的上限。再高纸色就把图盖没了，那不如直接不设背景。

@@ -8,6 +8,15 @@
 // 3. 中途失败即停手，已落盘的不回退。后端 install 是「全部下到 staging 校验通过才移入」，
 //    每个文件要么完整要么没动，所以停在半路是安全状态；替玩家回滚反而是二次破坏。
 //    只要有一个成功就调 onUpdated——磁盘已经变了，父级的列表必须重取才不撒谎。
+//
+// 材质分层（背景图铺满全站之后新增的约束，本组四个文件同一套规矩）：
+// 只有「直接压在照片上」的两块自己挂材质——列表托底用 .surface-panel-strong（可更新项要逐行比对
+// 版本号，属长时间扫读，买 AAA 那档余量），悬浮工具条用 .surface-panel（它会滑出列表压到照片上，
+// 必须自足）。除此之外一层都不许再挂：条目用寄生的 .surface-control，进度轨用 .surface-sunken，
+// 告警块只留描边。三层半透明叠起来就是一团浆糊，这条是本次换皮最容易翻车的地方。
+//
+// 朱红只作填充不作文字：实算 accent 压在 .surface-panel 上只有 3.41，够图标（3.0）不够正文（4.5）。
+// 所以通道徽标从「描边 + 朱红字」改成「朱红底 + 纸色字」（纸色压朱红 4.78，过线），示警反而更扎眼。
 
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -35,11 +44,12 @@ const CHANNEL_LABEL: Record<ReleaseChannel, string> = {
   alpha: "预览版",
 };
 
-// 预发布通道借用 accent 描边示警：这是少数「玩家不知情就会踩坑」的场景，值得用掉一次强调色。
+// 预发布通道借用 accent 示警：这是少数「玩家不知情就会踩坑」的场景，值得用掉一次强调色。
+// 三档的盒子尺寸刻意一致（同样只有内边距，无描边），否则同一列徽标会因为多出的 1px 边而参差。
 const CHANNEL_CLASS: Record<ReleaseChannel, string> = {
-  release: "bg-ink/[0.07] text-ink/60",
-  beta: "border border-accent/40 text-accent",
-  alpha: "border border-accent/40 text-accent",
+  release: "surface-sunken text-ink/75",
+  beta: "bg-accent font-bold text-paper-on",
+  alpha: "bg-accent font-bold text-paper-on",
 };
 
 /** 后端在平台缺 date_published 时给空串，如实说「未知」而不是编一个日期出来。 */
@@ -54,14 +64,18 @@ interface RunState {
   fileName: string;
 }
 
-/** 勾选记号：行本身是 role=checkbox 的按钮，这里只画形状，不接事件（避免按钮套按钮）。 */
+/**
+ * 勾选记号：行本身是 role=checkbox 的按钮，这里只画形状，不接事件（避免按钮套按钮）。
+ * 未选中的描边用 ink/45 而不是装饰档的 ink/30——这个方框是「选没选中」的唯一视觉载体，
+ * 压在控件底上时 ink/30 已经淡到看不出有没有框，那等于把状态藏了。
+ */
 function CheckGlyph({ state }: { state: "on" | "off" | "mixed" }) {
   return (
     <span
       aria-hidden="true"
       className={[
         "grid h-[18px] w-[18px] shrink-0 place-items-center rounded-control border transition-colors",
-        state === "off" ? "border-ink/30 text-transparent" : "border-ink bg-ink text-paper-on",
+        state === "off" ? "border-ink/45 text-transparent" : "border-ink bg-ink text-paper-on",
       ].join(" ")}
     >
       {state === "mixed" ? <span className="h-[2px] w-[9px] bg-paper-on" /> : <CheckIcon size={12} />}
@@ -142,12 +156,16 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
   };
 
   if (candidates.length === 0) {
+    // EmptyState 自己不带底（它多数时候被用在别的材质里面），而这里是直接压在照片上的位置，
+    // 所以由调用方补一层容器材质，否则这行字会裸在图上。
     return (
-      <EmptyState
-        icon={<PackageIcon />}
-        title="全部都是最新的"
-        action={{ label: "重新检查", onClick: onRefresh }}
-      />
+      <div className="surface-panel rounded-panel px-4">
+        <EmptyState
+          icon={<PackageIcon />}
+          title="全部都是最新的"
+          action={{ label: "重新检查", onClick: onRefresh }}
+        />
+      </div>
     );
   }
 
@@ -155,99 +173,105 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
 
   return (
     <section aria-busy={busy} className="min-w-0">
-      <div className="mb-4 flex items-center gap-3">
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={headState === "mixed" ? "mixed" : headState === "on"}
-          onClick={toggleAll}
-          disabled={busy}
-          className={`${CTRL} inline-flex cursor-pointer items-center gap-2.5 rounded-control px-1 text-[13px] font-bold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45`}
-        >
-          <CheckGlyph state={headState} />
-          全选
-        </button>
-        <span className="font-mono text-[12px] text-ink/60 tabular-nums">
-          {candidates.length} 个可更新
-        </span>
-        <Button
-          variant="secondary"
-          className={`${CTRL} ml-auto shrink-0`}
-          icon={<RefreshIcon size={15} />}
-          onClick={onRefresh}
-          disabled={busy}
-        >
-          重新检查
-        </Button>
-      </div>
-
-      {error && (
-        <div className="mb-4 flex items-start gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3">
-          <span className="mt-0.5 shrink-0 text-danger [&_svg]:h-[18px] [&_svg]:w-[18px]">
-            <AlertIcon />
+      {/* 操作栏与清单同处一块托底：它们是同一件事的两半，分成两块玻璃会读成两个不相干的模块。 */}
+      <div className="surface-panel-strong rounded-panel p-4">
+        <div className="mb-4 flex items-center gap-3">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={headState === "mixed" ? "mixed" : headState === "on"}
+            onClick={toggleAll}
+            disabled={busy}
+            className={`${CTRL} inline-flex cursor-pointer items-center gap-2.5 rounded-control px-1 text-[13px] font-bold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45`}
+          >
+            <CheckGlyph state={headState} />
+            全选
+          </button>
+          <span className="font-mono text-[12px] text-ink/75 tabular-nums">
+            {candidates.length} 个可更新
           </span>
-          <span className="flex-1 text-[13px] break-words text-danger">{error}</span>
+          <Button
+            variant="secondary"
+            className={`${CTRL} ml-auto shrink-0`}
+            icon={<RefreshIcon size={15} />}
+            onClick={onRefresh}
+            disabled={busy}
+          >
+            重新检查
+          </Button>
         </div>
-      )}
 
-      <ul className="m-0 flex list-none flex-col gap-2 p-0">
-        {candidates.map((c, i) => {
-          const on = selected.has(c.file_name);
-          const updated = done.has(c.file_name);
-          const active = running?.fileName === c.file_name;
-          return (
-            <motion.li
-              key={c.file_name}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ ...springs.soft, delay: Math.min(i, 12) * 0.02 }}
-            >
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={on}
-                onClick={() => toggleOne(c.file_name)}
-                disabled={busy}
-                className={[
-                  "flex w-full cursor-pointer items-center gap-3 rounded-control border px-3.5 py-3 text-left transition-colors",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                  "disabled:cursor-default disabled:opacity-55",
-                  active
-                    ? "border-ink bg-paper-sink"
-                    : on
-                      ? "border-ink/45 bg-paper-sink"
-                      : "border-ink/10 bg-paper-sink/60 hover:border-ink/35",
-                ].join(" ")}
+        {/* 已在托底材质里面，告警块只靠描边与危险色区分，不再叠第二层玻璃。 */}
+        {error && (
+          <div className="mb-4 flex items-start gap-3 rounded-panel border border-danger/35 px-4 py-3">
+            <span className="mt-0.5 shrink-0 text-danger [&_svg]:h-[18px] [&_svg]:w-[18px]">
+              <AlertIcon />
+            </span>
+            <span className="flex-1 text-[13px] break-words text-danger">{error}</span>
+          </div>
+        )}
+
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {candidates.map((c, i) => {
+            const on = selected.has(c.file_name);
+            const updated = done.has(c.file_name);
+            const active = running?.fileName === c.file_name;
+            return (
+              <motion.li
+                key={c.file_name}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ ...springs.soft, delay: Math.min(i, 12) * 0.02 }}
               >
-                <CheckGlyph state={on ? "on" : "off"} />
-
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-[14px] leading-tight font-extrabold">{c.file_name}</span>
-                  <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-ink/60 tabular-nums">
-                    <span className="truncate line-through decoration-ink/30">{c.current_version_id}</span>
-                    <span aria-hidden="true">{"->"}</span>
-                    <span className="truncate font-bold text-ink/75">{c.latest.version_number}</span>
-                    <span>{fmtDate(c.latest.date_published)}</span>
-                  </span>
-                </span>
-
-                <span
-                  className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] ${CHANNEL_CLASS[c.latest.release_channel]}`}
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  onClick={() => toggleOne(c.file_name)}
+                  disabled={busy}
+                  className={[
+                    // 可点行的底与悬停/按下反馈全部来自 .surface-control，组件不再自备 hover 底色。
+                    "surface-control flex w-full cursor-pointer items-center gap-3 rounded-control border px-3.5 py-3 text-left",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    "disabled:cursor-default disabled:opacity-55",
+                    // 描边始终占位、只换颜色：选中与否不该让整行宽度跳动。
+                    active ? "border-ink" : on ? "border-ink/45" : "border-transparent",
+                  ].join(" ")}
                 >
-                  {CHANNEL_LABEL[c.latest.release_channel]}
-                </span>
+                  <CheckGlyph state={on ? "on" : "off"} />
 
-                {updated && (
-                  <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-ink/60">
-                    <CheckIcon size={13} />
-                    已更新
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[14px] leading-tight font-extrabold">
+                      {c.file_name}
+                    </span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-ink/75 tabular-nums">
+                      <span className="truncate line-through decoration-ink/30">
+                        {c.current_version_id}
+                      </span>
+                      <span aria-hidden="true">{"->"}</span>
+                      <span className="truncate font-bold text-ink">{c.latest.version_number}</span>
+                      <span>{fmtDate(c.latest.date_published)}</span>
+                    </span>
                   </span>
-                )}
-              </button>
-            </motion.li>
-          );
-        })}
-      </ul>
+
+                  <span
+                    className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] ${CHANNEL_CLASS[c.latest.release_channel]}`}
+                  >
+                    {CHANNEL_LABEL[c.latest.release_channel]}
+                  </span>
+
+                  {updated && (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-ink/75">
+                      <CheckIcon size={13} />
+                      已更新
+                    </span>
+                  )}
+                </button>
+              </motion.li>
+            );
+          })}
+        </ul>
+      </div>
 
       {/* 悬浮工具条（形态抄自 PCL2）：sticky 贴在滚动区底部，选中或更新中才出现，不选就不占位。 */}
       <AnimatePresence initial={false}>
@@ -259,18 +283,24 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
             transition={springs.pop}
             className="sticky bottom-4 z-10 mt-4"
           >
-            <div className="rounded-panel border border-ink bg-paper-sink px-4 py-3">
+            {/*
+              工具条自己挂 .surface-panel 而不是跟着上面那块托底：它会滑出列表、直接压在照片上，
+              没有自足材质就成了无底浮层。投影已焊在材质里，因此不再叠 .paper-on-photo，
+              原来那圈 border-ink 也去掉——浮起来的层次改由投影表达，描边留给同一平面上的分隔。
+            */}
+            <div className="surface-panel rounded-panel px-4 py-3">
               {running ? (
                 <>
                   <div className="flex items-center gap-3">
                     <span className="text-[13px] font-bold text-ink">
                       更新中 第 {running.index} / {running.total} 个
                     </span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink/60">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink/75">
                       {running.fileName}
                     </span>
                   </div>
-                  <div className="mt-2.5 h-[3px] w-full overflow-hidden rounded-control bg-ink/12">
+                  {/* 进度轨与整合包面板那条统一成 6px + .surface-sunken，同一个功能组不该有两种进度条。 */}
+                  <div className="surface-sunken mt-2.5 h-1.5 w-full overflow-hidden rounded-control">
                     <motion.span
                       className="block h-full bg-ink"
                       initial={{ width: 0 }}
@@ -326,21 +356,21 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
         </p>
         <ol className="mt-3 mb-0 flex list-none flex-col gap-2.5 p-0 text-[13.5px] leading-relaxed">
           <li className="flex gap-2.5">
-            <span className="shrink-0 font-mono font-bold text-ink/60">1</span>
+            <span className="shrink-0 font-mono font-bold text-ink/75">1</span>
             <span>新版可能与旧存档或其它 Mod 不兼容，轻则功能异常，重则存档读不出来。</span>
           </li>
           <li className="flex gap-2.5">
-            <span className="shrink-0 font-mono font-bold text-ink/60">2</span>
+            <span className="shrink-0 font-mono font-bold text-ink/75">2</span>
             <span>
               正在玩整合包时不建议自行更新单个 Mod——整合包作者锁定的版本组合一旦被打破，很容易连锁崩溃。
             </span>
           </li>
           <li className="flex gap-2.5">
-            <span className="shrink-0 font-mono font-bold text-ink/60">3</span>
+            <span className="shrink-0 font-mono font-bold text-ink/75">3</span>
             <span>动手前建议先备份存档（saves 目录），出问题时才有退路。</span>
           </li>
         </ol>
-        <p className="mt-3.5 mb-0 text-[12.5px] text-ink/60">
+        <p className="mt-3.5 mb-0 text-[12.5px] text-ink/75">
           旧文件会以 .old 保留在原目录并记入变更历史，可在历史记录里回滚。
         </p>
       </Modal>
