@@ -94,7 +94,7 @@ export function SkinHead({ uuid, name, size }: { uuid: string; name: string; siz
     return (
       <span
         style={{ width: size, height: size }}
-        className="grid shrink-0 place-items-center rounded-[3px] bg-ink font-extrabold text-paper-on"
+        className="grid shrink-0 place-items-center rounded-control bg-ink font-extrabold text-paper-on"
         aria-label={name}
       >
         {initialOf(name)}

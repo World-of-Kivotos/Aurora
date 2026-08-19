@@ -21,6 +21,21 @@
     "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", "Segoe UI", system-ui,
     -apple-system, sans-serif;
   --font-mono: "Cascadia Code", "Consolas", ui-monospace, "SFMono-Regular", monospace;
+
+  /*
+   * 圆角：按角色分三档，不按数值取名。改风格改这三个值，不再回到 32 个组件里逐个改。
+   *
+   * 这三档是从既有 109 处硬编码圆角反推出来的真实角色分布，不是拍脑袋的尺度表：
+   *   panel   容器 —— 卡片/分区/弹窗/下拉面板/日志台/告警块（44 处）
+   *   control 可操作物 —— 按钮/输入/选择器/可点行/窗口按钮/头像/进度轨（30 处）
+   *   chip    小记号 —— 徽标/小图标按钮/分段控件内页/下拉项（35 处）
+   *
+   * 当前取值与迁移前逐像素相同（panel/control 原本都是 3px，chip 原本 2px），
+   * 所以令牌化这一步是零视觉变化；换皮时才动这三个数。
+   */
+  --radius-panel: 3px;
+  --radius-control: 3px;
+  --radius-chip: 2px;
 }
 
 @layer base {

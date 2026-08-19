@@ -60,7 +60,7 @@ function CheckGlyph({ state }: { state: "on" | "off" | "mixed" }) {
     <span
       aria-hidden="true"
       className={[
-        "grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[3px] border transition-colors",
+        "grid h-[18px] w-[18px] shrink-0 place-items-center rounded-control border transition-colors",
         state === "off" ? "border-ink/30 text-transparent" : "border-ink bg-ink text-paper-on",
       ].join(" ")}
     >
@@ -162,7 +162,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
           aria-checked={headState === "mixed" ? "mixed" : headState === "on"}
           onClick={toggleAll}
           disabled={busy}
-          className={`${CTRL} inline-flex cursor-pointer items-center gap-2.5 rounded-[3px] px-1 text-[13px] font-bold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45`}
+          className={`${CTRL} inline-flex cursor-pointer items-center gap-2.5 rounded-control px-1 text-[13px] font-bold text-ink/75 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45`}
         >
           <CheckGlyph state={headState} />
           全选
@@ -182,7 +182,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
       </div>
 
       {error && (
-        <div className="mb-4 flex items-start gap-3 rounded-[3px] border border-danger/35 bg-danger/[0.04] px-4 py-3">
+        <div className="mb-4 flex items-start gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3">
           <span className="mt-0.5 shrink-0 text-danger [&_svg]:h-[18px] [&_svg]:w-[18px]">
             <AlertIcon />
           </span>
@@ -209,7 +209,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
                 onClick={() => toggleOne(c.file_name)}
                 disabled={busy}
                 className={[
-                  "flex w-full cursor-pointer items-center gap-3 rounded-[3px] border px-3.5 py-3 text-left transition-colors",
+                  "flex w-full cursor-pointer items-center gap-3 rounded-control border px-3.5 py-3 text-left transition-colors",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                   "disabled:cursor-default disabled:opacity-55",
                   active
@@ -232,7 +232,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
                 </span>
 
                 <span
-                  className={`shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] ${CHANNEL_CLASS[c.latest.release_channel]}`}
+                  className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] ${CHANNEL_CLASS[c.latest.release_channel]}`}
                 >
                   {CHANNEL_LABEL[c.latest.release_channel]}
                 </span>
@@ -259,7 +259,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
             transition={springs.pop}
             className="sticky bottom-4 z-10 mt-4"
           >
-            <div className="rounded-[3px] border border-ink bg-paper-sink px-4 py-3">
+            <div className="rounded-panel border border-ink bg-paper-sink px-4 py-3">
               {running ? (
                 <>
                   <div className="flex items-center gap-3">
@@ -270,7 +270,7 @@ export function UpdatePanel({ versionId, candidates, onRefresh, onUpdated }: Upd
                       {running.fileName}
                     </span>
                   </div>
-                  <div className="mt-2.5 h-[3px] w-full overflow-hidden rounded-[3px] bg-ink/12">
+                  <div className="mt-2.5 h-[3px] w-full overflow-hidden rounded-control bg-ink/12">
                     <motion.span
                       className="block h-full bg-ink"
                       initial={{ width: 0 }}

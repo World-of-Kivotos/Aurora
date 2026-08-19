@@ -24,7 +24,7 @@ function WinButton({
       aria-label={label}
       onClick={onClick}
       className={[
-        "grid h-[28px] w-[34px] cursor-pointer place-items-center rounded-[3px] transition-colors",
+        "grid h-[28px] w-[34px] cursor-pointer place-items-center rounded-control transition-colors",
         // 磨砂放到 65% 之后 ink/50 只剩 2.57，跌破非文字对比的 3:1；加粗到 ink/70 得 3.93。
         // 这一档是磨砂能放这么透的前提，不是可选的润色。
         onPhoto ? "text-ink/70" : "text-ink/60",

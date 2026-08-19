@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 type CardProps = Omit<HTMLMotionProps<"div">, "children"> & { children?: ReactNode };
 
 export function Card({ className, children, ...rest }: CardProps) {
-  const cls = ["rounded-[3px] border border-ink/9 bg-paper-sink p-[18px]", className]
+  const cls = ["rounded-panel border border-ink/9 bg-paper-sink p-[18px]", className]
     .filter(Boolean)
     .join(" ");
   return (

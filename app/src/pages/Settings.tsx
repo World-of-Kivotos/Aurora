@@ -46,7 +46,7 @@ import {
 } from "../lib/ipc";
 
 const inputCls =
-  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full rounded-control border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 /**
  * 带内嵌提交按钮的输入框：按钮压在输入框右侧内部，不再与输入框并排。
@@ -92,7 +92,7 @@ function InputWithAction({
         disabled={pending}
         className={[
           "absolute top-1 right-1 bottom-1 inline-flex shrink-0 cursor-pointer items-center gap-1.5",
-          "rounded-[2px] px-3 text-[13px] font-bold whitespace-nowrap",
+          "rounded-chip px-3 text-[13px] font-bold whitespace-nowrap",
           "bg-ink/[0.07] text-ink/75 transition-colors hover:bg-ink hover:text-paper-on",
           "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
           "disabled:pointer-events-none disabled:opacity-45",
@@ -651,20 +651,20 @@ export function Settings() {
                           {dirs.map((d) => (
                             <li
                               key={d.path}
-                              className="flex items-center gap-3 rounded-[3px] border border-ink/10 bg-paper px-3 py-2.5"
+                              className="flex items-center gap-3 rounded-control border border-ink/10 bg-paper px-3 py-2.5"
                             >
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-2">
                                   <span className="truncate text-[13.5px] font-bold">{d.name}</span>
                                   {d.is_current && (
-                                    <span className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
+                                    <span className="shrink-0 rounded-chip bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent">
                                       当前
                                     </span>
                                   )}
                                   {!d.available && (
                                     <span
                                       title="这个位置现在访问不到（盘没挂或已被删除），记录仍然保留"
-                                      className="shrink-0 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/60"
+                                      className="shrink-0 rounded-chip border border-ink/20 px-1.5 py-0.5 text-[10px] font-bold text-ink/60"
                                     >
                                       不可达
                                     </span>
@@ -685,7 +685,7 @@ export function Settings() {
                                     onClick={() => void switchDir(d.path, d.name)}
                                     disabled={dirsBusy || !d.available}
                                     title={d.available ? undefined : "位置访问不到，无法切过去"}
-                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     切换
                                   </button>
@@ -693,7 +693,7 @@ export function Settings() {
                                     type="button"
                                     onClick={() => void removeDir(d.path)}
                                     disabled={dirsBusy}
-                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:text-danger disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     移除
                                   </button>
@@ -704,7 +704,7 @@ export function Settings() {
                         </ul>
 
                         {discovered.length > 0 && (
-                          <div className="mt-3 rounded-[3px] border border-ink/10 bg-paper-sink px-3 py-2.5">
+                          <div className="mt-3 rounded-panel border border-ink/10 bg-paper-sink px-3 py-2.5">
                             <div className="text-[12px] font-bold text-ink/60">发现未记录的文件夹</div>
                             <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
                               {discovered.map((d) => (
@@ -719,7 +719,7 @@ export function Settings() {
                                     type="button"
                                     onClick={() => void adoptDir(d.name, d.path)}
                                     disabled={dirsBusy}
-                                    className="shrink-0 cursor-pointer rounded-[2px] px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
+                                    className="shrink-0 cursor-pointer rounded-chip px-2 py-1 text-[11.5px] font-bold text-ink/60 transition-colors hover:bg-ink hover:text-paper-on disabled:pointer-events-none disabled:opacity-40"
                                   >
                                     添加
                                   </button>
@@ -742,7 +742,7 @@ export function Settings() {
                           <div className="text-[15px] font-bold">微软 client_id</div>
                           <span
                             className={[
-                              "rounded-[2px] px-2 py-0.5 text-[11px] font-bold tracking-[0.08em]",
+                              "rounded-chip px-2 py-0.5 text-[11px] font-bold tracking-[0.08em]",
                               config.has_client_id ? "bg-ink text-paper-on" : "border border-ink/20 text-ink/60",
                             ].join(" ")}
                           >
@@ -813,7 +813,7 @@ export function Settings() {
                     </div>
 
                     {update?.kind === "available" && update.notes && (
-                      <p className="mt-3 mb-0 rounded-[3px] bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/75">
+                      <p className="mt-3 mb-0 rounded-panel bg-paper px-3 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/75">
                         {update.notes}
                       </p>
                     )}
@@ -932,7 +932,7 @@ export function Settings() {
                         {javas.map((j) => (
                           <li
                             key={j.path}
-                            className="flex items-center justify-between gap-4 rounded-[2px] border border-ink/9 bg-paper px-3.5 py-2.5"
+                            className="flex items-center justify-between gap-4 rounded-chip border border-ink/9 bg-paper px-3.5 py-2.5"
                           >
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
@@ -942,10 +942,10 @@ export function Settings() {
                               <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink/60">{j.path}</div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
-                              <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
+                              <span className="rounded-chip border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
                                 {j.is_64bit ? "64 位" : "32 位"}
                               </span>
-                              <span className="rounded-[2px] border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
+                              <span className="rounded-chip border border-ink/16 px-2 py-0.5 text-[11px] text-ink/60">
                                 {JAVA_SOURCE_LABEL[j.source]}
                               </span>
                             </div>

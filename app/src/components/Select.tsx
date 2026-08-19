@@ -117,7 +117,7 @@ export function Select<T extends string>({
         onClick={() => (open ? setOpen(false) : openList())}
         onKeyDown={onKeyDown}
         className={[
-          "flex w-full items-center justify-between gap-3 rounded-[3px] border bg-paper px-3.5 py-2.5",
+          "flex w-full items-center justify-between gap-3 rounded-control border bg-paper px-3.5 py-2.5",
           "text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
           "disabled:pointer-events-none disabled:opacity-45",
           open ? "border-ink" : "border-ink/16 hover:border-ink/40",
@@ -152,7 +152,7 @@ export function Select<T extends string>({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={springs.tap}
-            className="absolute z-40 mt-1.5 max-h-64 w-full overflow-y-auto rounded-[3px] border border-ink/16 bg-paper p-1 shadow-[0_8px_24px_-12px_rgba(20,22,26,0.45)]"
+            className="absolute z-40 mt-1.5 max-h-64 w-full overflow-y-auto rounded-panel border border-ink/16 bg-paper p-1 shadow-[0_8px_24px_-12px_rgba(20,22,26,0.45)]"
           >
             {options.map((opt, i) => {
               const isSelected = opt.value === value;
@@ -166,7 +166,7 @@ export function Select<T extends string>({
                   onMouseEnter={() => setHighlight(i)}
                   onClick={() => commit(i)}
                   className={[
-                    "flex cursor-pointer items-center justify-between rounded-[2px] px-3 py-2 text-[14px]",
+                    "flex cursor-pointer items-center justify-between rounded-chip px-3 py-2 text-[14px]",
                     isHigh ? "bg-ink text-paper-on" : "text-ink/75",
                   ].join(" ")}
                 >

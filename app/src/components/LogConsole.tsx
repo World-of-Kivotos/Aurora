@@ -27,7 +27,7 @@ export function LogConsole({ lines, className }: LogConsoleProps) {
     <div
       ref={scrollRef}
       className={[
-        "h-full overflow-y-auto rounded-[3px] bg-ink px-4 py-3 font-mono text-[12.5px] leading-[1.65] text-paper-on/85",
+        "h-full overflow-y-auto rounded-panel bg-ink px-4 py-3 font-mono text-[12.5px] leading-[1.65] text-paper-on/85",
         className,
       ]
         .filter(Boolean)

@@ -112,7 +112,7 @@ function SearchField({
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onEnter?.()}
         placeholder={placeholder}
-        className={`${CTRL} w-full rounded-[3px] border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
+        className={`${CTRL} w-full rounded-control border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
       />
     </div>
   );
@@ -131,7 +131,7 @@ function Segmented<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div role="group" aria-label={ariaLabel} className={`${CTRL} flex shrink-0 items-center gap-1 rounded-[3px] bg-ink/[0.05] p-1`}>
+    <div role="group" aria-label={ariaLabel} className={`${CTRL} flex shrink-0 items-center gap-1 rounded-control bg-ink/[0.05] p-1`}>
       {options.map((o) => {
         const on = o.value === value;
         return (
@@ -141,14 +141,14 @@ function Segmented<T extends string>({
             onClick={() => onChange(o.value)}
             aria-pressed={on}
             className={[
-              "relative h-full cursor-pointer rounded-[2px] px-3 text-[13px] font-bold transition-colors",
+              "relative h-full cursor-pointer rounded-chip px-3 text-[13px] font-bold transition-colors",
               on ? "text-paper-on" : "text-ink/60 hover:text-ink/75",
             ].join(" ")}
           >
             {on && (
               <motion.span
                 layoutId={`seg-${ariaLabel}`}
-                className="absolute inset-0 rounded-[2px] bg-ink"
+                className="absolute inset-0 rounded-chip bg-ink"
                 transition={springs.tap}
               />
             )}
@@ -163,7 +163,7 @@ function Segmented<T extends string>({
 // ---- 通用：错误条 ----
 function ErrorBar({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-[3px] border border-danger/35 bg-danger/[0.04] px-4 py-3">
+    <div className="mb-4 flex items-center gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3">
       <span className="text-danger [&_svg]:h-[18px] [&_svg]:w-[18px]">
         <AlertIcon />
       </span>
@@ -284,7 +284,7 @@ function VersionTab() {
             transition={springs.tap}
             className="overflow-hidden"
           >
-            <div className="mb-4 flex items-center gap-4 rounded-[3px] border border-ink bg-paper-sink px-4 py-3">
+            <div className="mb-4 flex items-center gap-4 rounded-panel border border-ink bg-paper-sink px-4 py-3">
               <div className="min-w-0">
                 <div className="text-[10px] font-bold tracking-[0.2em] text-ink/60">即将安装</div>
                 <div className="mt-0.5 truncate text-[21px] leading-tight font-extrabold tabular-nums">{pick}</div>
@@ -342,7 +342,7 @@ function VersionTab() {
                   onClick={() => setPick(active ? null : v.id)}
                   aria-pressed={active}
                   className={[
-                    "flex w-full cursor-pointer flex-col items-start rounded-[3px] border px-3.5 py-3 text-left transition-colors",
+                    "flex w-full cursor-pointer flex-col items-start rounded-control border px-3.5 py-3 text-left transition-colors",
                     "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
                     active
                       ? "border-ink bg-ink text-paper-on"
@@ -396,7 +396,7 @@ function ResIcon({ url, title }: { url: string | null; title: string }) {
   const [failed, setFailed] = useState(false);
   if (!url || failed) {
     return (
-      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[3px] bg-ink text-[17px] font-extrabold text-paper-on">
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-control bg-ink text-[17px] font-extrabold text-paper-on">
         {title.slice(0, 1).toUpperCase()}
       </span>
     );
@@ -409,7 +409,7 @@ function ResIcon({ url, title }: { url: string | null; title: string }) {
       height={48}
       loading="lazy"
       onError={() => setFailed(true)}
-      className="h-12 w-12 shrink-0 rounded-[3px] bg-ink/5 object-cover"
+      className="h-12 w-12 shrink-0 rounded-control bg-ink/5 object-cover"
     />
   );
 }
@@ -439,7 +439,7 @@ function ResourceCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...springs.soft, delay: Math.min(index, 12) * 0.025 }}
-      className="group flex items-start gap-3.5 rounded-[3px] border border-ink/10 bg-paper-sink p-3.5 transition-colors hover:border-ink/35"
+      className="group flex items-start gap-3.5 rounded-panel border border-ink/10 bg-paper-sink p-3.5 transition-colors hover:border-ink/35"
     >
       <ResIcon url={hit.icon_url} title={hit.title} />
 
@@ -456,11 +456,11 @@ function ResourceCard({
             <DownloadIcon size={12} />
             {fmtCount(hit.downloads)}
           </span>
-          <span className="shrink-0 rounded-[2px] bg-ink/[0.07] px-1.5 py-0.5 tracking-wide uppercase">
+          <span className="shrink-0 rounded-chip bg-ink/[0.07] px-1.5 py-0.5 tracking-wide uppercase">
             {hit.platform}
           </span>
           {hit.categories.slice(0, 1).map((c) => (
-            <span key={c} className="truncate rounded-[2px] bg-ink/[0.07] px-1.5 py-0.5">
+            <span key={c} className="truncate rounded-chip bg-ink/[0.07] px-1.5 py-0.5">
               {c}
             </span>
           ))}

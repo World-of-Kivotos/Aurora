@@ -78,7 +78,7 @@ export function CrashBanner({
       // 那正是「像贴纸」的由来。取更实的 92% 一档而不是外壳的 85%——这是报警面板，
       // danger 文字压在它上面仍有 6.83:1（实心 paper-sink 基线是 7.65:1），可读性没让步。
       className={[
-        "rounded-[3px] border border-danger p-4",
+        "rounded-panel border border-danger p-4",
         onPhoto ? "paper-frost-strong" : "bg-paper",
       ].join(" ")}
     >
@@ -105,7 +105,7 @@ export function CrashBanner({
             return (
               <li
                 key={`${suspect.mod_id}:${file ?? ""}`}
-                className="flex items-center justify-between gap-3 rounded-[3px] bg-paper-sink px-3 py-1"
+                className="flex items-center justify-between gap-3 rounded-control bg-paper-sink px-3 py-1"
               >
                 <span className="flex min-w-0 flex-1 items-baseline gap-2 text-[13px] text-ink/75">
                   <span className="shrink-0">日志指向</span>

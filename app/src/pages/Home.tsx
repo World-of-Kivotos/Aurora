@@ -68,7 +68,7 @@ const PLATE_BARE = "mt-auto flex flex-col items-end gap-6 pt-10";
 const PLATE_NAKED = "mt-auto ml-auto flex flex-col items-end gap-6 pt-10";
 // 兜底纸片。投影保留——纸压在照片上是实打实的两个平面，理由见 app.css 里 paper-on-photo 的注释。
 const PLATE_FROSTED =
-  "mt-auto ml-auto flex flex-col items-end gap-6 rounded-[3px] paper-frost-strong px-7 py-6 paper-on-photo";
+  "mt-auto ml-auto flex flex-col items-end gap-6 rounded-panel paper-frost-strong px-7 py-6 paper-on-photo";
 
 export function Home() {
   const { toast } = useToast();

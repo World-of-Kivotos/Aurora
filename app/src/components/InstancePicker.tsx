@@ -414,13 +414,13 @@ export function InstancePicker({
         <div className="grid grid-cols-2 gap-5 max-[860px]:grid-cols-1">
           <div className="flex flex-col gap-2">
             {Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="rounded-[3px] border border-ink/8 bg-paper-sink/60 px-3.5 py-3">
+              <div key={i} className="rounded-panel border border-ink/8 bg-paper-sink/60 px-3.5 py-3">
                 <Skeleton className="h-[15px] w-2/5" delay={i * 0.06} />
                 <Skeleton className="mt-2 h-[11px] w-3/5" delay={i * 0.06 + 0.08} />
               </div>
             ))}
           </div>
-          <div className="rounded-[3px] border border-ink/8 bg-paper-sink/60 p-4">
+          <div className="rounded-panel border border-ink/8 bg-paper-sink/60 p-4">
             <Skeleton className="h-[11px] w-20" />
             <Skeleton className="mt-3 h-[17px] w-2/3" delay={0.08} />
             <Skeleton className="mt-2.5 h-[11px] w-full" delay={0.16} />
@@ -428,7 +428,7 @@ export function InstancePicker({
           </div>
         </div>
       ) : error ? (
-        <div className="flex items-start gap-3 rounded-[3px] border border-danger/35 bg-paper-sink px-4 py-3">
+        <div className="flex items-start gap-3 rounded-panel border border-danger/35 bg-paper-sink px-4 py-3">
           <span className="mt-px shrink-0 text-danger">
             <AlertIcon size={18} />
           </span>
@@ -486,7 +486,7 @@ export function InstancePicker({
                             aria-pressed={on}
                             onClick={() => selectInstance(m.version_id)}
                             className={[
-                              "flex w-full cursor-pointer flex-col items-start rounded-[3px] border px-3 py-2 text-left transition-colors",
+                              "flex w-full cursor-pointer flex-col items-start rounded-control border px-3 py-2 text-left transition-colors",
                               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                               on
                                 ? "border-ink bg-ink text-paper-on"
@@ -538,7 +538,7 @@ export function InstancePicker({
           <div className="min-w-0">
             {selected && (
               <>
-                <div className="rounded-[3px] border border-ink/12 bg-paper-sink p-4">
+                <div className="rounded-panel border border-ink/12 bg-paper-sink p-4">
                   <div className="text-[10px] font-bold tracking-[0.2em] text-ink/60">
                     将安装的版本
                   </div>
@@ -681,7 +681,7 @@ export function InstancePicker({
                                     aria-checked={picked}
                                     onClick={() => chooseVersion(v)}
                                     className={[
-                                      "flex w-full cursor-pointer flex-col items-start rounded-[3px] border px-3 py-2 text-left transition-colors",
+                                      "flex w-full cursor-pointer flex-col items-start rounded-control border px-3 py-2 text-left transition-colors",
                                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                                       picked
                                         ? "border-ink bg-ink text-paper-on"
@@ -732,7 +732,7 @@ export function InstancePicker({
                 </div>
 
                 {selected.compatibility.kind === "mismatch" && (
-                  <div className="mt-3 rounded-[3px] border border-danger/35 px-4 py-3">
+                  <div className="mt-3 rounded-panel border border-danger/35 px-4 py-3">
                     <div className="flex items-center gap-2 text-[12px] font-bold text-danger">
                       <AlertIcon size={15} />
                       仍然安装的代价

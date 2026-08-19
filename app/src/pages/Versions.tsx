@@ -150,7 +150,7 @@ export function Versions() {
       {error && (
         <motion.div
           variants={pageItem}
-          className="mb-5 flex items-center gap-3 rounded-[3px] border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          className="mb-5 flex items-center gap-3 rounded-panel border border-danger/40 px-4 py-3 text-[13px] text-danger"
         >
           <AlertIcon size={18} />
           <span className="flex-1">{error}</span>
@@ -191,7 +191,7 @@ export function Versions() {
                           ref={badgeRef}
                           layoutId={migrateBadge ? "current-version-badge" : undefined}
                           transition={springs.soft}
-                          className="shrink-0 rounded-[2px] bg-accent/12 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
+                          className="shrink-0 rounded-chip bg-accent/12 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
                         >
                           当前
                         </motion.span>
@@ -225,7 +225,7 @@ export function Versions() {
                         type="button"
                         onClick={() => void setAsCurrent(v.id)}
                         title="设为当前启动版本"
-                        className="cursor-pointer rounded-[2px] px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/60 hover:!text-accent focus-visible:text-ink/60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                        className="cursor-pointer rounded-chip px-2 py-1 text-[11px] font-bold whitespace-nowrap text-ink/0 transition-colors group-hover:text-ink/60 hover:!text-accent focus-visible:text-ink/60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
                       >
                         设为当前
                       </button>
@@ -240,7 +240,7 @@ export function Versions() {
               <div className="flex items-center justify-between gap-6 py-[15px]">
                 <span className="text-[21px] font-bold text-danger tabular-nums">{b.id}</span>
                 <span className="flex items-center gap-2 text-[12px] text-danger/80">
-                  <span className="rounded-[2px] border border-danger/50 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em]">
+                  <span className="rounded-chip border border-danger/50 px-2 py-0.5 text-[10px] font-bold tracking-[0.08em]">
                     损坏
                   </span>
                   <span className="font-mono">{b.reason}</span>

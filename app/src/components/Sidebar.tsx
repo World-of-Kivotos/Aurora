@@ -71,7 +71,7 @@ function NavRow({ to, label, end, onPhoto }: NavDef & { onPhoto: boolean }) {
     <NavLink
       to={to}
       end={end}
-      className="group relative flex items-center rounded-[3px] py-[10px] pr-3 pl-[16px] transition-colors hover:bg-ink/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+      className="group relative flex items-center rounded-control py-[10px] pr-3 pl-[16px] transition-colors hover:bg-ink/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
     >
       {({ isActive }) => (
         <>
@@ -142,7 +142,7 @@ function GameRow({ game, onPhoto }: { game: GameDef; onPhoto: boolean }) {
   // 层级差异一律靠字号与字重表达，而不是把字调淡到读不出来；「敬请期待」那行才是真正的状态线索。
   if (!game.to) {
     return (
-      <div aria-disabled="true" className="rounded-[3px] py-[10px] pr-3 pl-[16px]">
+      <div aria-disabled="true" className="rounded-control py-[10px] pr-3 pl-[16px]">
         <GameLockup game={game} active={false} onPhoto={onPhoto} />
       </div>
     );
@@ -154,7 +154,7 @@ function GameRow({ game, onPhoto }: { game: GameDef; onPhoto: boolean }) {
       end
       // 排版把名字切成了两截, 无障碍名得把它拼回完整的一句, 否则读屏念出来是断的。
       aria-label={fullName(game)}
-      className="group relative block rounded-[3px] py-[10px] pr-3 pl-[16px] transition-colors hover:bg-ink/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+      className="group relative block rounded-control py-[10px] pr-3 pl-[16px] transition-colors hover:bg-ink/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
     >
       {({ isActive }) => (
         <>

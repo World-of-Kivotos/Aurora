@@ -60,7 +60,7 @@ export function ModpackSyncProgressView({
       : null;
 
   return (
-    <div className="mt-4 rounded-[3px] border border-accent/25 bg-accent/[0.035] px-4 py-3.5" role="status">
+    <div className="mt-4 rounded-panel border border-accent/25 bg-accent/[0.035] px-4 py-3.5" role="status">
       <div className="flex items-baseline gap-3">
         <span className="text-[13px] font-bold text-ink">{SYNC_STAGE_LABEL[progress.stage]}</span>
         <span className="font-mono text-[11.5px] text-ink/60 tabular-nums">{count}</span>
@@ -92,7 +92,7 @@ export function ModpackSyncFailureView({
 }) {
   const presentation = presentSyncFailure(failure);
   return (
-    <div className="mt-4 rounded-[3px] border border-danger/40 bg-danger/[0.04] px-4 py-3.5" role="alert">
+    <div className="mt-4 rounded-panel border border-danger/40 bg-danger/[0.04] px-4 py-3.5" role="alert">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 shrink-0 text-danger">
           <AlertIcon size={18} />
@@ -124,7 +124,7 @@ export function ManagedModpackPanel({
   const updateAvailable = status.kind === "ready" && displayedVersions !== null && modpackUpdateAvailable(displayedVersions);
 
   return (
-    <section aria-labelledby="managed-modpack-title" className="rounded-[3px] border border-ink/12 bg-paper-sink p-[18px]">
+    <section aria-labelledby="managed-modpack-title" className="rounded-panel border border-ink/12 bg-paper-sink p-[18px]">
       <div className="flex flex-wrap items-start gap-4">
         <span className="mt-0.5 shrink-0 text-accent">
           <PackageIcon size={20} />
@@ -134,11 +134,11 @@ export function ManagedModpackPanel({
             <h2 id="managed-modpack-title" className="text-[15px] font-extrabold text-ink">
               受管整合包
             </h2>
-            <span className="rounded-[2px] bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold text-accent">
+            <span className="rounded-chip bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold text-accent">
               {status.subscription.pack_id}
             </span>
             {status.kind === "ready" && status.source === "cache" && (
-              <span className="rounded-[2px] bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60">
+              <span className="rounded-chip bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60">
                 上次成功缓存
               </span>
             )}
@@ -181,7 +181,7 @@ export function ManagedModpackPanel({
       {displayedVersions?.latest.note && <p className="mt-3 text-[12.5px] leading-relaxed text-ink/75">{displayedVersions.latest.note}</p>}
 
       {status.kind === "unavailable" && (
-        <div className="mt-4 flex items-start gap-3 rounded-[3px] border border-danger/30 px-3.5 py-3 text-danger" role="alert">
+        <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/30 px-3.5 py-3 text-danger" role="alert">
           <AlertIcon size={17} className="mt-0.5 shrink-0" />
           <div className="min-w-0">
             <p className="text-[13px] font-bold">暂时无法检查可用版本</p>
@@ -214,7 +214,7 @@ export function ManagedModpackPanel({
         </>
       )}
       {sync.kind === "complete" && (
-        <div className="mt-4 flex items-center gap-2.5 rounded-[3px] border border-ink/12 px-3.5 py-3 text-[13px] text-ink/75" role="status">
+        <div className="mt-4 flex items-center gap-2.5 rounded-panel border border-ink/12 px-3.5 py-3 text-[13px] text-ink/75" role="status">
           <CheckIcon size={16} />
           已同步到 <span className="font-mono font-bold">{sync.installed_version}</span>
         </div>
@@ -234,7 +234,7 @@ export function ModpackFileOwnership({ owner }: { owner: ModpackFileOwner }) {
   const managed = owner === "modpack";
   return (
     <span
-      className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-semibold ${
+      className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] font-semibold ${
         managed ? "bg-accent/10 text-accent" : "bg-ink/[0.07] text-ink/60"
       }`}
       title={managed ? "由整合包统一维护，不能单独移除" : "玩家自行安装，可按普通 Mod 管理"}

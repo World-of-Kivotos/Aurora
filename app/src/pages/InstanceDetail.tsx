@@ -79,7 +79,7 @@ const TABS: { key: TabKey; label: string; icon: typeof CubeIcon }[] = [
 const CTRL = "h-10";
 
 const inputCls =
-  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full rounded-control border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink/60 focus-visible:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 const ISOLATION_OPTIONS: { value: IsolationOverride; label: string }[] = [
   { value: "follow_global", label: "跟随全局" },
@@ -145,7 +145,7 @@ function SearchField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`${CTRL} w-full rounded-[3px] border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
+        className={`${CTRL} w-full rounded-control border border-ink/14 bg-paper pr-3 pl-9 text-[14px] text-ink transition-colors outline-none placeholder:text-ink/60 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2`}
       />
     </div>
   );
@@ -166,7 +166,7 @@ function Segmented<T extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={`${CTRL} flex shrink-0 items-center gap-1 rounded-[3px] bg-ink/[0.05] p-1`}
+      className={`${CTRL} flex shrink-0 items-center gap-1 rounded-control bg-ink/[0.05] p-1`}
     >
       {options.map((o) => {
         const on = o.value === value;
@@ -177,14 +177,14 @@ function Segmented<T extends string>({
             onClick={() => onChange(o.value)}
             aria-pressed={on}
             className={[
-              "relative h-full cursor-pointer rounded-[2px] px-3 text-[13px] font-bold transition-colors",
+              "relative h-full cursor-pointer rounded-chip px-3 text-[13px] font-bold transition-colors",
               on ? "text-paper-on" : "text-ink/60 hover:text-ink/75",
             ].join(" ")}
           >
             {on && (
               <motion.span
                 layoutId={`seg-${ariaLabel}`}
-                className="absolute inset-0 rounded-[2px] bg-ink"
+                className="absolute inset-0 rounded-chip bg-ink"
                 transition={springs.tap}
               />
             )}
@@ -203,7 +203,7 @@ function Tag({ children, tone = "plain" }: { children: ReactNode; tone?: "plain"
       ? "bg-accent/12 text-accent"
       : "bg-ink/[0.07] text-ink/60";
   return (
-    <span className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-semibold ${cls}`}>
+    <span className={`shrink-0 rounded-chip px-1.5 py-0.5 text-[11px] font-semibold ${cls}`}>
       {children}
     </span>
   );
@@ -258,7 +258,7 @@ function CrashBanner({ report }: { report: CrashReport }) {
   return (
     <div
       className={[
-        "rounded-[3px] border px-4 py-3",
+        "rounded-panel border px-4 py-3",
         alarming ? "border-danger/35 bg-danger/[0.04]" : "border-ink/12 bg-paper-sink",
       ].join(" ")}
     >
@@ -406,7 +406,7 @@ function OverviewTab({
       )}
 
       {/* 身份条：这个实例「是谁、文件落在哪」，常驻概览顶部。 */}
-      <div className="rounded-[3px] border border-ink/12 bg-paper-sink px-[18px] py-4">
+      <div className="rounded-panel border border-ink/12 bg-paper-sink px-[18px] py-4">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
           <span className="text-[21px] leading-tight font-extrabold tracking-[-0.01em] tabular-nums">
             {versionId}
@@ -643,7 +643,7 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
   return (
     <div className="min-w-0">
       {ownershipError && (
-        <div className="mb-4 flex items-center gap-3 rounded-[3px] border border-danger/35 bg-danger/[0.04] px-4 py-3 text-[13px] text-danger" role="alert">
+        <div className="mb-4 flex items-center gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3 text-[13px] text-danger" role="alert">
           <AlertIcon size={18} />
           <span>无法确认整合包文件归属：{ownershipError}。为避免误改受管文件，管理开关已停用。</span>
         </div>
@@ -1204,7 +1204,7 @@ export function InstanceDetail() {
       {error && (
         <motion.div
           variants={pageItem}
-          className="mb-5 flex items-center gap-3 rounded-[3px] border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          className="mb-5 flex items-center gap-3 rounded-panel border border-danger/40 px-4 py-3 text-[13px] text-danger"
         >
           <AlertIcon size={18} />
           <span className="flex-1">{error}</span>
@@ -1217,7 +1217,7 @@ export function InstanceDetail() {
       {(managedStatusError || managedFilesError) && (
         <motion.div
           variants={pageItem}
-          className="mb-5 flex items-center gap-3 rounded-[3px] border border-danger/40 px-4 py-3 text-[13px] text-danger"
+          className="mb-5 flex items-center gap-3 rounded-panel border border-danger/40 px-4 py-3 text-[13px] text-danger"
           role="alert"
         >
           <AlertIcon size={18} />

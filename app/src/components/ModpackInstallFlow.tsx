@@ -108,7 +108,7 @@ function InstallSteps({ state }: { state: ModpackInstallState }) {
 
 function SetupFailure({ failure }: { failure: ModpackInstallProblem }) {
   return (
-    <div className="mt-4 flex items-start gap-3 rounded-[3px] border border-danger/40 bg-danger/[0.04] px-4 py-3.5" role="alert">
+    <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/40 bg-danger/[0.04] px-4 py-3.5" role="alert">
       <span className="mt-0.5 shrink-0 text-danger">
         <AlertIcon size={18} />
       </span>
@@ -140,7 +140,7 @@ export function ModpackInstallFlow({
   };
 
   return (
-    <section aria-labelledby="modpack-install-title" className="rounded-[3px] border border-ink/12 bg-paper-sink p-[18px]">
+    <section aria-labelledby="modpack-install-title" className="rounded-panel border border-ink/12 bg-paper-sink p-[18px]">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 shrink-0 text-accent">
           <PackageIcon size={20} />
@@ -176,7 +176,7 @@ export function ModpackInstallFlow({
             placeholder="https://example.com/api/v1/pack/latest"
             aria-invalid={validationError !== null}
             aria-describedby={validationError ? "modpack-pointer-error" : undefined}
-            className="h-10 min-w-0 flex-1 rounded-[3px] border border-ink/16 bg-paper px-3.5 font-mono text-[13px] text-ink transition-colors outline-none placeholder:text-ink/45 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-55"
+            className="h-10 min-w-0 flex-1 rounded-control border border-ink/16 bg-paper px-3.5 font-mono text-[13px] text-ink transition-colors outline-none placeholder:text-ink/45 hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-55"
           />
           {builtIn && pointerUrl.trim() !== builtIn.pointer_url && (
             <Button
@@ -211,7 +211,7 @@ export function ModpackInstallFlow({
         <ModpackSyncFailureView failure={state.problem.failure} />
       )}
       {state.kind === "complete" && (
-        <div className="mt-4 rounded-[3px] border border-ink/12 px-4 py-3.5" role="status">
+        <div className="mt-4 rounded-panel border border-ink/12 px-4 py-3.5" role="status">
           <div className="flex items-center gap-2.5 text-[13px] text-ink/75">
             <CheckIcon size={16} />
             已创建实例 <span className="font-mono font-bold text-ink">{state.instance_id}</span>

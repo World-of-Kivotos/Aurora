@@ -229,7 +229,7 @@ export function BackgroundPicker() {
                     disabled={busy || active}
                     aria-current={active}
                     className={[
-                      "block w-full cursor-pointer overflow-hidden rounded-[3px] border text-left transition-colors",
+                      "block w-full cursor-pointer overflow-hidden rounded-control border text-left transition-colors",
                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                       active
                         ? "border-accent"
@@ -253,7 +253,7 @@ export function BackgroundPicker() {
                   </button>
 
                   {active && (
-                    <span className="absolute top-1.5 left-1.5 rounded-[2px] bg-accent px-1.5 py-0.5 text-[10px] font-bold tracking-[0.1em] text-paper-on">
+                    <span className="absolute top-1.5 left-1.5 rounded-chip bg-accent px-1.5 py-0.5 text-[10px] font-bold tracking-[0.1em] text-paper-on">
                       使用中
                     </span>
                   )}
@@ -286,7 +286,7 @@ export function BackgroundPicker() {
                     disabled={busy}
                     aria-label={`删除 ${entry.file}`}
                     className={[
-                      "absolute top-1.5 right-1.5 grid h-6 w-6 cursor-pointer place-items-center rounded-[2px]",
+                      "absolute top-1.5 right-1.5 grid h-6 w-6 cursor-pointer place-items-center rounded-chip",
                       "bg-paper/90 text-ink/60 opacity-0 transition-opacity",
                       "group-hover:opacity-100 focus-visible:opacity-100",
                       // 长按期间撤掉 hover 的整块 danger 填充：底色与推进中的覆盖层同为 danger 时，
@@ -301,7 +301,7 @@ export function BackgroundPicker() {
                         再画一遍，红底扫到哪段哪段就翻成纸上色，避免推进途中图标被同色吞掉。 */}
                     <span
                       aria-hidden="true"
-                      className="pointer-events-none absolute inset-0 grid place-items-center rounded-[2px] bg-danger text-paper-on transition-[clip-path]"
+                      className="pointer-events-none absolute inset-0 grid place-items-center rounded-chip bg-danger text-paper-on transition-[clip-path]"
                       style={{
                         clipPath: holding ? "inset(0 0 0 0)" : "inset(0 100% 0 0)",
                         // 减少动效时只抹掉扫过的过程，红底仍随按住立刻铺满、松手立刻退去：

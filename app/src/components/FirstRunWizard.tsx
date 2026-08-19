@@ -97,7 +97,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
         </div>
 
         {error && (
-          <div className="mb-5 flex items-start gap-3 rounded-[3px] border border-danger/40 bg-danger/[0.04] px-4 py-3">
+          <div className="mb-5 flex items-start gap-3 rounded-panel border border-danger/40 bg-danger/[0.04] px-4 py-3">
             <span className="shrink-0 text-danger">
               <AlertIcon size={18} />
             </span>
@@ -122,7 +122,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
                   if (e.key === "Enter") void submit();
                 }}
                 spellCheck={false}
-                className="mt-1.5 h-11 w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 font-mono text-[13px] text-ink transition-colors outline-none hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                className="mt-1.5 h-11 w-full rounded-control border border-ink/16 bg-paper px-3.5 font-mono text-[13px] text-ink transition-colors outline-none hover:border-ink/30 focus:border-ink focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               />
               {dirInput.trim() !== defaultDir && (
                 <button
@@ -156,7 +156,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
                           onClick={() => toggle(d.path)}
                           aria-pressed={on}
                           className={[
-                            "flex w-full cursor-pointer items-center gap-3 rounded-[3px] border px-3 py-2.5 text-left transition-colors",
+                            "flex w-full cursor-pointer items-center gap-3 rounded-control border px-3 py-2.5 text-left transition-colors",
                             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                             on
                               ? "border-ink bg-ink text-paper-on"
@@ -187,7 +187,7 @@ export function FirstRunWizard({ onDone }: FirstRunWizardProps) {
             )}
 
             {found.length === 0 && (
-              <div className="mt-7 flex items-center gap-3 rounded-[3px] border border-ink/10 bg-paper-sink px-4 py-3.5">
+              <div className="mt-7 flex items-center gap-3 rounded-panel border border-ink/10 bg-paper-sink px-4 py-3.5">
                 <span className="shrink-0 text-ink/30">
                   <LayersIcon size={18} />
                 </span>

@@ -34,7 +34,7 @@ const TYPE_LABEL: Record<AccountType, string> = {
 };
 
 const INPUT_CLS =
-  "w-full rounded-[3px] border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink/60 hover:border-ink/40 focus:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "w-full rounded-control border border-ink/16 bg-paper px-3.5 py-2.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink/60 hover:border-ink/40 focus:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 interface TextFieldProps {
   label: string;
@@ -257,7 +257,7 @@ export function Account() {
 
       <motion.div variants={pageItem}>
         {loadError ? (
-          <div className="rounded-[3px] border border-danger/40 bg-paper p-[18px]">
+          <div className="rounded-panel border border-danger/40 bg-paper p-[18px]">
             <div className="flex items-start gap-3 text-danger">
               <AlertIcon size={20} className="mt-0.5 shrink-0" />
               <div className="min-w-0">
@@ -292,7 +292,7 @@ export function Account() {
                     exit={{ opacity: 0, scale: 0.96 }}
                     transition={springs.settle}
                     className={[
-                      "flex flex-col rounded-[3px] border bg-paper-sink p-4",
+                      "flex flex-col rounded-panel border bg-paper-sink p-4",
                       isCurrent ? "border-ink" : "border-ink/10",
                     ].join(" ")}
                   >
@@ -306,7 +306,7 @@ export function Account() {
                             <motion.span
                               layoutId="current-account-badge"
                               transition={springs.soft}
-                              className="shrink-0 rounded-[2px] bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
+                              className="shrink-0 rounded-chip bg-accent/12 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-accent"
                             >
                               当前
                             </motion.span>
@@ -370,7 +370,7 @@ export function Account() {
             <p className="text-[13.5px] text-ink/75">
               在浏览器打开下方网址，并输入配对码完成登录：
             </p>
-            <div className="mt-3 rounded-[3px] border border-ink/12 bg-paper-sink px-4 py-3 text-center">
+            <div className="mt-3 rounded-panel border border-ink/12 bg-paper-sink px-4 py-3 text-center">
               <div className="font-mono text-[26px] font-bold tracking-[0.3em] text-ink tabular-nums">
                 {deviceCode.user_code}
               </div>

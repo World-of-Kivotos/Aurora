@@ -15,7 +15,7 @@ interface ButtonProps extends Omit<HTMLMotionProps<"button">, "children"> {
 }
 
 const base =
-  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-[3px] font-extrabold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45";
+  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-control font-extrabold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45";
 
 const variants: Record<Variant, string> = {
   primary: "bg-ink px-5 py-[13px] text-[15px] tracking-[0.06em] text-paper-on hover:bg-accent",

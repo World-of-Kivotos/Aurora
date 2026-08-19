@@ -80,7 +80,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 exit={{ opacity: 0, x: 24, scale: 0.96 }}
                 transition={springs.settle}
                 className={[
-                  "pointer-events-auto flex items-start justify-between gap-3 rounded-[3px] border px-4 py-3 text-[13.5px]",
+                  "pointer-events-auto flex items-start justify-between gap-3 rounded-panel border px-4 py-3 text-[13.5px]",
                   kindTone[t.kind],
                   onPhoto ? kindFill[t.kind].onPhoto : kindFill[t.kind].bare,
                   // 压在照片上必须带投影，这是 app.css 里 paper-on-photo 那条规则的适用场景：
@@ -96,7 +96,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   onClick={() => remove(t.id)}
                   aria-label="关闭提示"
                   className={[
-                    "-mr-1 -mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[2px] transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    "-mr-1 -mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-chip transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                     t.kind === "success" ? "opacity-70" : "opacity-55",
                   ].join(" ")}
                 >

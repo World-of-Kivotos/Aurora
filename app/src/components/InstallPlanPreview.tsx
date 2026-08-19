@@ -73,7 +73,7 @@ function ChannelBadge({ channel }: { channel: ReleaseChannel }) {
   return (
     <span
       className={[
-        "shrink-0 rounded-[2px] px-1.5 py-0.5",
+        "shrink-0 rounded-chip px-1.5 py-0.5",
         preview ? "bg-accent/10 font-bold text-accent" : "bg-ink/[0.07] text-ink/60",
       ].join(" ")}
     >
@@ -84,7 +84,7 @@ function ChannelBadge({ channel }: { channel: ReleaseChannel }) {
 
 function ErrorBar({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-start gap-3 rounded-[3px] border border-danger/35 bg-danger/[0.04] px-4 py-3">
+    <div className="flex items-start gap-3 rounded-panel border border-danger/35 bg-danger/[0.04] px-4 py-3">
       <span className="mt-0.5 shrink-0 text-danger [&_svg]:h-[18px] [&_svg]:w-[18px]">
         <AlertIcon />
       </span>
@@ -100,7 +100,7 @@ function ErrorBar({ message, onRetry }: { message: string; onRetry: () => void }
 function PlanRowSkeleton({ delay, indent }: { delay: number; indent: boolean }) {
   return (
     <li
-      className={`rounded-[3px] border border-ink/8 bg-paper-sink/60 px-3.5 py-3 ${indent ? "ml-6" : ""}`}
+      className={`rounded-panel border border-ink/8 bg-paper-sink/60 px-3.5 py-3 ${indent ? "ml-6" : ""}`}
     >
       <Skeleton className="h-[13px] w-2/3" delay={delay} />
       <Skeleton className="mt-2 h-[11px] w-1/3" delay={delay + 0.08} />
@@ -128,7 +128,7 @@ function PlanRow({
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...springs.soft, delay: Math.min(index, 10) * 0.03 }}
       className={[
-        "rounded-[3px] border px-3.5 py-3",
+        "rounded-panel border px-3.5 py-3",
         // 依赖项整体右缩进：层级靠版面位置表达，不靠额外的连线或图标。
         isDependency ? "ml-6" : "",
         skipped ? "border-ink/8 bg-paper-sink/45 opacity-55" : "border-ink/10 bg-paper-sink",
@@ -142,12 +142,12 @@ function PlanRow({
         {isDependency ? (
           <span
             title={`因 ${requiredByLabel} 需要`}
-            className="max-w-[46%] shrink-0 truncate rounded-[2px] bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60"
+            className="max-w-[46%] shrink-0 truncate rounded-chip bg-ink/[0.07] px-1.5 py-0.5 text-[11px] text-ink/60"
           >
             因 {requiredByLabel} 需要
           </span>
         ) : (
-          <span className="shrink-0 rounded-[2px] bg-ink px-1.5 py-0.5 text-[11px] font-bold text-paper-on">
+          <span className="shrink-0 rounded-chip bg-ink px-1.5 py-0.5 text-[11px] font-bold text-paper-on">
             你选择的
           </span>
         )}
@@ -160,7 +160,7 @@ function PlanRow({
           {v.file_size === null ? "大小未知" : formatBytes(v.file_size)}
         </span>
         {skipped && (
-          <span className="inline-flex items-center gap-1 rounded-[2px] border border-ink/20 px-1.5 py-0.5 text-ink/60">
+          <span className="inline-flex items-center gap-1 rounded-chip border border-ink/20 px-1.5 py-0.5 text-ink/60">
             <CheckIcon size={11} />
             已满足，将跳过
           </span>
@@ -279,7 +279,7 @@ export function InstallPlanPreview({
 
             {/* 未自动处理：可选依赖、找不到匹配版本的依赖都在这里。这一块存在的全部意义就是不让玩家蒙在鼓里。 */}
             {plan.skipped.length > 0 && (
-              <section className="mt-4 rounded-[3px] border border-ink/12 px-3.5 py-3">
+              <section className="mt-4 rounded-panel border border-ink/12 px-3.5 py-3">
                 <div className="flex items-center gap-2">
                   <span className="text-ink/30 [&_svg]:h-[15px] [&_svg]:w-[15px]">
                     <AlertIcon />

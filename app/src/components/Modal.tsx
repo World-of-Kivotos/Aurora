@@ -85,7 +85,7 @@ export function Modal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={springs.settle}
-            className={`relative z-10 flex max-h-[85vh] w-full ${sizeClass[size]} flex-col rounded-[3px] border border-ink/12 bg-paper focus:outline-none`}
+            className={`relative z-10 flex max-h-[85vh] w-full ${sizeClass[size]} flex-col rounded-panel border border-ink/12 bg-paper focus:outline-none`}
           >
             {title && (
               <header className="flex items-center justify-between gap-4 border-b border-ink/12 px-6 py-4">
@@ -94,7 +94,7 @@ export function Modal({
                   type="button"
                   onClick={onClose}
                   aria-label="关闭"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[2px] text-ink/60 transition-colors hover:bg-ink/8 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-chip text-ink/60 transition-colors hover:bg-ink/8 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   <WinCloseIcon size={18} />
                 </button>
