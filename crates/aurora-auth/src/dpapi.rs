@@ -14,7 +14,7 @@ use windows::Win32::Security::Cryptography::{
 };
 use windows::core::PCWSTR;
 
-use crate::credential::{CredentialStore, write_atomic};
+use crate::credential::{CredentialStore, read_atomic, write_atomic};
 use crate::error::{AuthError, Result};
 
 /// `CRYPTPROTECT_UI_FORBIDDEN`：禁止任何交互式 UI，保证调用绝不阻塞（稳定的 Win32 ABI 常量）。
@@ -50,14 +50,11 @@ impl DpapiCredentialStore {
 
 impl CredentialStore for DpapiCredentialStore {
     fn load(&self) -> Result<Option<Vec<u8>>> {
-        match std::fs::read(&self.path) {
-            Ok(cipher) => Ok(Some(unprotect(&cipher)?)),
-            // 首次运行凭据文件尚不存在。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(AuthError::Base(aurora_base::Error::Io {
-                path: self.path.clone(),
-                source,
-            })),
+        // 「首次运行文件不存在 -> None」与「撞上原子替换窗口 -> 退避重试」都由 read_atomic 负责，
+        // 两个凭据文件的读路径共用同一份判定，免得一边修好另一边照旧偶发报错。
+        match read_atomic(&self.path)? {
+            Some(cipher) => Ok(Some(unprotect(&cipher)?)),
+            None => Ok(None),
         }
     }
 

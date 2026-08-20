@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::account::{Account, AccountCredentials};
-use crate::credential::write_atomic;
+use crate::credential::{read_atomic, write_atomic};
 use crate::error::{AuthError, Result};
 use crate::offline::{offline_account, offline_uuid};
 
@@ -49,20 +49,16 @@ impl OfflineAccountStore {
     /// 绝不静默当成空库——那会让用户以为账户「凭空没了」，反手又把损坏文件覆盖掉。
     pub fn load(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
-        let db = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|source| {
+        // 读走 read_atomic：它吸收原子替换窗口内的瞬时打开失败，但只按错误码判定，
+        // 解析失败仍会原样冒泡（见下面那条 map_err），不会被重试掩盖成「空库」。
+        let db = match read_atomic(&path)? {
+            Some(bytes) => serde_json::from_slice(&bytes).map_err(|source| {
                 AuthError::OfflineStoreDeserialize {
                     path: path.display().to_string(),
                     source,
                 }
             })?,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => OfflineAccountDb::default(),
-            Err(source) => {
-                return Err(AuthError::Base(aurora_base::Error::Io {
-                    path: path.clone(),
-                    source,
-                }));
-            }
+            None => OfflineAccountDb::default(),
         };
         Ok(Self { path, db })
     }
