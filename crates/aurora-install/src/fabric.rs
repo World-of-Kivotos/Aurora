@@ -221,6 +221,7 @@ mod tests {
             .await;
 
         let client = aurora_base::http::build_client().unwrap();
+        // 本例只查 meta 不下文件，池纯粹是 InstallContext 的必填字段占位，并发值取几都一样。
         let pool = DownloadPool::new(Downloader::with_defaults(client.clone()), 4);
         let layout = crate::layout::GameLayout::new(std::env::temp_dir());
         let runtime = RuntimeContext::new(OsName::Windows, "x86_64", 64);
@@ -264,6 +265,10 @@ mod tests {
             .await;
 
         let client = aurora_base::http::build_client().unwrap();
+        // 测试夹具，与玩家可调的 download_concurrency 无关：生产路径的池一律由
+        // aurora-core 的 facade.download_pool() 按配置装配后经 InstallContext 注入，
+        // aurora-install 不依赖 aurora-core、也读不到配置。此处只下一个 mock jar，
+        // 并发取 4 仅为省去起 64 个 worker，不参与任何断言。
         let pool = DownloadPool::new(Downloader::with_defaults(client.clone()), 4);
         let dir = tempfile::tempdir().unwrap();
         let layout = crate::layout::GameLayout::new(dir.path());

@@ -129,6 +129,7 @@ const INITIAL_MODPACK_PROGRESS = {
   downloaded_bytes: 0,
   total_bytes: null,
   current_file: null,
+  download_speed: null,
 } as const;
 
 /** 磁盘文件名 → 卷宗键。禁用只是给文件加了后缀，身份没变，join 前必须先把后缀剥掉。 */

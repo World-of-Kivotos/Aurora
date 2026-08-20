@@ -61,6 +61,13 @@ export interface ModpackSyncProgress {
   downloaded_bytes: number;
   total_bytes: number | null;
   current_file: string | null;
+  /**
+   * 瞬时下载速度（字节/秒），后端下载引擎 EWMA 平滑后的采样。
+   *
+   * null 与 0 是两件事：删旧文件、写快照、解析清单这些阶段压根没有下载行为，后端一律报 null，
+   * 界面据此不画速度那一格；0 则是「下载在跑，但这一瞬没有字节进来」。
+   */
+  download_speed: number | null;
 }
 
 interface FileFailure {

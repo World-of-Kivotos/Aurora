@@ -71,6 +71,9 @@ impl Aurora {
     ) -> Result<InstallOutcome> {
         let _install_gate = acquire_install_gate(self.game_dir()).await?;
         ensure_no_pending_managed_install(self.game_dir()).await?;
+        // 客户端本体、全部 library 与 assets 都在紧接着的这一批里下完，是整个流程体量最大的一次。
+        // 测速结论必须赶在它之前落地，否则实测排序只能便宜到后面的零头批次，等于没测。
+        self.measure_download_sources().await;
         let vanilla = self.install_vanilla_component(id, events).await?;
         let loader = self
             .install_loader_component(id, loader, loader_version, events)
@@ -477,6 +480,81 @@ mod tests {
             .respond_with(client_response)
             .mount(server)
             .await;
+    }
+
+    /// 探针答复前记下「此刻测速结论是否已落地」，供断言装机流程是否真的等过测速。
+    ///
+    /// 只看请求到达顺序不足以区分「入口 await 过一轮」与「装配下载池时甩出的后台探针」——后者也会
+    /// 先发出请求。判据只能是首个下载请求到达时缓存是否已经新鲜。
+    struct RecordCacheFreshness {
+        cache: std::sync::Arc<crate::config::SourceSpeedCache>,
+        fresh_on_first_hit: std::sync::Arc<std::sync::Mutex<Option<bool>>>,
+        body: String,
+    }
+
+    impl wiremock::Respond for RecordCacheFreshness {
+        fn respond(&self, _request: &wiremock::Request) -> ResponseTemplate {
+            let mut slot = self.fresh_on_first_hit.lock().expect("记录测速状态");
+            slot.get_or_insert_with(|| self.cache.is_fresh());
+            ResponseTemplate::new(200).set_body_string(self.body.clone())
+        }
+    }
+
+    /// 装机入口必须在第一批下载之前把测速**做完**：探针只是发出去、结论还没回来就开下，等于白测。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_probes_download_sources_before_the_first_download() {
+        let server = MockServer::start().await;
+        let base = server.uri();
+
+        // 探针刻意慢 150ms：把「等过结论」与「甩出后台任务就开下」这两种实现拉开可判定的距离。
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(
+                ResponseTemplate::new(206)
+                    .set_body_bytes(vec![0u8])
+                    .set_delay(std::time::Duration::from_millis(150)),
+            )
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path().to_path_buf();
+        let aurora = Aurora::for_test(AuroraConfig::default(), mc.clone(), mc.clone())
+            .with_manifest_url(format!("{base}/manifest.json"))
+            .with_speed_probe(format!("{base}/probe"));
+
+        let fresh_on_first_hit = std::sync::Arc::new(std::sync::Mutex::new(None));
+        Mock::given(method("GET"))
+            .and(path("/manifest.json"))
+            .respond_with(RecordCacheFreshness {
+                cache: aurora.speed_cache(),
+                fresh_on_first_hit: fresh_on_first_hit.clone(),
+                body: format!(
+                    r#"{{"latest":{{"release":"test","snapshot":"test"}},
+                    "versions":[{{"id":"test","type":"release","url":"{base}/test.json",
+                    "time":"t","releaseTime":"t"}}]}}"#
+                ),
+            })
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/test.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"id":"test","type":"release","mainClass":"net.minecraft.client.main.Main"}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        aurora.install("test", None, None, None).await.unwrap();
+
+        // 删掉 install 里的 measure_download_sources 调用，抓清单时探针还堵在那 150ms 上，
+        // 这里就会拿到 Some(false)。
+        let observed = *fresh_on_first_hit.lock().expect("读取测速状态");
+        assert_eq!(
+            observed,
+            Some(true),
+            "首个下载请求发出时测速结论必须已经落地"
+        );
     }
 
     /// 安装一个「空壳」原版：清单指向 mock，版本 JSON 无下载/资源/库，install 只落版本 JSON。

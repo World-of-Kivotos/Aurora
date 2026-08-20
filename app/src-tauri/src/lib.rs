@@ -2031,6 +2031,7 @@ mod tests {
                 downloaded_bytes: 4096,
                 total_bytes: Some(16384),
                 current_file: None,
+                download_speed: Some(1048576),
             }),
             "sync-forge-47.4.16",
         );
@@ -2046,7 +2047,8 @@ mod tests {
                     "total_files": 8,
                     "downloaded_bytes": 4096,
                     "total_bytes": 16384,
-                    "current_file": null
+                    "current_file": null,
+                    "download_speed": 1048576
                 }
             })
         );

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use aurora_core::{
-    Aurora, AuroraConfig, ManagedModpackStatus, ModpackCacheSource, ModpackSubscription,
-    ModpackSyncFailure, ModpackSyncStage,
+    Aurora, AuroraConfig, DownloadSourcePolicy, ManagedModpackStatus, ModpackCacheSource,
+    ModpackSubscription, ModpackSyncFailure, ModpackSyncStage,
 };
 use aurora_instance::IsolationPolicy;
 use aurora_modpack::{
@@ -47,6 +47,10 @@ fn aurora_at(mc: &Path) -> Aurora {
     let mut config = AuroraConfig {
         game_directory: Some(mc.to_path_buf()),
         isolation_policy: IsolationPolicy::All,
+        // 钉死静态源顺序而不是用默认的自动测速：同步入口会在开工前 await 一轮测速，默认档的探针打的
+        // 是真实的 mojang 与 bmclapi，会把外网状况带进这一整组本地 mock 测试（离线时每个源还各赔一次
+        // 超时）。本文件验的是同步语义，与选源无关。
+        download_source: DownloadSourcePolicy::MirrorFirst,
         ..AuroraConfig::default()
     };
     config.download_concurrency = 2;
@@ -556,11 +560,13 @@ async fn successful_sync_downloads_then_deletes_and_atomically_advances_snapshot
         .unwrap();
     drop(tx);
     let mut stages = Vec::new();
+    let mut progresses = Vec::new();
     while let Some(event) = rx.recv().await {
-        if let aurora_core::CoreEvent::ModpackSync(progress) = event
-            && stages.last() != Some(&progress.stage)
-        {
-            stages.push(progress.stage);
+        if let aurora_core::CoreEvent::ModpackSync(progress) = event {
+            if stages.last() != Some(&progress.stage) {
+                stages.push(progress.stage);
+            }
+            progresses.push(progress);
         }
     }
 
@@ -589,6 +595,26 @@ async fn successful_sync_downloads_then_deletes_and_atomically_advances_snapshot
             ModpackSyncStage::DeletingFiles,
             ModpackSyncStage::WritingSnapshot,
         ]
+    );
+    // 速度只在下载那一步有意义。删旧文件与写快照没有任何网络传输，报 0 会被界面读成
+    // 「下载卡死在 0 B/s」，所以这两步必须报「没有速度」而不是「速度是 0」。
+    assert!(
+        progresses
+            .iter()
+            .filter(|progress| matches!(
+                progress.stage,
+                ModpackSyncStage::DeletingFiles | ModpackSyncStage::WritingSnapshot
+            ))
+            .all(|progress| progress.download_speed.is_none()),
+        "收尾阶段不该带速度: {progresses:?}"
+    );
+    // 下载阶段至少有一帧来自下载引擎的采样（首帧占位不算），否则速度这条链路等于没接上。
+    assert!(
+        progresses
+            .iter()
+            .any(|progress| progress.stage == ModpackSyncStage::DownloadingFiles
+                && progress.download_speed.is_some()),
+        "下载阶段必须至少带上一帧引擎测得的速度: {progresses:?}"
     );
 }
 

@@ -83,6 +83,7 @@ const INITIAL_MODPACK_INSTALL_PROGRESS = {
   downloaded_bytes: 0,
   total_bytes: null,
   current_file: null,
+  download_speed: null,
 } as const;
 
 /**
@@ -160,73 +161,23 @@ function stageDetail(progress: ModpackSyncProgress, feed: InstallFeed): string |
 /**
  * 靠右钉住的那个速度。
  *
- * 两个来源分别对应两条事件流：前三步下载器的 download 事件自带 speed（后端 EWMA 平滑过），
- * 第四步的 modpack_sync 事件结构里根本没有这个字段，只能由 syncSpeed 传一个前端推算值进来
- * （推法见 nextSyncSpeed）。报不出速度就返回 null，而不是画一个 0 B/s——
- * 0 会被读成「卡住了」，没有那一格则只是这一步不报速度。
+ * 两个来源分别对应两条事件流，但两边的数都出自同一处——后端下载引擎每 100ms 一次采样、
+ * EWMA 平滑后的 speed：前三步走 download 事件，第四步走 modpack_sync 的 download_speed。
+ * 前端一度按事件边界的字节快照自行推算第四步的速度，那是后端漏传字段时的将就，
+ * 精度天生更差（只看得到事件边界），字段补上后即作废。
+ *
+ * 报不出速度就返回 null，而不是画一个 0 B/s——0 会被读成「卡住了」，
+ * 没有那一格则只是这一步不报速度。后端的 null 与 0 也正是按这个区分发的。
  */
-function stageRate(
-  progress: ModpackSyncProgress,
-  feed: InstallFeed,
-  syncSpeed: number | null,
-): string | null {
+function stageRate(progress: ModpackSyncProgress, feed: InstallFeed): string | null {
   if (progress.total_bytes !== null && progress.total_bytes > 0) {
-    return syncSpeed !== null && syncSpeed > 0 ? `${formatModpackBytes(syncSpeed)}/s` : null;
+    const speed = progress.download_speed;
+    return speed !== null && speed > 0 ? `${formatModpackBytes(speed)}/s` : null;
   }
   const download = feed.stage === progress.stage ? feed.download : null;
   return download !== null && download.total > 0 && download.speed > 0
     ? `${formatModpackBytes(download.speed)}/s`
     : null;
-}
-
-/**
- * 第四步（同步整合包文件）的速度靠前端按字节增量自己推。
- *
- * 后端下载器本身有平滑过的 speed，但它在桥接成 modpack_sync 事件时被丢掉了
- * （aurora-core 的 download_progress_bridge 只搬了文件数与字节数），
- * 而事件结构不归这一层改，「下载的时候速度没了」又是玩家实打实报的问题，故在这里推。
- *
- * 推法与后端同构：两次采样之间的字节增量除以间隔得瞬时值，再做指数滑动平均。
- * 两个常数的取法：
- *   MIN_SAMPLE —— 这条事件约每 100ms 来一帧，拿相邻两帧直接相除会把单帧抖动放大十倍，
- *     故先攒够 400ms 再算一次瞬时值；
- *   TAU —— 平滑的时间常数，按「读得出来」定：2s 的窗口既跟得上真实带宽的变化，
- *     又不会让数字一秒跳三次。
- * 权重按 1 - e^(-dt/tau) 现算而不是取一个固定值：采样间隔本就不均匀（事件由 watch 通道推送），
- * 固定权重会让间隔长的那一帧被低估，平均值系统性偏低。
- */
-const SYNC_SPEED_MIN_SAMPLE_MS = 400;
-const SYNC_SPEED_TAU_MS = 2000;
-
-interface SyncSpeedSample {
-  stage: ModpackSyncStage;
-  bytes: number;
-  at: number;
-  /** 平滑后的字节/秒。还没攒够两次采样时为 null——此时不报速度，而不是报 0。 */
-  speed: number | null;
-}
-
-function nextSyncSpeed(
-  prev: SyncSpeedSample | null,
-  progress: ModpackSyncProgress,
-  now: number,
-): SyncSpeedSample {
-  const bytes = progress.downloaded_bytes;
-  // 换步、或字节数掉头（重试重下会把计数重置）即重新起算：跨步平均出来的数没有任何意义。
-  if (prev === null || prev.stage !== progress.stage || bytes < prev.bytes) {
-    return { stage: progress.stage, bytes, at: now, speed: null };
-  }
-  const dt = now - prev.at;
-  // 采样间隔不够就原样留着锚点，下一帧接着攒——不是跳过这一帧的字节。
-  if (dt < SYNC_SPEED_MIN_SAMPLE_MS) return prev;
-  const instant = ((bytes - prev.bytes) * 1000) / dt;
-  const weight = 1 - Math.exp(-dt / SYNC_SPEED_TAU_MS);
-  return {
-    stage: progress.stage,
-    bytes,
-    at: now,
-    speed: prev.speed === null ? instant : prev.speed + weight * (instant - prev.speed),
-  };
 }
 
 /**
@@ -238,14 +189,13 @@ function nextSyncSpeed(
 export function installProgressView(
   progress: ModpackSyncProgress,
   feed: InstallFeed,
-  syncSpeed: number | null = null,
 ): LaunchInstallProgress {
   const [base, end] = STAGE_SPAN[progress.stage];
   const ratio = stageRatio(progress, feed);
   const label = SYNC_STAGE_LABEL[progress.stage];
   const head = ratio === null ? label : `${label} ${Math.round(ratio * 100)}%`;
   const detail = stageDetail(progress, feed);
-  const rate = stageRate(progress, feed, syncSpeed);
+  const rate = stageRate(progress, feed);
   return {
     overall: base + (end - base) * (ratio ?? 0),
     head,
@@ -352,11 +302,6 @@ export function Home() {
     message: null,
     download: null,
   });
-  // 第四步的速度：后端不发，由 nextSyncSpeed 按字节增量推。
-  // 采样锚点放 ref 而不是 state——它是推算的中间量，改动它本身不该触发重渲染；
-  // 真正要画出来的只有平滑后的那个值。
-  const syncSpeedRef = useRef<SyncSpeedSample | null>(null);
-  const [syncSpeed, setSyncSpeed] = useState<number | null>(null);
   // 要装的整合包地址。启动屏不再有地址输入框（那是配置，不是启动屏该管的事），
   // 于是只剩两个来源：卷宗页深链带过来的那条，或内置的官方地址。
   // 两条都已经过 validateModpackPointerUrl —— 深链在 managedModpackPointerFromSearch 里筛过，
@@ -485,8 +430,6 @@ export function Home() {
         message: null,
         download: null,
       });
-      syncSpeedRef.current = null;
-      setSyncSpeed(null);
 
       // installManagedModpack 自带的回调只送 modpack_sync（且按 operation_id 对号入座），
       // 而前三步的现场只走 stage / download 两种事件，得另开一条订阅去接。
@@ -511,9 +454,6 @@ export function Home() {
       let outcome;
       try {
         outcome = await installManagedModpack(url, (progress) => {
-          const sample = nextSyncSpeed(syncSpeedRef.current, progress, performance.now());
-          syncSpeedRef.current = sample;
-          setSyncSpeed(sample.speed);
           setInstallState({
             kind: "running",
             pointer_url: url,
@@ -741,7 +681,7 @@ export function Home() {
     installState.kind === "running"
       ? {
           kind: "running",
-          progress: installProgressView(installState.progress, installFeed, syncSpeed),
+          progress: installProgressView(installState.progress, installFeed),
         }
       : installState.kind === "failed"
         ? { kind: "failed", onRetry: handleInstallFromControl }

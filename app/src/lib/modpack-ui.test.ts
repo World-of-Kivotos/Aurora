@@ -40,6 +40,7 @@ describe("syncProgressRatio", () => {
         downloaded_bytes: 25,
         total_bytes: 100,
         current_file: "mods/wok.jar",
+        download_speed: 3145728,
       }),
     ).toBe(0.25);
   });
@@ -53,6 +54,7 @@ describe("syncProgressRatio", () => {
         downloaded_bytes: 0,
         total_bytes: null,
         current_file: null,
+        download_speed: null,
       }),
     ).toBe(0.75);
     expect(
@@ -63,6 +65,7 @@ describe("syncProgressRatio", () => {
         downloaded_bytes: 0,
         total_bytes: null,
         current_file: ".aurora/modpack-applied.json",
+        download_speed: null,
       }),
     ).toBe(1);
   });
@@ -81,6 +84,7 @@ describe("syncProgressRatio", () => {
         downloaded_bytes: downloaded,
         total_bytes: total,
         current_file: "mods/randomized.jar",
+        download_speed: null,
       });
       expect(ratio).toBeGreaterThanOrEqual(0);
       expect(ratio).toBeLessThanOrEqual(1);

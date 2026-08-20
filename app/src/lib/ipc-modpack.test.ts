@@ -76,6 +76,7 @@ describe("managed modpack IPC", () => {
       downloaded_bytes: 4096,
       total_bytes: 16384,
       current_file: null,
+      download_speed: 1048576,
     };
     bridge.listen.mockImplementationOnce(async (eventName, listener) => {
       listener({ event: eventName, payload: { kind: "modpack_sync", operation_id: "op-1", progress } });
@@ -104,6 +105,7 @@ describe("managed modpack IPC", () => {
         downloaded_bytes: 1024,
         total_bytes: 1024,
         current_file: ".aurora/modpack-applied.json",
+        download_speed: null,
       };
       const emit = eventListener as unknown as (event: { payload: unknown }) => void;
       emit({ payload: { kind: "modpack_sync", operation_id: "another-operation", progress } });

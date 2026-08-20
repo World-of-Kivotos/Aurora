@@ -86,6 +86,12 @@ pub struct ModpackSyncProgress {
     pub downloaded_bytes: u64,
     pub total_bytes: Option<u64>,
     pub current_file: Option<String>,
+    /// 瞬时下载速度（字节/秒），直接取下载引擎 EWMA 平滑后的采样，不在这一层另算。
+    ///
+    /// `None` 与 `Some(0)` 是两件事，界面靠这个区分决定画不画速度那一格：删旧文件、写快照、
+    /// 解析清单这些阶段压根没有网络传输，报 0 会被读成「下载卡死在 0」，故一律 `None`；
+    /// 只有下载引擎真出了一次采样才是 `Some`，此时的 0 意味着这一瞬确实没有字节进来。
+    pub download_speed: Option<u64>,
 }
 
 /// 可直接交给 UI 呈现的失败事实。
@@ -497,6 +503,9 @@ impl Aurora {
     ) -> std::result::Result<ModpackInstallOutcome, ModpackSyncError> {
         const UNKNOWN_TARGET: &str = "latest";
         emit_stage(events, ModpackSyncStage::ResolvingManifest);
+        // 排在解析清单之后、任何批量下载之前：探针几百毫秒，藏在这个已有进度提示的阶段里不额外卡界面，
+        // 而后面原版本体与整包文件两批大下载都能吃到实测顺序。
+        self.measure_download_sources().await;
 
         let pointer = self
             .fetch_pointer(pointer_url)
@@ -953,8 +962,11 @@ impl Aurora {
                 downloaded_bytes: 0,
                 total_bytes: None,
                 current_file: None,
+                download_speed: None,
             },
         );
+        // 同步同样是先解析后大批下载，测速插在这里理由同 install_managed_modpack。
+        self.measure_download_sources().await;
 
         let (version_dir, subscription) = self
             .checked_modpack_subscription(version_id)
@@ -1390,6 +1402,8 @@ impl Aurora {
                 downloaded_bytes: 0,
                 total_bytes: Some(total_bytes),
                 current_file: None,
+                // 这一帧是下载开始前的占位，引擎还没出过采样，报 0 等于替它编一个数。
+                download_speed: None,
             },
         );
         let (progress_tx, progress_task) = download_progress_bridge(events, total_bytes);
@@ -1461,6 +1475,7 @@ impl Aurora {
                     downloaded_bytes: total_bytes,
                     total_bytes: Some(total_bytes),
                     current_file: Some(deletion.path().to_string()),
+                    download_speed: None,
                 },
             );
             let path = deletion.path().resolve_under(&working_dir.working_dir);
@@ -1484,6 +1499,7 @@ impl Aurora {
                 downloaded_bytes: total_bytes,
                 total_bytes: Some(total_bytes),
                 current_file: Some(snapshot_store.path().display().to_string()),
+                download_speed: None,
             },
         );
         ensure_version_relative_path(
@@ -1515,6 +1531,7 @@ impl Aurora {
                 downloaded_bytes: total_bytes,
                 total_bytes: Some(total_bytes),
                 current_file: None,
+                download_speed: None,
             },
         );
 
@@ -2560,6 +2577,9 @@ fn download_progress_bridge(
                 downloaded_bytes: progress.bytes,
                 total_bytes: Some(total_bytes),
                 current_file: None,
+                // 唯一有真实采样的一步：引擎按 100ms 量级采样并做过 EWMA，界面直接照搬。
+                // 前端拿事件边界的字节快照自己推，精度天生更差，故速度只能从这里出。
+                download_speed: Some(progress.speed),
             }));
         }
     });
@@ -2580,6 +2600,8 @@ fn emit_stage(events: Option<&EventSink>, stage: ModpackSyncStage) {
             downloaded_bytes: 0,
             total_bytes: None,
             current_file: None,
+            // 换步公告只报「现在到哪一步了」，装原版/装加载器的字节进度另走 CoreEvent::Download。
+            download_speed: None,
         },
     );
 }
@@ -2874,6 +2896,7 @@ mod tests {
 
     use super::*;
     use crate::config::AuroraConfig;
+    use tokio::sync::mpsc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -3321,5 +3344,137 @@ mod tests {
                     if detail.contains("manifest requires 1.7.10")
             ));
         }
+    }
+
+    fn sync_progresses(rx: &mut mpsc::UnboundedReceiver<CoreEvent>) -> Vec<ModpackSyncProgress> {
+        let mut collected = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let CoreEvent::ModpackSync(progress) = event {
+                collected.push(progress);
+            }
+        }
+        collected
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn download_progress_bridge_forwards_the_engine_measured_speed() {
+        let (events, mut rx) = mpsc::unbounded_channel();
+        let (tx, task) = download_progress_bridge(Some(&events), 8_192);
+        let tx = tx.expect("给了事件通道就必须拿得到发送端");
+        let task = task.expect("给了事件通道就必须起得了桥接任务");
+
+        // 第二帧速度为 0：下载确实在跑，只是这一瞬没有字节进来。这与「这一步没有下载行为」
+        // 是两回事，故它必须原样传成 Some(0) 而不是塌成 None。
+        for sample in [1_572_864_u64, 0] {
+            tx.send_replace(DownloadProgress {
+                total: 8,
+                finished: 3,
+                bytes: 4_096,
+                speed: sample,
+            });
+            // 逐帧等桥接消费：watch 通道只保留最新值，连发两帧会把第一帧覆盖掉。
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        drop(tx);
+        task.await.unwrap();
+
+        let progresses = sync_progresses(&mut rx);
+        let speeds: Vec<Option<u64>> = progresses
+            .iter()
+            .map(|progress| progress.download_speed)
+            .collect();
+        assert_eq!(speeds, vec![Some(1_572_864), Some(0)]);
+        assert!(
+            progresses
+                .iter()
+                .all(|progress| progress.stage == ModpackSyncStage::DownloadingFiles
+                    && progress.downloaded_bytes == 4_096
+                    && progress.total_bytes == Some(8_192))
+        );
+    }
+
+    #[test]
+    fn stage_announcements_report_no_speed_at_all_rather_than_zero() {
+        for stage in [
+            ModpackSyncStage::ResolvingManifest,
+            ModpackSyncStage::InstallingMinecraft,
+            ModpackSyncStage::InstallingLoader,
+            ModpackSyncStage::DeletingFiles,
+            ModpackSyncStage::WritingSnapshot,
+        ] {
+            let (events, mut rx) = mpsc::unbounded_channel();
+            emit_stage(Some(&events), stage);
+            let progresses = sync_progresses(&mut rx);
+            assert_eq!(progresses.len(), 1, "{stage:?} 必须恰好公告一次");
+            assert_eq!(
+                progresses[0].download_speed, None,
+                "{stage:?} 没有下载行为，报 0 会被读成下载卡死"
+            );
+        }
+    }
+
+    /// 起一台只应答测速探针的 mock：其余路径一律 500，让整合包流程在任何下载之前就失败退出，
+    /// 于是这台服务器收到的探针请求只可能来自入口处那次显式测速。
+    async fn probe_only_server() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(vec![0u8]))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn probe_hits(server: &MockServer) -> usize {
+        server
+            .received_requests()
+            .await
+            .expect("mock 请求记录")
+            .iter()
+            .filter(|request| request.url.path() == "/probe")
+            .count()
+    }
+
+    /// 整合包一键安装必须在解析清单之后、任何批量下载之前测一轮源速度。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_managed_modpack_measures_sources_before_downloading() {
+        let server = probe_only_server().await;
+        let base = server.uri();
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path().to_path_buf();
+        let aurora = Aurora::for_test(AuroraConfig::default(), mc.clone(), mc)
+            .with_speed_probe(format!("{base}/probe"));
+
+        // 指针 500，流程止步于 ResolvingManifest，这之后再无任何下载池被装配。
+        aurora
+            .install_managed_modpack(&format!("{base}/latest"), None)
+            .await
+            .expect_err("指针 500 应当失败");
+
+        // 删掉入口处的 measure_download_sources 调用即为 0：失败得太早，后台探针没有机会被甩出来。
+        assert_eq!(probe_hits(&server).await, 2, "两个候选源应各被探一次");
+    }
+
+    /// 受管实例同步同理：入口先测速，再进入下载。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_managed_modpack_measures_sources_before_downloading() {
+        let server = probe_only_server().await;
+        let base = server.uri();
+        let tmp = tempfile::tempdir().unwrap();
+        let mc = tmp.path().to_path_buf();
+        let aurora = Aurora::for_test(AuroraConfig::default(), mc.clone(), mc)
+            .with_speed_probe(format!("{base}/probe"));
+
+        // 实例根本不存在，同步止步于订阅检查，同样走不到任何下载池。
+        aurora
+            .sync_managed_modpack("missing-instance", "2.0.0", None)
+            .await
+            .expect_err("未受管实例应当失败");
+
+        assert_eq!(probe_hits(&server).await, 2, "两个候选源应各被探一次");
     }
 }

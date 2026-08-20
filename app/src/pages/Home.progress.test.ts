@@ -16,6 +16,7 @@ function progressOf(stage: ModpackSyncStage, patch: Partial<ModpackSyncProgress>
     downloaded_bytes: 0,
     total_bytes: null,
     current_file: null,
+    download_speed: null,
     ...patch,
   };
 }
@@ -25,13 +26,14 @@ function feedOf(stage: ModpackSyncStage, patch: Partial<InstallFeed> = {}): Inst
 }
 
 describe("installProgressView", () => {
-  it("第四步按字节算：步内百分比与总进度都是真数", () => {
+  it("第四步按字节算：步内百分比与总进度都是真数，速度直接取后端那一帧", () => {
     const view = installProgressView(
       progressOf("downloading_files", {
         completed_files: 30,
         total_files: 120,
         downloaded_bytes: 60 * 1024 * 1024,
         total_bytes: 120 * 1024 * 1024,
+        download_speed: 8 * 1024 * 1024,
       }),
       feedOf("downloading_files"),
     );
@@ -39,7 +41,46 @@ describe("installProgressView", () => {
     expect(view.counted).toBe(true);
     // 第四步占 0.62~0.96，跑到一半即 0.62 + 0.34 x 0.5。
     expect(view.overall).toBeCloseTo(0.79, 5);
-    expect(view.activity).toBe("下载并校验文件 50% · 60.0 MB / 120.0 MB");
+    // 速度是后端下载引擎 EWMA 平滑后的 download_speed 原值，前端不再按字节增量推算。
+    expect(view.rate).toBe("8.0 MB/s");
+    expect(view.activity).toBe("下载并校验文件 50% · 60.0 MB / 120.0 MB · 8.0 MB/s");
+  });
+
+  it("第四步的速度只认 download_speed：这一步的 download 事件残帧不许顶上来", () => {
+    const view = installProgressView(
+      progressOf("downloading_files", {
+        completed_files: 30,
+        total_files: 120,
+        downloaded_bytes: 60 * 1024 * 1024,
+        total_bytes: 120 * 1024 * 1024,
+        download_speed: 2 * 1024 * 1024,
+      }),
+      feedOf("downloading_files", {
+        download: { total: 120, finished: 30, bytes: 4096, speed: 99 * 1024 * 1024 },
+      }),
+    );
+
+    expect(view.rate).toBe("2.0 MB/s");
+  });
+
+  it("后端报 null 与报 0 都不画速度那一格，但两者不是同一件事", () => {
+    // null = 这一步压根没有下载行为（删文件 / 写快照）；0 = 下载在跑，只是这一瞬没有字节进来。
+    // 界面上都不该出现一个「0 B/s」把玩家吓成卡死，故两种输入的 rate 都是 null。
+    for (const download_speed of [null, 0]) {
+      const view = installProgressView(
+        progressOf("writing_snapshot", {
+          completed_files: 1,
+          total_files: 1,
+          downloaded_bytes: 120 * 1024 * 1024,
+          total_bytes: 120 * 1024 * 1024,
+          download_speed,
+        }),
+        feedOf("writing_snapshot"),
+      );
+
+      expect(view.rate).toBeNull();
+      expect(view.activity).toBe("保存同步快照 100% · 120.0 MB / 120.0 MB");
+    }
   });
 
   it("前三步接上下载器的文件计数后，同样算得出步内百分比与速度", () => {
