@@ -920,11 +920,12 @@ function ContentTab({ type, instance }: { type: ResourceType; instance: FixedIns
   }, [planning, instance.id, toast]);
 
   return (
-    <div>
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* relative z-20 是必须的，不是保险：面板带 backdrop-filter 就自成层叠上下文，
           Select 的下拉浮层再高的 z-index 也只在这块面板内部有效；
-          不把整块面板抬到结果卡片之上，下拉就会被下面那排同样自成上下文的卡片盖住。 */}
-      <div className="surface-panel relative z-20 mb-4 flex items-center gap-2 rounded-panel p-1.5">
+          不把整块面板抬到结果卡片之上，下拉就会被下面那排同样自成上下文的卡片盖住。
+          shrink-0：它是本页的固定件，长内容只准滚在下面那块结果区里。 */}
+      <div className="surface-panel relative z-20 mb-4 flex shrink-0 items-center gap-2 rounded-panel p-1.5">
         <SearchField
           value={draft}
           onChange={setDraft}
@@ -960,32 +961,36 @@ function ContentTab({ type, instance }: { type: ResourceType; instance: FixedIns
         </p>
       )}
 
-      {loading && !result ? (
-        <ul className="m-0 grid list-none grid-cols-2 gap-2.5 p-0 max-[1180px]:grid-cols-1">
-          {Array.from({ length: 6 }, (_, i) => (
-            <li key={i}>
-              <ResourceCardSkeleton delay={i * 0.08} />
-            </li>
-          ))}
-        </ul>
-      ) : hits.length === 0 && !error ? (
-        // 空态本身只是一段字，压在照片上没底会看不见，所以由调用方给它垫一块面板。
-        <div className="surface-panel rounded-panel px-5 py-2">
-          <EmptyState icon={<PackageIcon />} title={query ? "没有结果，换个关键词试试" : `暂时没有可显示的${label}`} />
-        </div>
-      ) : (
-        <ul className="m-0 grid list-none grid-cols-2 gap-2.5 p-0 max-[1180px]:grid-cols-1">
-          {hits.map((h, i) => (
-            <ResourceCard
-              key={keyOf(h)}
-              hit={h}
-              index={i}
-              state={installState[keyOf(h)] ?? "idle"}
-              onInstall={() => setPicking(h)}
-            />
-          ))}
-        </ul>
-      )}
+      {/* 结果区：全站白名单里允许滚的那一块。搜索命中数由上游决定，是本页唯一没有上界的内容。
+          min-h-0 缺一不可，否则这块会被结果网格顶高，滚动条又长回外壳去。 */}
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        {loading && !result ? (
+          <ul className="m-0 grid list-none grid-cols-2 gap-2.5 p-0 max-[1180px]:grid-cols-1">
+            {Array.from({ length: 6 }, (_, i) => (
+              <li key={i}>
+                <ResourceCardSkeleton delay={i * 0.08} />
+              </li>
+            ))}
+          </ul>
+        ) : hits.length === 0 && !error ? (
+          // 空态本身只是一段字，压在照片上没底会看不见，所以由调用方给它垫一块面板。
+          <div className="surface-panel rounded-panel px-5 py-2">
+            <EmptyState icon={<PackageIcon />} title={query ? "没有结果，换个关键词试试" : `暂时没有可显示的${label}`} />
+          </div>
+        ) : (
+          <ul className="m-0 grid list-none grid-cols-2 gap-2.5 p-0 max-[1180px]:grid-cols-1">
+            {hits.map((h, i) => (
+              <ResourceCard
+                key={keyOf(h)}
+                hit={h}
+                index={i}
+                state={installState[keyOf(h)] ?? "idle"}
+                onInstall={() => setPicking(h)}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
 
       {/* 第一段：定版本。实例已经是固定的那一个，这里只解决「装哪一版」。 */}
       {picking && (
@@ -1070,7 +1075,7 @@ export function Download() {
           实例没就位时不出 tab，那时下缘没有下划线要托，改由面板自己补足下内边距。 */}
       <motion.div
         variants={pageItem}
-        className={`surface-panel mb-5 rounded-panel px-5 pt-4 ${ready ? "" : "pb-4"}`}
+        className={`surface-panel mb-5 shrink-0 rounded-panel px-5 pt-4 ${ready ? "" : "pb-4"}`}
       >
         <div className="flex items-baseline gap-4">
           <h1 className="text-[20px] font-extrabold tracking-[-0.01em]">下载</h1>
@@ -1111,7 +1116,9 @@ export function Download() {
         )}
       </motion.div>
 
-      <motion.div variants={pageItem} className="min-h-0 flex-1">
+      {/* 抬头与 tab 定高不动，正文吃掉剩余高度：这条 flex 链一路传到 ContentTab 的结果区，
+          中间每一层都得带 min-h-0，漏一层结果区就滚不起来（app.css 第六节）。 */}
+      <motion.div variants={pageItem} className="flex min-h-0 flex-1 flex-col">
         {error && <ErrorBar message={`读取游戏实例失败：${error}`} onRetry={() => void resolveInstance()} />}
 
         {instance === undefined ? (
@@ -1136,6 +1143,7 @@ export function Download() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={springs.tap}
+              className="flex min-h-0 flex-1 flex-col"
             >
               <ContentTab type={active.type} instance={instance} />
             </motion.div>

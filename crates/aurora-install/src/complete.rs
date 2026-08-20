@@ -60,14 +60,14 @@ pub async fn ensure_complete(
     if has_assets {
         primary.push(plan::asset_index_task(version, cx.layout)?);
     }
-    cx.run_batch(primary, "补全本体与库", None).await?;
+    cx.run_batch(primary, "补全本体与库").await?;
 
     // 第二批：资源对象全量补全（仅当版本带 assetIndex）。
     let assets = if has_assets {
         let index = read_asset_index(cx, version).await?;
         let object_tasks = plan::asset_object_tasks(&index, cx.layout);
         let count = object_tasks.len();
-        cx.run_batch(object_tasks, "补全资源", None).await?;
+        cx.run_batch(object_tasks, "补全资源").await?;
         materialize_assets(cx, version, &index).await?;
         count
     } else {

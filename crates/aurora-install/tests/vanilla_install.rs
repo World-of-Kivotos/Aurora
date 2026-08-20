@@ -11,10 +11,12 @@ use std::time::Duration;
 
 use aurora_base::retry::RetryPolicy;
 use aurora_download::{
-    DownloadConfig, DownloadPool, Downloader, MirrorSource, SourcePlan, SourceResolver,
+    DownloadConfig, DownloadPool, DownloadProgress, Downloader, MirrorSource, SourcePlan,
+    SourceResolver,
 };
 use aurora_install::{GameLayout, InstallContext, VanillaInstaller};
 use aurora_version::{OsName, RuntimeContext};
+use tokio::sync::watch;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -154,7 +156,17 @@ async fn full_vanilla_install_lands_every_artifact() {
         multiplier: 2.0,
         jitter: false,
     };
-    let cx = InstallContext::new(&client, &pool, &layout, &runtime, &policy);
+    // 挂上进度观察者：装原版这一步耗时全在下文件上，上层的进度条只能靠它拿到批次计数。
+    // 收集在后台任务里做，watch 只留最新值，主线程事后 borrow 是收不到批次过程的。
+    let (progress_tx, mut progress_rx) = watch::channel(DownloadProgress::default());
+    let collector = tokio::spawn(async move {
+        let mut frames = Vec::new();
+        while progress_rx.changed().await.is_ok() {
+            frames.push(*progress_rx.borrow_and_update());
+        }
+        frames
+    });
+    let cx = InstallContext::new(&client, &pool, &layout, &runtime, &policy).with_progress(&progress_tx);
 
     let installer = VanillaInstaller::new(cx).with_manifest_url(format!("{base}/manifest.json"));
     let summary = installer.install("1.21").await.expect("原版安装应成功");
@@ -194,4 +206,24 @@ async fn full_vanilla_install_lands_every_artifact() {
     // ---- 幂等性：再次安装应全部命中已存在校验、结果一致 ----
     let again = installer.install("1.21").await.expect("重复安装应成功");
     assert_eq!(again, summary);
+
+    // ---- 进度观察者：三批下载（版本 JSON 1 个 / 本体与库 5 个 / 资源对象 1 个）都要冒出计数 ----
+    drop(progress_tx);
+    let frames = collector.await.expect("进度收集任务不应 panic");
+    assert!(
+        !frames.is_empty(),
+        "挂了观察者却一帧都没收到，说明批次下载根本没把进度接出来"
+    );
+    assert!(
+        frames.iter().all(|p| p.finished <= p.total && p.total > 0),
+        "每一帧都该是某一批的真实计数: {frames:?}"
+    );
+    assert!(
+        frames.iter().any(|p| p.total == 5),
+        "「本体与库」那批是 2 个库 + client jar + 日志配置 + assetIndex 共 5 个文件: {frames:?}"
+    );
+    assert!(
+        frames.iter().any(|p| p.finished == p.total),
+        "至少要看到一批跑到满: {frames:?}"
+    );
 }

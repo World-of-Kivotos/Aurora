@@ -81,7 +81,7 @@ impl<'a> VanillaInstaller<'a> {
         if let Some(sha1) = &entry.sha1 {
             task = task.with_sha1(sha1.clone());
         }
-        self.cx.run_batch(vec![task], "版本 JSON", None).await?;
+        self.cx.run_batch(vec![task], "版本 JSON").await?;
 
         let bytes = tokio::fs::read(&dest)
             .await

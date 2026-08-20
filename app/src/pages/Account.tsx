@@ -242,7 +242,9 @@ export function Account() {
 
   return (
     <>
-      <motion.div variants={pageItem}>
+      {/* 外壳不滚（见 app.css 第六节），本页自己分配高度：报头与底部的「添加账户」定高不动，
+          中间账户列表那一块吃掉剩余高度并在内部滚。账户数量是唯一会无限长的东西，只有它该滚。 */}
+      <motion.div variants={pageItem} className="shrink-0">
         <PageHeader
           title="账户"
           subtitle="管理微软正版与离线账户"
@@ -259,7 +261,10 @@ export function Account() {
         />
       </motion.div>
 
-      <motion.div variants={pageItem}>
+      {/* 滚动区。min-h-0 不是保险：flex 子项的 min-height 默认 auto，不置 0 的话这块会被账户卡
+          顶到内容真实高度，溢出原样传回外壳（那层是 overflow-clip，只会把底下的卡片无声裁掉）。
+          pr-1 是给滚动条留的道，与 InstallPlanPreview 同一手法。 */}
+      <motion.div variants={pageItem} className="min-h-0 flex-1 overflow-y-auto pr-1">
         {loadError ? (
           // 告警块用默认档材质。危险语态由图标与朱红字承担，不再靠一圈 border-danger：
           // 材质的描边走 inset 阴影，容器要分语态得由材质层出变体，页面自己加边框只会打架。
@@ -354,7 +359,12 @@ export function Account() {
 
       {/* 添加入口收进一块分区面板：小节标题本来是裸字，压在照片上读不出来；
           而三颗按钮各自的控件底是寄生层，也需要一层自足材质托着才合法。一块面板同时解决两件事。 */}
-      <motion.div variants={pageItem} className="surface-panel mt-9 rounded-panel px-5 py-5">
+      {/* 常驻页尾：空态那句话写的就是「用下方入口添加」，它必须始终在下方够得着，
+          不能随账户变多被推到滚动区里面去。 */}
+      <motion.div
+        variants={pageItem}
+        className="surface-panel mt-9 shrink-0 rounded-panel px-5 py-5"
+      >
         <h2 className="mb-4 text-[12px] font-bold tracking-[0.16em] text-ink/75">添加账户</h2>
         <div className="flex flex-wrap gap-3">
           <Button

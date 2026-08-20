@@ -2,6 +2,11 @@
 // Aurora 收敛成 World of Kivotos 专用启动器之后，这一屏还兼了「把游戏装上」：
 // 实例的唯一产生途径是安装 WOK 受管整合包，那套流程从下载页搬到了这里（下载页只剩玩家自己装 Mod）。
 // 真调 IPC：入场并行 current_account + list_installed + get_config；启动走 launch_game + 日志窗；错误显式冒泡不吞。
+//
+// 「把游戏装上」在这一屏没有自己的面板：整版就是一张图，装机全程只借用主操作键那一颗控件
+// （Download -> 进度条 -> Retry / Start），四步的说明并进进度条左下角那行。地址输入不在这里，
+// 它是配置（见 pointerUrl 那段）。唯一的例外是失败：出了事得能读到原因，故失败时在主操作位上方
+// 补一张卡片，那也是这一屏上唯一铺材质的东西。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -11,10 +16,15 @@ import { Button } from "../components/Button";
 import { CrashBanner } from "../components/CrashBanner";
 import {
   LaunchControl,
+  type LaunchInstallProgress,
   type LaunchInstallState,
   type LaunchPhase,
 } from "../components/LaunchControl";
-import { ModpackInstallFlow, type ModpackInstallState } from "../components/ModpackInstallFlow";
+import { ModpackSyncFailureView } from "../components/ManagedModpackPanel";
+import {
+  ModpackSetupFailureView,
+  type ModpackInstallState,
+} from "../components/ModpackInstallFlow";
 import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
 import { AlertIcon, RefreshIcon } from "../components/icons";
@@ -46,22 +56,23 @@ import {
   type VersionScanDto,
 } from "../lib/ipc";
 import {
+  formatModpackBytes,
   parseModpackSyncError,
-  validateModpackPointerUrl,
+  syncProgressRatio,
+  SYNC_STAGE_LABEL,
   type CheckedManagedModpackStatus,
   type ManagedModpackStatus,
+  type ModpackSyncProgress,
+  type ModpackSyncStage,
 } from "../lib/modpack-ui";
 import { modpackOwnerOf } from "../lib/modpack-ownership";
 import { managedModpackInstallIntent } from "../lib/modpack-navigation";
 import { notifyInstanceChanged } from "../lib/instance-signal";
 
-// WOK 受管整合包的内置入口。原先写死在下载页的「整合包」tab 里，专用化之后那个 tab 撤了，
-// 但它是这台启动器唯一的装游戏途径（install_managed_modpack 会连 MC 本体与加载器一并装好），
-// 所以是搬过来而不是跟着 tab 一起删。
-const BUILT_IN_MODPACK = {
-  label: "WOK 地址",
-  pointer_url: "https://api.mcwok.cn/api/v1/pack/latest",
-};
+// WOK 受管整合包的内置地址：这台启动器唯一的装游戏途径
+// （install_managed_modpack 会连 MC 本体与加载器一并装好）。
+// 只有测试服才需要换成别的地址，那属于配置，不在这一屏上给入口。
+const BUILT_IN_POINTER_URL = "https://api.mcwok.cn/api/v1/pack/latest";
 
 // 首帧进度：真进度事件到达前先把步骤条钉在第一步，免得点下去到第一个事件之间是一段没有反馈的空白。
 const INITIAL_MODPACK_INSTALL_PROGRESS = {
@@ -72,6 +83,97 @@ const INITIAL_MODPACK_INSTALL_PROGRESS = {
   total_bytes: null,
   current_file: null,
 } as const;
+
+/**
+ * 装游戏那四步在总进度里各占多长（起点, 终点）。
+ *
+ * 不均分，也不是随手写的：跨度按「这一步通常要跑多久」定，否则百分比会在快步骤上狂跳、
+ * 在慢步骤上装死。读取清单只有两次 HTTP 往返，装 Minecraft 要拉三千多个资源文件是全程最久的一段，
+ * 装加载器只有几十个库加一次安装器执行，整合包同步是字节量最大、也是唯一全程有真实计数的一段。
+ * 后三个整合包阶段（下载/清理/写快照）共用第四步那一段，删文件与写快照本身几乎不耗时，
+ * 只各留一点，让「快装完了」这件事在条上看得见。
+ *
+ * 顺序与后端 install_managed_modpack 的推进顺序一致，所以总进度按步骤单调不回退。
+ */
+const STAGE_SPAN: Record<ModpackSyncStage, readonly [number, number]> = {
+  resolving_manifest: [0, 0.04],
+  installing_minecraft: [0.04, 0.46],
+  installing_loader: [0.46, 0.62],
+  downloading_files: [0.62, 0.96],
+  deleting_files: [0.96, 0.98],
+  writing_snapshot: [0.98, 1],
+};
+
+/**
+ * 安装期两条辅助事件流的最新一帧。
+ *
+ * 装游戏的现场分散在三种事件里：modpack_sync 只有第四步带文件/字节计数，
+ * 前三步的细粒度进度归下载器的 download 事件，而每一步在干什么由 stage 事件用一句中文说出来。
+ * 主操作键原先只订了 modpack_sync，于是前三步既没有百分比也没有说明，只剩一条来回跑的加载条。
+ *
+ * stage 字段是这一帧的归属步骤：换步即整帧作废，上一步的文案与文件计数绝不许串到下一步上。
+ *
+ * download 事件按「批次」计数：装原版是 版本 JSON / 本体与库 / 资源对象 三批依次下，
+ * 换批即从 0/total 重新起算，故步内百分比会在批次边界回落一次。那是真实的边界（前两批合计只有
+ * 几十个文件、几秒就过，长的是第三批），不在这里做平滑掩饰——步与步之间仍是单调不回退的。
+ */
+export interface InstallFeed {
+  stage: ModpackSyncStage;
+  message: string | null;
+  download: { total: number; finished: number; bytes: number; speed: number } | null;
+}
+
+/** 当前步骤自己的完成比例；这一步拿不到任何计数时为 null（此时总进度停在本步起点）。 */
+function stageRatio(progress: ModpackSyncProgress, feed: InstallFeed): number | null {
+  if ((progress.total_bytes !== null && progress.total_bytes > 0) || progress.total_files > 0) {
+    return syncProgressRatio(progress);
+  }
+  const download = feed.stage === progress.stage ? feed.download : null;
+  if (download !== null && download.total > 0) {
+    return Math.min(1, download.finished / download.total);
+  }
+  return null;
+}
+
+/** 左下角那行的现场补充：谁的数最实就用谁，都没有才退回后端那句中文阶段说明。 */
+function stageDetail(progress: ModpackSyncProgress, feed: InstallFeed): string | null {
+  if (progress.total_bytes !== null && progress.total_bytes > 0) {
+    return `${formatModpackBytes(progress.downloaded_bytes)} / ${formatModpackBytes(progress.total_bytes)}`;
+  }
+  const fresh = feed.stage === progress.stage ? feed : null;
+  const download = fresh?.download ?? null;
+  if (download !== null && download.total > 0) {
+    const files = `${download.finished}/${download.total} 个文件`;
+    return download.speed > 0 ? `${files} · ${formatModpackBytes(download.speed)}/s` : files;
+  }
+  if (progress.total_files > 0) {
+    return `${progress.completed_files}/${progress.total_files} 个文件`;
+  }
+  return progress.current_file ?? fresh?.message ?? null;
+}
+
+/**
+ * 把三路事件折算成主操作键要画的那一份进度。步骤名一律复用 SYNC_STAGE_LABEL，不另写一套中文。
+ *
+ * 导出是为了能单独测：这段折算是「四步都有真百分比」这条要求的全部实现，
+ * 而它在组件里只经由一个 IPC 长流程才跑得到，不导出就只能靠肉眼看。
+ */
+export function installProgressView(
+  progress: ModpackSyncProgress,
+  feed: InstallFeed,
+): LaunchInstallProgress {
+  const [base, end] = STAGE_SPAN[progress.stage];
+  const ratio = stageRatio(progress, feed);
+  const label = SYNC_STAGE_LABEL[progress.stage];
+  const head = ratio === null ? label : `${label} ${Math.round(ratio * 100)}%`;
+  const detail = stageDetail(progress, feed);
+  return {
+    overall: base + (end - base) * (ratio ?? 0),
+    activity: detail === null ? head : `${head} · ${detail}`,
+    counted: ratio !== null,
+    stage: progress.stage,
+  };
+}
 
 // 受管整合包在界面上的名字。拆成「包名 + 通道」两半是留给将来的双通道切换：
 // 用户要的「悬停飘出 Beta」这一半现在做不了——服务端 pack_version 表没有 channel 列，
@@ -104,18 +206,22 @@ function loaderText(v: InstalledVersionDto): string {
 // 全站铺图之后判定范围确实变了, 但启动屏仍是唯一把字裸压在图上的地方 ——
 // 别的页面文字都落在容器材质上, 走 app.css 那张实算表; 这里走按图取样的 plateMode。
 // 两套账各管各的场景, 不冲突。
-const PLATE_BARE = "mt-auto flex flex-col items-end gap-6 pt-10";
+// 贴底不靠这一撮自己: 上面那只告警滚动盒子是 flex-1, 它吃掉全部留白, 本 section 只按自然高度
+// 落在页尾。三种形态都不自带 mt-auto —— 同一根 flex 列里出现两个 auto 上外边距时剩余空间是
+// **均分**的, 那会把上面的失败卡片顶到半空、与这撮字断成两截。
+const PLATE_BARE = "flex flex-col items-end gap-6 pt-10";
 // 裸字: 不铺底, 只靠字色。右对齐与间距沿用纸片那套, 换形态时版位不跳。
-const PLATE_NAKED = "mt-auto ml-auto flex flex-col items-end gap-6 pt-10";
+const PLATE_NAKED = "ml-auto flex flex-col items-end gap-6 pt-10";
 // 兜底纸片: 图明暗跨度大到两种字色都撑不住时才用。走信息密集档, 它最实。
 const PLATE_FROSTED =
-  "surface-panel-strong mt-auto ml-auto flex flex-col items-end gap-6 rounded-panel px-7 py-6";
+  "surface-panel-strong ml-auto flex flex-col items-end gap-6 rounded-panel px-7 py-6";
 
 export function Home() {
   const { toast } = useToast();
   const navigate = useNavigate();
   // 卷宗页遇到同步冲突时会把当前订阅地址带过来（managedModpackInstallRoute）。
-  // 那条链路的落点就是这一屏，地址栏是它唯一的传话筒。
+  // 那条链路的落点就是这一屏：地址直接喂给主操作键，同时把那颗键钉在 Download 上，
+  // 否则游戏已经装着的人过来只会看到一颗 Start，深链等于没点。
   const [searchParams] = useSearchParams();
   const installIntent = managedModpackInstallIntent(searchParams);
   const { appearance } = useAppearance();
@@ -151,11 +257,17 @@ export function Home() {
   const [managedStatus, setManagedStatus] = useState<CheckedManagedModpackStatus | null>(null);
   // 装游戏这条链路的状态机。与启动链路完全分开：一个是把游戏搞下来，一个是把它跑起来。
   const [installState, setInstallState] = useState<ModpackInstallState>({ kind: "idle" });
-  // 面板里此刻填着的整合包地址。右下角那颗「安装游戏」要装的是它，而不是内置那条——
-  // 玩家改了地址却从角上点安装、结果装回官方包，是最难查的那类不一致。
-  const [pointerUrl, setPointerUrl] = useState(
-    installIntent.pointerUrl ?? BUILT_IN_MODPACK.pointer_url,
-  );
+  // 安装期 stage / download 两条事件流的最新一帧，与 installState 里的 modpack_sync 合起来才凑得齐进度。
+  const [installFeed, setInstallFeed] = useState<InstallFeed>({
+    stage: INITIAL_MODPACK_INSTALL_PROGRESS.stage,
+    message: null,
+    download: null,
+  });
+  // 要装的整合包地址。启动屏不再有地址输入框（那是配置，不是启动屏该管的事），
+  // 于是只剩两个来源：卷宗页深链带过来的那条，或内置的官方地址。
+  // 两条都已经过 validateModpackPointerUrl —— 深链在 managedModpackPointerFromSearch 里筛过，
+  // 内置那条是常量，所以这里不再重复校验。地址输入将来落到设置页时，校验跟着输入框一起走。
+  const pointerUrl = installIntent.pointerUrl ?? BUILT_IN_POINTER_URL;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -236,6 +348,31 @@ export function Home() {
         target_version: "latest",
         progress: INITIAL_MODPACK_INSTALL_PROGRESS,
       });
+      setInstallFeed({
+        stage: INITIAL_MODPACK_INSTALL_PROGRESS.stage,
+        message: null,
+        download: null,
+      });
+
+      // installManagedModpack 自带的回调只送 modpack_sync（且按 operation_id 对号入座），
+      // 而前三步的现场只走 stage / download 两种事件，得另开一条订阅去接。
+      // 两条订阅落在同一个 Tauri 事件通道上，投递顺序即后端发事件的顺序，
+      // 所以「换步的 modpack_sync」总是先于那一步的 stage 文案到达，归属判断才成立。
+      const unlistenCore = await onCoreEvent((ev) => {
+        if (ev.kind === "stage") {
+          setInstallFeed((prev) => ({ ...prev, message: ev.message }));
+        } else if (ev.kind === "download") {
+          setInstallFeed((prev) => ({
+            ...prev,
+            download: {
+              total: ev.total,
+              finished: ev.finished,
+              bytes: ev.bytes,
+              speed: ev.speed,
+            },
+          }));
+        }
+      });
 
       let outcome;
       try {
@@ -246,9 +383,14 @@ export function Home() {
             target_version: "latest",
             progress,
           });
+          setInstallFeed((prev) =>
+            prev.stage === progress.stage
+              ? prev
+              : { stage: progress.stage, message: null, download: null },
+          );
         });
       } catch (e) {
-        // 后端给的结构化同步失败带着阶段与现场，能落到面板里逐条说清；解不出来才退回通用文案。
+        // 后端给的结构化同步失败带着阶段与现场，能落到失败卡片里逐条说清；解不出来才退回通用文案。
         const structured = parseModpackSyncError(e);
         setInstallState(
           structured
@@ -274,6 +416,10 @@ export function Home() {
               },
         );
         return;
+      } finally {
+        // 成败都撤订阅：安装结束后这条通道上还会跑启动、更新等别人的事件，
+        // 留着监听只会把别处的阶段文案糊到这一屏上。
+        unlistenCore();
       }
 
       setInstallState({
@@ -299,15 +445,10 @@ export function Home() {
     [load, toast],
   );
 
-  // 右下角那颗「安装游戏」：面板里填的是什么就装什么，地址不合法时原样把理由说出来。
+  // 主操作位那颗 Download / Retry：装的是上面解出来的那条地址。
   const handleInstallFromControl = useCallback(() => {
-    const invalid = validateModpackPointerUrl(pointerUrl);
-    if (invalid !== null) {
-      toast(invalid, "error");
-      return;
-    }
     void installGame(pointerUrl.trim());
-  }, [pointerUrl, installGame, toast]);
+  }, [pointerUrl, installGame]);
 
   const versions = scan?.versions ?? [];
   // 当前实例：优先 config 选中项（若仍已安装），否则回落扫描首项——单实例模型下两者本该是同一个，
@@ -447,27 +588,26 @@ export function Home() {
   const launchPhase: LaunchPhase = launching ? "launching" : running ? "spawned" : "idle";
 
   const installing = installState.kind === "running";
-  // 引导安装的两段可见期：游戏还没装上，以及流程已经开跑（含装完之后——面板要把结果与
-  // 「进入管理」交代完，而不是在成功那一刻凭空消失，让玩家以为界面又出了故障）。
-  // 只在流程仍是 idle 时才受 loading 压制：首帧扫描结果没回来就先别喊「你没装游戏」，
-  // 但装完之后那次重新加载不能把已经跑完的面板闪掉。
-  // 第三段可见期是深链：从卷宗页的「安装新版本」过来时游戏通常已经装着（current 非空），
-  // 不认这条信号的话面板根本不会出现，那颗按钮就是死的。
-  const showInstallFlow =
-    installState.kind !== "idle" || installIntent.requested || (!loading && !current);
 
-  // 主操作位的装机形态。三档优先级，从「此刻最要紧的事」往下排：
+  // 主操作位的装机形态。四档优先级，从「此刻最要紧的事」往下排：
   //   1. 安装在途 —— 整颗按钮就是进度条。已经装着游戏时也走这一支：装到一半让人点 Start，
   //      启动的是一个正在被改写的实例。
-  //   2. 确认没装 —— 换成 Download。
-  //   3. 其余 —— 交回启动语义。首帧扫描结果没回来时也走这里（按禁用的 Start 渲染），
+  //   2. 上一次没装完 —— 换成 Retry。安装卡片撤掉之后这是唯一的重试入口，
+  //      而且它不看游戏装没装：安装若在创建实例之后才失败，current 已非空，
+  //      此时若交回 Start，玩家能启动的是一个只装了一半的实例。
+  //   3. 确认没装、或深链带着地址过来 —— 换成 Download。深链这一条不能省：
+  //      卷宗页遇同步冲突时跳过来的人通常已经装着游戏（current 非空），
+  //      不认这条信号，那颗「安装新版本」按下去就没有任何后续。
+  //   4. 其余 —— 交回启动语义。首帧扫描结果没回来时也走这里（按禁用的 Start 渲染），
   //      免得闪一下 Download 又跳回 Start。
   const installForm: LaunchInstallState | null =
     installState.kind === "running"
-      ? { kind: "running", progress: installState.progress }
-      : !loading && !current
-        ? { kind: "absent", onInstall: handleInstallFromControl }
-        : null;
+      ? { kind: "running", progress: installProgressView(installState.progress, installFeed) }
+      : installState.kind === "failed"
+        ? { kind: "failed", onRetry: handleInstallFromControl }
+        : (!loading && !current) || (installIntent.requested && installState.kind === "idle")
+          ? { kind: "absent", onInstall: handleInstallFromControl }
+          : null;
 
   const status = loading
     ? "读取中"
@@ -488,48 +628,80 @@ export function Home() {
           留着只是占掉启动屏最值钱的整版留白。唯一有信息量的状态字并进面板首行，
           于是「有图画一套、无图画另一套」的两条渲染路径也一并收成一条。 */}
 
-      {/* 错误块：告警语态由图标与朱红字承担。容器材质走 Card（.surface-panel），页面不再自铺磨砂。
-          原来挂在这里的 border-danger/40 已删——它本来就被 Card 基类的描边压掉、从未生效，
-          材质化之后描边改走 inset box-shadow，更没有它的位置。危险语态的容器变体要治，
-          得给 Card 加 tone，那是 Card 自己的事。 */}
-      {error && (
-        <Card variants={pageItem} className="mb-6 flex items-center gap-4">
-          <span className="text-danger [&_svg]:h-5 [&_svg]:w-5">
-            <AlertIcon />
-          </span>
-          <span className="flex-1 text-[13px] text-danger">{error}</span>
-          <Button variant="secondary" icon={<RefreshIcon />} onClick={() => void load()}>
-            重试
-          </Button>
-        </Card>
-      )}
-
-      {/* 崩溃横条：被动触发的止损入口，不常驻也不打断启动流程。完整诊断在实例卷宗页。 */}
-      {/* 玩家点「关闭」是止损动作的收尾，一条报警横条瞬间蒸发更像界面又出了故障，而不是「这次点击生效了」；
-          AnimatePresence 留出退场时间，让它淡着上滑走掉。
-          投影已焊进横条自己的材质，这层壳只管外边距与退场，不再补 paper-on-photo——
-          两处都画影子会叠成一圈重影。 */}
-      <AnimatePresence>
-        {crash && (
-          <motion.div
-            variants={pageItem}
-            exit={{ opacity: 0, y: -8 }}
-            transition={springs.settle}
-            className="mb-6"
-          >
-            <CrashBanner
-              onPhoto={onPhoto}
-              report={crash.report}
-              versionId={crash.versionId}
-              ownerOf={(fileName) =>
-                modpackOwnerOf(crash.managedStatus, crash.managedFiles, fileName)
-              }
-              onDismiss={() => setCrash(null)}
-              onOpenDetail={() => navigate("/instance")}
-            />
-          </motion.div>
+      {/* 告警堆叠区：错误块 / 崩溃横条 / 安装失败卡片三块共用这一只盒子，它吃掉主操作位以上的
+          全部高度，自己在里面滚。
+          为什么必须是滚动区而不是任其自然排：这三块的高度全由后端文案定（失败卡片的正文直接来自
+          failure.detail，长度没有上限），三者又互不排斥（读取失败 + 上一局崩溃 + 这次装机失败能同时在场）。
+          而这一屏是白名单里明令不许整页滚的那一屏——外壳 overflow-clip，溢出不会长滚动条，
+          只会把最下面的东西无声裁掉，而最下面的正是这台启动器唯一的开始游戏入口。
+          把它们关进一只定高的盒子，主操作位就永远钉在原地，代价只是告警本身要滚一下。 */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+        {/* 错误块：告警语态由图标与朱红字承担。容器材质走 Card（.surface-panel），页面不再自铺磨砂。
+            原来挂在这里的 border-danger/40 已删——它本来就被 Card 基类的描边压掉、从未生效，
+            材质化之后描边改走 inset box-shadow，更没有它的位置。危险语态的容器变体要治，
+            得给 Card 加 tone，那是 Card 自己的事。 */}
+        {error && (
+          <Card variants={pageItem} className="mb-6 flex items-center gap-4">
+            <span className="text-danger [&_svg]:h-5 [&_svg]:w-5">
+              <AlertIcon />
+            </span>
+            <span className="flex-1 text-[13px] text-danger">{error}</span>
+            <Button variant="secondary" icon={<RefreshIcon />} onClick={() => void load()}>
+              重试
+            </Button>
+          </Card>
         )}
-      </AnimatePresence>
+
+        {/* 崩溃横条：被动触发的止损入口，不常驻也不打断启动流程。完整诊断在实例卷宗页。 */}
+        {/* 玩家点「关闭」是止损动作的收尾，一条报警横条瞬间蒸发更像界面又出了故障，而不是「这次点击生效了」；
+            AnimatePresence 留出退场时间，让它淡着上滑走掉。
+            投影已焊进横条自己的材质，这层壳只管外边距与退场，不再补 paper-on-photo——
+            两处都画影子会叠成一圈重影。 */}
+        <AnimatePresence>
+          {crash && (
+            <motion.div
+              variants={pageItem}
+              exit={{ opacity: 0, y: -8 }}
+              transition={springs.settle}
+              className="mb-6"
+            >
+              <CrashBanner
+                onPhoto={onPhoto}
+                report={crash.report}
+                versionId={crash.versionId}
+                ownerOf={(fileName) =>
+                  modpackOwnerOf(crash.managedStatus, crash.managedFiles, fileName)
+                }
+                onDismiss={() => setCrash(null)}
+                onOpenDetail={() => navigate("/instance")}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+          {/* 安装失败：卡片没了，失败现场不能跟着一起消失。
+              落点选在主操作位正上方而不是页顶：重试入口就是下面那颗 Retry，
+              「出了什么事」与「按哪里」隔着一整屏留白，读起来是两件事。
+              mt-auto 把它压在告警区的底缘，mb-5 补出与下面那撮状态字之间原来那道 gap-5。
+              这是启动屏上唯一还铺材质的东西——它是一段要逐行读的说明，
+              与那撮扫一眼就走的状态字不同，裸压在图上没法读。 */}
+          {installState.kind === "failed" && (
+            <Card variants={pageItem} role="alert" className="mt-auto mb-5 w-full max-w-[520px] self-end">
+              <div className="flex items-center gap-2.5 text-[13px] font-extrabold text-danger">
+                <AlertIcon size={18} />
+                安装没有完成
+              </div>
+              {installState.problem.kind === "setup" ? (
+                <ModpackSetupFailureView failure={installState.problem.failure} />
+              ) : (
+                <ModpackSyncFailureView failure={installState.problem.failure} />
+              )}
+              <p className="mt-3.5 text-[12px] leading-relaxed text-ink/75">
+                点右下角的 Retry 重新安装。已经下好并校验过的文件不会重复下载。
+              </p>
+            </Card>
+          )}
+      </div>
 
       {/* 启动屏: 右下角竖排 状态 -> 版本信息 -> 账户, 再往下是放大的 Start, 上方大留白。
        *
@@ -537,28 +709,15 @@ export function Home() {
        * 判定见 appearance.ts 的 plateMode, 数据来自 Rust 侧对右下角这块区域的 p10/p90 取样。
        * 恒定铺一块材质试过, 被否掉: 纸压在照片上永远是在图里挖了一块出来, 启动屏整版留给图
        * 才是这一屏的版面语言, 可读性该由字色去适应图, 而不是拿一块底把图盖住。
+       *
+       * shrink-0: 这一撮加主操作键是本屏唯一不许被压缩、也不许被裁掉的东西，
+       * 上方留白与告警都归那只滚动盒子管，它只按自然高度占位。
        */}
       <motion.section
         variants={pageItem}
         aria-label="启动"
-        className="flex min-h-0 flex-1 flex-col items-end gap-5"
+        className="flex shrink-0 flex-col items-end gap-5"
       >
-        {/* 引导安装：整版留白靠左上让给它，右下角那撮字与主操作位照旧，两者不抢位置。
-            这块面板自带 .surface-panel，是启动屏上唯一允许铺材质的东西——
-            它承载的是一段要读要填的流程，不是那撮扫一眼就走的状态字。 */}
-        {showInstallFlow && (
-          <div className="w-full max-w-[560px] self-start">
-            <ModpackInstallFlow
-              builtIn={BUILT_IN_MODPACK}
-              initialPointerUrl={installIntent.pointerUrl ?? undefined}
-              state={installState}
-              onInstall={(url) => void installGame(url)}
-              onPointerUrlChange={setPointerUrl}
-              onOpenInstance={() => navigate("/instance")}
-            />
-          </div>
-        )}
-
         <div
           className={
             !onPhoto

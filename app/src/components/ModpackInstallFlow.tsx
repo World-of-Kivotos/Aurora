@@ -4,6 +4,12 @@
 // Aurora 收敛为 World of Kivotos 专用启动器后，下载页不再有游戏版本与整合包 tab，
 // 玩家拿到游戏的唯一入口就是启动屏上的这套流程，措辞按「把游戏装上」写。
 //
+// 这块面板此刻不挂在任何一屏上：启动屏已按产品决定收回成一张整版图（整合包地址属于配置，
+// 不属于启动屏；四步指示并进了主操作键那行「当前在干什么」；失败现场由启动屏自己那张卡片渲染，
+// 复用的正是本文件导出的 ModpackSetupFailureView）。剩下真正还需要一块地方安身的只有地址输入，
+// 它的落点是设置页，由主控安排。地址落到设置页那天，底部那行「点右下角的 Download 开始」
+// 与标题的措辞都要跟着改写成配置语气（ManagedModpackPanel.test.tsx 里钉着这两句，一并改）。
+//
 // 材质分层（与本组另外三个文件同一套）：整块面板直接压在照片上，只有它挂 .surface-panel；
 // 里面的步骤条、失败块、完成条一律不挂第二层玻璃，靠描边与语义色区分。
 // 地址输入框是「下沉块」，用寄生的 .surface-sunken——寄生层不能直接铺在照片上，
@@ -125,7 +131,14 @@ function InstallSteps({ state }: { state: ModpackInstallState }) {
   );
 }
 
-function SetupFailure({ failure }: { failure: ModpackInstallProblem }) {
+/**
+ * 「还没开始装就失败了」的现场（多半是连不上服务器、地址不可用）。
+ *
+ * 与 ManagedModpackPanel 的 ModpackSyncFailureView 是一对：那边讲同步中途某个文件出的事，
+ * 这边讲整件事根本没能开始。启动屏的失败卡片按 problem.kind 在这两个视图之间二选一，
+ * 所以它必须是导出的——两处的失败措辞只能有一份。
+ */
+export function ModpackSetupFailureView({ failure }: { failure: ModpackInstallProblem }) {
   return (
     <div className="mt-4 flex items-start gap-3 rounded-panel border border-danger/35 px-4 py-3.5" role="alert">
       <span className="mt-0.5 shrink-0 text-danger">
@@ -230,7 +243,7 @@ export function ModpackInstallFlow({
         <ModpackSyncProgressView progress={state.progress} />
       )}
       {state.kind === "failed" && state.problem.kind === "setup" && (
-        <SetupFailure failure={state.problem.failure} />
+        <ModpackSetupFailureView failure={state.problem.failure} />
       )}
       {state.kind === "failed" && state.problem.kind === "sync" && (
         <ModpackSyncFailureView failure={state.problem.failure} />

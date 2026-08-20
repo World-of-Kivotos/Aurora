@@ -12,9 +12,10 @@ use aurora_install::{
     VanillaSummary, forge_installer_url, neoforge_installer_url,
 };
 use aurora_version::VersionJson;
+use tokio::sync::watch;
 
 use crate::error::{CoreError, Result};
-use crate::event::{CoreEvent, EventSink, emit};
+use crate::event::{CoreEvent, DownloadProgress, EventSink, emit};
 use crate::facade::{Aurora, make_context};
 use crate::modpack::{acquire_install_gate, ensure_no_pending_managed_install};
 
@@ -86,13 +87,21 @@ impl Aurora {
         let pool = self.download_pool();
         let policy = self.retry_policy();
         let http = self.http();
-        let cx = make_context(&http, &pool, &layout, self.runtime(), &policy);
+        let (progress_tx, progress_task) = download_event_bridge(events);
+        let cx = attach_progress(
+            make_context(&http, &pool, &layout, self.runtime(), &policy),
+            progress_tx.as_ref(),
+        );
 
         emit(events, CoreEvent::stage(format!("开始安装原版 {id}")));
         let vanilla = VanillaInstaller::new(cx)
             .with_manifest_url(self.manifest_url())
             .install(id)
             .await?;
+        drop(progress_tx);
+        if let Some(task) = progress_task {
+            task.await?;
+        }
         emit(
             events,
             CoreEvent::stage(format!(
@@ -117,7 +126,11 @@ impl Aurora {
         let pool = self.download_pool();
         let policy = self.retry_policy();
         let http = self.http();
-        let cx = make_context(&http, &pool, &layout, self.runtime(), &policy);
+        let (progress_tx, progress_task) = download_event_bridge(events);
+        let cx = attach_progress(
+            make_context(&http, &pool, &layout, self.runtime(), &policy),
+            progress_tx.as_ref(),
+        );
 
         emit(
             events,
@@ -164,6 +177,10 @@ impl Aurora {
                 .await?
             }
         };
+        drop(progress_tx);
+        if let Some(task) = progress_task {
+            task.await?;
+        }
         emit(
             events,
             CoreEvent::stage(format!(
@@ -196,7 +213,11 @@ impl Aurora {
         let pool = self.download_pool();
         let policy = self.retry_policy();
         let http = self.http();
-        let context = make_context(&http, &pool, &layout, self.runtime(), &policy);
+        let (progress_tx, progress_task) = download_event_bridge(events);
+        let context = attach_progress(
+            make_context(&http, &pool, &layout, self.runtime(), &policy),
+            progress_tx.as_ref(),
+        );
 
         emit(
             events,
@@ -212,6 +233,10 @@ impl Aurora {
                 events,
             )
             .await?;
+        drop(progress_tx);
+        if let Some(task) = progress_task {
+            task.await?;
+        }
         emit(
             events,
             CoreEvent::stage(format!(
@@ -310,6 +335,44 @@ impl Aurora {
 ///
 /// Forge/NeoForge 的官方 maven 无 Fabric/Quilt 那样的「列出可用 loader」接口，无从推断推荐版，故要求
 /// 调用方显式传入。复用 [`aurora_install::Error::LoaderVersionNotFound`] 表达「没有可用 loader 版本」。
+/// 把批量下载的进度快照桥接成 [`CoreEvent::Download`]，无事件通道时整条链路不建立。
+///
+/// 为什么必须有这条桥：装原版与装加载器这两步的耗时全在下文件上（光资源对象就三千多个），
+/// 可安装器只在首尾各发一句阶段文案，中间是一段没有任何数的长静默——前端的进度条只能在这里干等。
+/// 接上之后，每一批的文件计数与速度都实时冒泡，这两步才有真百分比可算。
+///
+/// 返回的 JoinHandle 必须在发送端 drop 之后 await：桥接任务把最后一帧发完才退出，
+/// 不等它就可能让上一步的计数跨过阶段边界、被记到下一步头上。
+fn download_event_bridge(
+    events: Option<&EventSink>,
+) -> (
+    Option<watch::Sender<DownloadProgress>>,
+    Option<tokio::task::JoinHandle<()>>,
+) {
+    let Some(events) = events.cloned() else {
+        return (None, None);
+    };
+    let (tx, mut rx) = watch::channel(DownloadProgress::default());
+    let task = tokio::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let progress = *rx.borrow_and_update();
+            let _ = events.send(CoreEvent::Download(progress));
+        }
+    });
+    (Some(tx), Some(task))
+}
+
+/// 有观察者就挂上，没有就原样返回。抽出来只为让三处装机入口不必各写一遍同样的 match。
+fn attach_progress<'a>(
+    cx: InstallContext<'a>,
+    progress: Option<&'a watch::Sender<DownloadProgress>>,
+) -> InstallContext<'a> {
+    match progress {
+        Some(tx) => cx.with_progress(tx),
+        None => cx,
+    }
+}
+
 fn require_loader_version<'a>(
     choice: LoaderChoice,
     game_version: &str,

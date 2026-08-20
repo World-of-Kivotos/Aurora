@@ -55,10 +55,28 @@ export function AppShell() {
       <Titlebar onPhoto={showPhoto} />
       <div className="relative flex min-h-0 flex-1">
         <Sidebar onPhoto={showPhoto} />
-        <main className="relative min-w-0 flex-1 overflow-auto px-[46px] pt-[34px] pb-[30px]">
+        {/*
+          内容盒。这一层的契约是「高度确定、永不滚动」，全文与白名单在 app.css 第六节，
+          动它之前先读那一节。这里只留三条落在这个元素上的理由：
+
+          1. overflow-clip 而不是 overflow-auto。外壳一旦可滚，页面写多高都不会报错，
+             滚动条就成了「布局没算过」的遮羞布——这正是要消灭的东西。clip 连编程滚动
+             都不给（hidden 会被 Element.focus() 悄悄滚走一截且再也滚不回来，没有滚动条可用）。
+             开发期这一条被 app.css 的溢出告警改回 hidden，那是探测溢出的必要条件，见那一节。
+          2. flex flex-col + 下面那层 min-h-0 flex-1：把「窗口高度 - 标题栏 - 上下内边距」
+             这个确定高度原样交给页面，页面才可能在内部划出一块定高的滚动区。
+          3. min-h-0 是本次最容易翻车的一条，页面侧同样适用：flex 子项的 min-height 默认是
+             auto（不是 0），子项因此不肯缩到内容高度以下。内部滚动区若不置 min-h-0，
+             它会把这条 flex 链一路撑高到内容的真实高度，超出的部分顶回外壳——
+             滚动条于是又长在外层，而里层那块 overflow-y-auto 永远滚不起来。
+        */}
+        <main
+          data-app-content
+          className="relative flex min-w-0 flex-1 flex-col overflow-clip px-[46px] pt-[34px] pb-[30px]"
+        >
           <motion.div
             key={location.pathname}
-            className="relative flex min-h-full flex-col"
+            className="relative flex min-h-0 flex-1 flex-col"
             variants={pageContainer}
             initial="hidden"
             animate="show"

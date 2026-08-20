@@ -676,16 +676,21 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
   };
 
   return (
-    <div className="min-w-0">
+    // 本页三面里唯一允许滚的一面：Mod 数量没有上界，工具条与提示条定高不动，清单自己滚。
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {ownershipError && (
-        <div className={`${dangerBar} mb-4 flex items-center gap-3 text-[13px] text-danger`} role="alert">
+        <div
+          className={`${dangerBar} mb-4 flex shrink-0 items-center gap-3 text-[13px] text-danger`}
+          role="alert"
+        >
           <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
           <AlertIcon size={18} />
           <span>无法确认整合包文件归属：{ownershipError}。为避免误改受管文件，管理开关已停用。</span>
         </div>
       )}
-      {/* 工具条自成一块面板：搜索框与分段轨都是寄生层，没有这层自足材质它们就直接压在照片上。 */}
-      <div className="surface-panel mb-4 flex items-center gap-3 rounded-panel px-3 py-3">
+      {/* 工具条自成一块面板：搜索框与分段轨都是寄生层，没有这层自足材质它们就直接压在照片上。
+          它同时是全站最宽的一横排，minWidth 960 就卡在这里（换算见 app.css 第六之二节）。 */}
+      <div className="surface-panel mb-4 flex shrink-0 items-center gap-3 rounded-panel px-3 py-3">
         <SearchField
           value={search}
           onChange={setSearch}
@@ -707,19 +712,25 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
       ) : filter === "updatable" ? (
         // 「可更新」这一档交给 UpdatePanel：它带勾选、风险确认与批量执行，
         // 让这一档从只能看变成能动手，否则更新检查查出来也没有下一步。
-        <UpdatePanel
-          versionId={versionId}
-          candidates={updateCandidates}
-          onRefresh={() => void onReload()}
-          onUpdated={() => void onReload()}
-        />
+        // 它同样是一条与 Mod 数量等长的清单，故与下面那张清单一样在内部滚；
+        // 滚动区放在外面是因为面板归 UpdatePanel 自己管，本页只负责给它一只定高的盒子。
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <UpdatePanel
+            versionId={versionId}
+            candidates={updateCandidates}
+            onRefresh={() => void onReload()}
+            onUpdated={() => void onReload()}
+          />
+        </div>
       ) : shown.length === 0 ? (
         <div className="surface-panel rounded-panel px-[18px] py-2">
           <EmptyState icon={<SearchIcon />} title="没有匹配的内容" />
         </div>
       ) : (
         // Mod 清单是要长时间连续扫读的长列表，托最实的一档：ink/75 在它上面拿到 7.20，越过 AAA。
-        <ul className="surface-panel-strong m-0 list-none rounded-panel px-[18px] py-1">
+        // 滚动做在这张面板自己身上而不是外面包一层：这样面板的上下缘钉在内容盒里不动，
+        // 滚的只是行；包在外面则整块面板连同圆角一起滑走，读起来是「页面在滚」而不是「清单在滚」。
+        <ul className="surface-panel-strong m-0 min-h-0 flex-1 list-none overflow-y-auto rounded-panel px-[18px] py-1">
           {shown.map((r) => {
             const meta = r.mod.metadata;
             const title = meta?.name ?? meta?.mod_id ?? r.key;
@@ -871,14 +882,17 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
   };
 
   return (
-    <div className="flex min-h-full min-w-0 flex-col">
+    // 高度由外层分配（原来是 min-h-full，那是给会滚的外壳写的），备份条继续靠 mt-auto 钉在页尾。
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {events.length === 0 ? (
         <div className="surface-panel rounded-panel px-[18px] py-2">
           <EmptyState icon={<LayersIcon />} title="还没有留下任何变更记录" />
         </div>
       ) : (
-        // 事件流同样是连续扫读的长列表，与 Mod 清单取同一档托底，两个 tab 之间不出现材质跳档。
-        <ul className="surface-panel-strong m-0 list-none rounded-panel px-[18px] py-1">
+        // 事件流同样是连续扫读的长列表，与 Mod 清单取同一档托底，两个 tab 之间不出现材质跳档；
+        // 滚动区也做在面板自己身上：这条流随更新与装 Mod 只增不减，几次更新就能超过一屏，
+        // 外壳是 overflow-clip，不给它自己的出口就会把下面那条备份/清理操作条无声裁掉。
+        <ul className="surface-panel-strong m-0 min-h-0 flex-1 list-none overflow-y-auto rounded-panel px-[18px] py-1">
           {events.map((e) => {
             const check = checkOf.get(e.id);
             const files = eventFiles(e);
@@ -1297,7 +1311,12 @@ export function InstanceDetail() {
     <>
       {/* 卷宗抬头：面包屑、标题、刷新与三面 tab 合成同一块面板。
           它们本来就是同一组导航件，图铺满之后各自浮一片纸只会在照片上多出一道无意义的缝。 */}
-      <motion.div variants={pageItem} className="surface-panel mb-5 rounded-panel px-5 pt-4 pb-3">
+      {/* 抬头连同三面 tab 是本页的固定件（shrink-0）：外壳已不滚（app.css 第六节），
+          高度由这一页自己分配，长内容只准滚在「内容」页签的 Mod 清单里。 */}
+      <motion.div
+        variants={pageItem}
+        className="surface-panel mb-5 shrink-0 rounded-panel px-5 pt-4 pb-3"
+      >
         <div className="flex items-baseline justify-between gap-6">
           <div className="flex min-w-0 items-baseline gap-4">
             {/* 版本列表页已下线，这条返回只能指回启动屏——它是这个专用启动器唯一的上一级。 */}
@@ -1364,7 +1383,7 @@ export function InstanceDetail() {
       {error && (
         <motion.div
           variants={pageItem}
-          className={`${dangerBar} mb-5 flex items-center gap-3 text-[13px] text-danger`}
+          className={`${dangerBar} mb-5 flex shrink-0 items-center gap-3 text-[13px] text-danger`}
         >
           <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
           <AlertIcon size={18} />
@@ -1378,7 +1397,7 @@ export function InstanceDetail() {
       {(managedStatusError || managedFilesError) && (
         <motion.div
           variants={pageItem}
-          className={`${dangerBar} mb-5 flex items-center gap-3 text-[13px] text-danger`}
+          className={`${dangerBar} mb-5 flex shrink-0 items-center gap-3 text-[13px] text-danger`}
           role="alert"
         >
           <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-danger" />
@@ -1412,7 +1431,7 @@ export function InstanceDetail() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={springs.tap}
-              className="flex min-h-full flex-col"
+              className="flex min-h-0 flex-1 flex-col"
             >
               {tab === "overview" && (
                 <>

@@ -307,7 +307,6 @@ impl<'a> ForgeInstaller<'a> {
             .run_batch(
                 vec![aurora_download::DownloadTask::new(installer_url, dest.clone())],
                 "installer",
-                None,
             )
             .await?;
         self.install_from_installer(&dest).await
@@ -362,7 +361,7 @@ impl<'a> ForgeInstaller<'a> {
         let mut libs = profile.libraries.clone();
         libs.extend(embedded.libraries.clone());
         let tasks = plan::tasks_for_libraries(&libs, self.cx.runtime, self.cx.layout)?;
-        let libraries = self.cx.run_batch(tasks, "Forge 库", None).await?;
+        let libraries = self.cx.run_batch(tasks, "Forge 库").await?;
 
         // 解出 data 表里 `/jar 内路径` 型取值到独立临时目录。
         let tmp_dir = self
@@ -520,7 +519,7 @@ impl<'a> ForgeInstaller<'a> {
         extract_zip_entry_to_async(installer, file_path.trim_start_matches('/'), &dest).await?;
 
         let tasks = plan::tasks_for_libraries(&embedded.libraries, self.cx.runtime, self.cx.layout)?;
-        let libraries = self.cx.run_batch(tasks, "Forge 库", None).await?;
+        let libraries = self.cx.run_batch(tasks, "Forge 库").await?;
 
         Ok(ForgeSummary {
             id,

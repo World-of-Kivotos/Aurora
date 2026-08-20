@@ -543,7 +543,10 @@ export function Settings() {
 
   return (
     <>
-      <motion.div variants={pageItem}>
+      {/* 报头与一级分区是本页的固定件；正文按 app.css 第六节的白名单第 7 条开一块内部滚动区。
+          这一页光「启动器」那侧五个分区就超过 1000px，且「外观」里嵌着整块壁纸选择栅格，
+          1080p 满屏都装不下，不存在「排紧一点就不滚」的余地。 */}
+      <motion.div variants={pageItem} className="shrink-0">
         <PageHeader title="设置" subtitle={activeTab.subtitle} />
       </motion.div>
 
@@ -556,7 +559,7 @@ export function Settings() {
         面积也确实只有一颗控件那么大。layoutId 让那块玻璃在两页之间滑过去，
         比一根下划线更能交代「当前在哪一页」。
       */}
-      <motion.div variants={pageItem} className="mb-6">
+      <motion.div variants={pageItem} className="mb-6 shrink-0">
         <div className="surface-panel inline-flex gap-1 rounded-panel p-1.5">
           {TABS.map((t) => {
             const on = t.key === tab;
@@ -601,7 +604,7 @@ export function Settings() {
       </motion.div>
 
       {configLoading && (
-        <motion.div variants={pageItem}>
+        <motion.div variants={pageItem} className="shrink-0">
           <Card>
             <p className="py-2 text-[13.5px] text-ink/75">载入配置中…</p>
           </Card>
@@ -609,7 +612,7 @@ export function Settings() {
       )}
 
       {!configLoading && configError && (
-        <motion.div variants={pageItem}>
+        <motion.div variants={pageItem} className="shrink-0">
           {/* 危险描边走 outline：Card 的底改成材质类之后描边是 inset 阴影，外部再传 border-* 已经没有着力点，
               而 outline 既不参与 box-shadow 的叠加、也不撑大盒子。 */}
           <Card className="outline-2 outline-danger/45">
@@ -633,7 +636,10 @@ export function Settings() {
 
       {/* 页签正文改成淡入淡出：切页签只是换内容不是换页面，与 Download / InstanceDetail 用同一套过渡语言，整片瞬切会让人以为页面被重载。 */}
       {/* 外层 pageItem 让整片正文作为一个单元参与页面 stagger：AnimatePresence 的 initial={false} 会连带压掉内部 Section 的首屏入场。 */}
-      <motion.div variants={pageItem} className="mt-7">
+      {/* 这块就是白名单第 7 条那块滚动区：正文吃掉剩余高度并在内部滚，报头、分段控件、侧栏一格不动。
+          min-h-0 缺一不可——flex 子项的 min-height 默认 auto，不置 0 的话这块会被上千像素的分区顶高，
+          溢出原样传回外壳（那层是 overflow-clip，只会把底下的分区无声裁掉）。 */}
+      <motion.div variants={pageItem} className="mt-7 min-h-0 flex-1 overflow-y-auto pr-1">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={tab}

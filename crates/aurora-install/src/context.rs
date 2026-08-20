@@ -25,6 +25,11 @@ pub struct InstallContext<'a> {
     pub runtime: &'a RuntimeContext,
     /// 元数据抓取的退避重试策略（文件下载自有 aurora-download 的策略）。
     pub policy: &'a RetryPolicy,
+    /// 批量下载的进度观察者，缺省不挂（[`InstallContext::with_progress`] 挂上）。
+    ///
+    /// 安装一个版本的耗时几乎全在下文件上（光资源对象就三千多个），而安装器本身只在首尾发两句
+    /// 阶段文案。上层要画进度条，就得拿到这些批次的文件计数——挂上这个观察者是唯一的入口。
+    progress: Option<&'a watch::Sender<DownloadProgress>>,
 }
 
 impl<'a> InstallContext<'a> {
@@ -42,7 +47,18 @@ impl<'a> InstallContext<'a> {
             layout,
             runtime,
             policy,
+            progress: None,
         }
+    }
+
+    /// 挂上批量下载的进度观察者：此后本上下文跑的每一批下载都会向它推送快照。
+    ///
+    /// 注意批次之间计数会归零重来（原版是「版本 JSON / 本体与库 / 资源对象」三批依次下），
+    /// 每批各自从 0/total 起算。这是真实的批次边界，不在这里做平滑或累加：
+    /// 观察者拿到的必须是「这一批下到哪了」的原始数，怎么折算成进度条是上层的事。
+    pub fn with_progress(mut self, progress: &'a watch::Sender<DownloadProgress>) -> Self {
+        self.progress = Some(progress);
+        self
     }
 
     /// 跑一批下载并把「有文件最终失败」收敛为 [`Error::BatchIncomplete`]。
@@ -53,12 +69,13 @@ impl<'a> InstallContext<'a> {
         &self,
         tasks: Vec<DownloadTask>,
         stage: &'static str,
-        progress: Option<watch::Sender<DownloadProgress>>,
     ) -> Result<usize> {
         if tasks.is_empty() {
             return Ok(0);
         }
-        let report = self.pool.download_all(tasks, progress).await?;
+        // 观察者按批次克隆下发：池在批次收尾时会 abort 采样器并推最后一帧，
+        // 故多批共用一个发送端不会留下还在推陈旧快照的后台任务。
+        let report = self.pool.download_all(tasks, self.progress.cloned()).await?;
         if report.is_success() {
             Ok(report.succeeded)
         } else {

@@ -1,9 +1,11 @@
 // 启动控件：Start -> 竖线从右扫到左「钉住不动」-> 沿草书单笔路径按笔顺「慢慢手写」出 Aurora（进度跟真实启动）
 //  -> 进程起 + 停留 2s -> Stop（竖线扫回右）。点 Stop 竖线先左移手势再复位 Start。日志不在此显示（后台存）。
 //
-// 这颗按钮是启动屏右下角唯一的主操作位，所以它还兼「把游戏装上」的两种形态（install 属性）：
+// 这颗按钮是启动屏唯一的主操作位，所以它还兼「把游戏装上」的三种形态（install 属性）：
 //   absent  —— 游戏没装上，字样从 Start 换成 Download，点下去开装；
-//   running —— 安装在途，整颗按钮变成进度条：左上百分比、左下当前在干什么。
+//   failed  —— 上一次安装没跑完，字样换成 Retry。安装屏那张卡片撤掉之后，
+//              这里是玩家唯一还能点到的重试入口，失败原因由启动屏在它上方那张卡片交代。
+//   running —— 安装在途，整颗按钮变成进度条：左上总百分比、左下当前在干什么。
 // 语义按玩家眼里的下一步走：一颗按下去必然失败的 Start 比没有按钮更糟。
 //
 // 材质：一律没有。这颗按钮（含进度条形态）是裸字直接压在照片上，字色随 onDark 反相。
@@ -17,10 +19,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { springs } from "../lib/motion";
-import { SYNC_STAGE_LABEL, syncProgressRatio, type ModpackSyncProgress } from "../lib/modpack-ui";
+import type { ModpackSyncStage } from "../lib/modpack-ui";
 import { AURORA_H, AURORA_PATH, AURORA_VIEWBOX, AURORA_W } from "./auroraPath";
 
 export type LaunchPhase = "idle" | "launching" | "spawned";
+
+/**
+ * 安装进度的视图模型。
+ *
+ * 这颗按钮刻意不认原始事件：装游戏那四步的进度来自两条互不相同的事件流
+ * （前三步是下载器的文件计数，第四步是整合包同步的字节数），怎么折算成一个总百分比
+ * 是启动屏那边的业务判断。传进来的已经是算好的结果，按钮只负责把它画出来。
+ */
+export interface LaunchInstallProgress {
+  /** 总进度 0..1，四步加权后的值。按步骤推进单调不回退。 */
+  overall: number;
+  /** 左下角那行「当前在干什么」，调用方已把步骤名、步内百分比与现场拼好。 */
+  activity: string;
+  /**
+   * 当前这一步有没有自己的计数。没有时这里补一个本步已用时——
+   * 一个几分钟纹丝不动的百分比会被读成卡死，而已用时是这种情况下唯一还在动的真实数字。
+   */
+  counted: boolean;
+  /** 当前步骤。换步即重置已用时的计时锚点。 */
+  stage: ModpackSyncStage;
+}
 
 /**
  * 装机形态。回调挂在需要它的那一支里，而不是与 install 平级的可选属性——
@@ -28,7 +51,8 @@ export type LaunchPhase = "idle" | "launching" | "spawned";
  */
 export type LaunchInstallState =
   | { kind: "absent"; onInstall: () => void }
-  | { kind: "running"; progress: ModpackSyncProgress };
+  | { kind: "failed"; onRetry: () => void }
+  | { kind: "running"; progress: LaunchInstallProgress };
 
 interface LaunchControlProps {
   phase: LaunchPhase;
@@ -67,7 +91,13 @@ function easeOut(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-/** 压在照片上的那个块体字。三种字样共用同一套版位与字色规则，只有可见性各管各的。 */
+/** 已用时按 分:秒 排，秒补零，免得数字宽度每十秒抖一次。 */
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** 压在照片上的那个块体字。四种字样共用同一套版位与字色规则，只有可见性各管各的。 */
 function BareWord({
   text,
   visible,
@@ -102,16 +132,27 @@ function InstallProgress({
   progress,
   onDark,
 }: {
-  progress: ModpackSyncProgress;
+  progress: LaunchInstallProgress;
   onDark: boolean;
 }) {
-  // 字节优先、文件数兜底；两者都没有说明清单还没解出来，此时任何数字都是编的。
-  const determinate =
-    (progress.total_bytes !== null && progress.total_bytes > 0) || progress.total_files > 0;
-  const percent = Math.round(syncProgressRatio(progress) * 100);
-  const activity = progress.current_file
-    ? `${SYNC_STAGE_LABEL[progress.stage]} · ${progress.current_file}`
-    : SYNC_STAGE_LABEL[progress.stage];
+  const { counted, stage } = progress;
+  // 步内已用时。只在这一步拿不到自己的计数时才计：有计数的步骤本来就每秒在变，
+  // 再挂一个秒表只是把那行字挤窄。换步即重新计时——问的是「这一步跑了多久」。
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (counted) return;
+    const startedAt = performance.now();
+    setElapsedMs(0);
+    const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 1000);
+    return () => window.clearInterval(timer);
+  }, [counted, stage]);
+
+  // 总进度总是算得出来：四步的起点在启动屏那边写死，步内没有计数时就停在本步起点，
+  // 也仍是一个不说谎的数。这里不再有 --% 与来回跑的加载条。
+  const percent = Math.round(Math.min(1, Math.max(0, progress.overall)) * 100);
+  const activity = counted
+    ? progress.activity
+    : `${progress.activity} · 已用 ${formatElapsed(elapsedMs)}`;
   const fg = onDark ? "text-paper-on" : "text-ink";
   // 轨底不是材质，是一道压淡的同色线：与右侧那根朱红竖规同一套「线」的语言。
   const track = onDark ? "bg-paper-on/25" : "bg-ink/15";
@@ -124,28 +165,18 @@ function InstallProgress({
       aria-label="安装进度"
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={determinate ? percent : undefined}
+      aria-valuenow={percent}
       aria-valuetext={activity}
     >
       <span className="font-mono text-[26px] leading-none font-extrabold tabular-nums">
-        {determinate ? `${percent}%` : "--%"}
+        {percent}%
       </span>
 
       <span className={`relative h-1 w-full overflow-hidden ${track}`} aria-hidden>
-        {determinate ? (
-          <span
-            className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-300"
-            style={{ width: `${percent}%` }}
-          />
-        ) : (
-          // 不确定态：一段自左向右滑过的朱红。清单还没解出来时用运动、而不是一个假的 0%
-          // 来表达「在动，但还不知道要多久」——写 0% 是给了一个此刻根本没有的数。
-          <motion.span
-            className="absolute inset-y-0 left-0 w-1/3 bg-accent"
-            animate={{ x: ["-100%", "300%"] }}
-            transition={{ duration: 1.15, repeat: Infinity, ease: "easeInOut" }}
-          />
-        )}
+        <span
+          className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-300"
+          style={{ width: `${percent}%` }}
+        />
       </span>
 
       <span className="truncate font-mono text-[11.5px] tracking-[0.02em]" title={activity}>
@@ -237,14 +268,25 @@ export function LaunchControl({
     return <InstallProgress progress={install.progress} onDark={!!onDark} />;
   }
 
-  const view = install ? "download" : showStop ? "running" : phase === "idle" ? "idle" : "writing";
-  // 竖线在左：写字期间 / 点 Stop 的左移手势期间。其余（idle、Download、运行态 Stop）在右。
+  const view =
+    install?.kind === "absent"
+      ? "download"
+      : install?.kind === "failed"
+        ? "retry"
+        : showStop
+          ? "running"
+          : phase === "idle"
+            ? "idle"
+            : "writing";
+  // 竖线在左：写字期间 / 点 Stop 的左移手势期间。其余（idle、Download、Retry、运行态 Stop）在右。
   const barAtLeft = view === "writing" || stopping;
 
   const handleClick = () => {
     if (view === "download") {
       // install 在这一支必然是 absent（running 已在上面提前返回），窄化由 view 保证不了，故就地判。
       if (install?.kind === "absent") install.onInstall();
+    } else if (view === "retry") {
+      if (install?.kind === "failed") install.onRetry();
     } else if (view === "idle") {
       if (!disabled) onStart();
     } else if (view === "running") {
@@ -262,7 +304,13 @@ export function LaunchControl({
       // 禁用只对启动语义成立：没账户不能启动，但「把游戏装上」从来不需要账户。
       disabled={disabled && view === "idle"}
       aria-label={
-        view === "running" ? "结束游戏" : view === "download" ? "安装游戏" : "开始游戏"
+        view === "running"
+          ? "结束游戏"
+          : view === "download"
+            ? "安装游戏"
+            : view === "retry"
+              ? "重新安装"
+              : "开始游戏"
       }
       style={{
         width: (view === "download" ? DOWNLOAD_W : W_PX + BAR_GAP) + PAD * 2,
@@ -282,6 +330,8 @@ export function LaunchControl({
       <BareWord text="Start" visible={view === "idle"} onDark={onDark} />
       <BareWord text="Stop" visible={view === "running"} onDark={onDark} />
       <BareWord text="Download" visible={view === "download"} onDark={onDark} />
+      {/* Retry 与 Start 一样是五个字身，沿用 Start 的盒宽即可，不必再造一个宽度常量。 */}
+      <BareWord text="Retry" visible={view === "retry"} onDark={onDark} />
 
       {/* Aurora：草书单线，stroke-dashoffset 沿笔顺描出（实体笔迹） */}
       <svg

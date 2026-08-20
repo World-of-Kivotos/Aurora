@@ -1,7 +1,7 @@
 //! aurora-download 的独立错误类型。
 //!
 //! 本 crate 在 [`aurora_base::Error`] 之上叠加下载专属的失败形态（HTTP 状态、响应体截断、
-//! 大小不符、Range 不支持、多源耗尽等）。底层的哈希/IO/URL 错误经 [`Error::Base`] 直接冒泡，
+//! 大小不符、Range 不支持、分片回退双失败、多源耗尽等）。底层的哈希/IO/URL 错误经 [`Error::Base`] 直接冒泡，
 //! 下游只需 `#[from] aurora_download::Error` 一处承接。
 //!
 //! 错误是否可重试实现在 [`RetryableError`] 上：区分「换个时机或换个源可能就好」的瞬时故障
@@ -52,6 +52,16 @@ pub enum Error {
     #[error("下载分块任务异常终止")]
     ChunkTaskJoin(#[source] tokio::task::JoinError),
 
+    /// 分片路径失败后回退整文件单请求，回退同样失败。两个阶段的错误都保留，
+    /// 否则只看到「回退失败」会丢掉「分片为什么挂」这一半线索（CDN 的 302+Range 坑正是如此）。
+    #[error("分片下载与整文件回退均失败: {url}（分片阶段: {chunked}；回退阶段: {fallback}）")]
+    ChunkedFallbackFailed {
+        url: String,
+        chunked: Box<Error>,
+        #[source]
+        fallback: Box<Error>,
+    },
+
     /// 优先级列表里所有下载源都试过且全部失败，附带最后一个源的错误。
     #[error("所有下载源均失败: {url}")]
     AllSourcesExhausted {
@@ -59,6 +69,21 @@ pub enum Error {
         #[source]
         last: Box<Error>,
     },
+}
+
+impl Error {
+    /// 取该错误链上最贴近真相的 HTTP 状态码，供日志字段与前端归类使用。
+    ///
+    /// 组合型错误（多源耗尽、分片回退）自身没有状态码，递归到它承载的最后一次真实失败：
+    /// 排查时关心的是「最终那次请求被服务器怎么拒了」。
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Error::Status { status, .. } => Some(*status),
+            Error::AllSourcesExhausted { last, .. } => last.http_status(),
+            Error::ChunkedFallbackFailed { fallback, .. } => fallback.http_status(),
+            _ => None,
+        }
+    }
 }
 
 /// crate 级 `Result` 别名。
@@ -76,6 +101,8 @@ impl RetryableError for Error {
             }
             // 连接中途断开导致的截断、以及大小不符，换次尝试可能补齐。
             Error::IncompleteBody { .. } | Error::SizeMismatch { .. } => true,
+            // 分片路径已被判死，整体还值不值得再来一轮，只取决于回退阶段那次失败的性质。
+            Error::ChunkedFallbackFailed { fallback, .. } => fallback.is_retryable(),
             // Range 不支持是源能力问题（应切换到单流/换源，而非在同一路径上死重试）；
             // 任务 join 失败与多源耗尽都是终态。
             Error::RangeUnsupported { .. }
@@ -167,6 +194,87 @@ mod tests {
         };
         let err: Error = base.into();
         assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn chunked_fallback_display_carries_both_stages() {
+        let err = Error::ChunkedFallbackFailed {
+            url: "https://edge.example/big.jar".into(),
+            chunked: Box::new(Error::Status {
+                url: "https://media.example/big.jar".into(),
+                status: 404,
+            }),
+            fallback: Box::new(Error::Status {
+                url: "https://edge.example/big.jar".into(),
+                status: 503,
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "分片下载与整文件回退均失败: https://edge.example/big.jar（分片阶段: HTTP 状态码 404: \
+             https://media.example/big.jar；回退阶段: HTTP 状态码 503: https://edge.example/big.jar）"
+        );
+    }
+
+    #[test]
+    fn chunked_fallback_retryability_follows_fallback_stage() {
+        let transient_fallback = Error::ChunkedFallbackFailed {
+            url: "https://edge.example/big.jar".into(),
+            chunked: Box::new(Error::Status {
+                url: "https://edge.example/big.jar".into(),
+                status: 404,
+            }),
+            fallback: Box::new(Error::Status {
+                url: "https://edge.example/big.jar".into(),
+                status: 503,
+            }),
+        };
+        let terminal_fallback = Error::ChunkedFallbackFailed {
+            url: "https://edge.example/big.jar".into(),
+            chunked: Box::new(Error::Status {
+                url: "https://edge.example/big.jar".into(),
+                status: 500,
+            }),
+            fallback: Box::new(Error::Status {
+                url: "https://edge.example/big.jar".into(),
+                status: 403,
+            }),
+        };
+        assert!(transient_fallback.is_retryable());
+        assert!(!terminal_fallback.is_retryable());
+    }
+
+    #[test]
+    fn http_status_digs_through_composite_errors() {
+        let direct = Error::Status {
+            url: "https://host/a".into(),
+            status: 404,
+        };
+        assert_eq!(direct.http_status(), Some(404));
+
+        let nested = Error::AllSourcesExhausted {
+            url: "https://host/a".into(),
+            last: Box::new(Error::ChunkedFallbackFailed {
+                url: "https://host/a".into(),
+                chunked: Box::new(Error::Status {
+                    url: "https://host/a".into(),
+                    status: 404,
+                }),
+                fallback: Box::new(Error::Status {
+                    url: "https://host/a".into(),
+                    status: 503,
+                }),
+            }),
+        };
+        // 递归到最后一次真实请求的状态码（回退阶段的 503），而不是分片阶段的 404。
+        assert_eq!(nested.http_status(), Some(503));
+
+        let no_status = Error::IncompleteBody {
+            url: "https://host/a".into(),
+            expected: 10,
+            actual: 3,
+        };
+        assert_eq!(no_status.http_status(), None);
     }
 
     #[test]

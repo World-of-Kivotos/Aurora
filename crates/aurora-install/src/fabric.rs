@@ -171,7 +171,7 @@ impl<'a> LoaderInstaller<'a> {
         aurora_base::fs::atomic_write(&json_path, &raw).await?;
 
         let tasks = plan::library_tasks(&version, self.cx.runtime, self.cx.layout)?;
-        let libraries = self.cx.run_batch(tasks, "加载器库", None).await?;
+        let libraries = self.cx.run_batch(tasks, "加载器库").await?;
 
         Ok(LoaderSummary {
             id,
