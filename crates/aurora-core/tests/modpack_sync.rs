@@ -14,6 +14,17 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const INSTANCE_ID: &str = "forge-test";
 
+/// 笃定连不上的地址，用来制造真正的传输层失败。
+///
+/// 不能靠 drop(MockServer) 模拟：wiremock 0.6.5 的 `impl Drop`（exposed_server.rs）只是丢掉
+/// shutdown_trigger 触发优雅关停，并不等服务器停下来。紧接着发出的请求会落进「监听还在、mock
+/// 已经没了」的窗口，拿回 wiremock 默认的 404 —— 而 404 是客户端错误，按设计就该拒绝而不是回退
+/// 缓存，于是断言炸在一个跟被测逻辑毫无关系的地方。2026-08-20 的 CI 正是这么红的，本机反而稳过。
+///
+/// 回环上的 1 号端口是特权端口，不会有进程去监听，连接被立刻拒绝（不是超时），
+/// 拿到的是货真价实的传输错误，且与机器负载无关。
+const UNREACHABLE_BASE: &str = "http://127.0.0.1:1";
+
 fn sha1_hex(bytes: &[u8]) -> String {
     Sha1::digest(bytes)
         .iter()
@@ -214,7 +225,7 @@ async fn pointer_cache_is_used_for_server_failures_and_transport_errors() {
         } if versions.latest.version == "2.0.0"
     ));
 
-    drop(server);
+    subscribe(&aurora, format!("{UNREACHABLE_BASE}/latest")).await;
     let cached_after_transport_error = aurora
         .managed_modpack_status(INSTANCE_ID)
         .await
@@ -437,7 +448,17 @@ async fn manifest_cache_rejects_client_errors_but_allows_server_and_transport_fa
         .unwrap();
     assert_eq!(cached_after_server_failure.installed_version, "2.0.0");
 
-    drop(server);
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/latest"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(pointer_json(
+            UNREACHABLE_BASE,
+            "2.0.0",
+            "0.1.0",
+        )))
+        .mount(&server)
+        .await;
+
     let cached_after_transport_error = aurora
         .sync_managed_modpack(INSTANCE_ID, "2.0.0", None)
         .await
