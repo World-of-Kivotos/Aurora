@@ -10,8 +10,13 @@
 //!
 //! 导入过的图不会因为切换而删除——它们留在目录里构成图库，设置页列出来点一下就换。
 //! 「多张背景」因此不需要任何轮换逻辑。
+//!
+//! 除图库外，本模块还登记两张随二进制分发的内置背景（见 [`builtin_backgrounds`]）：玩家没选
+//! 壁纸时界面按当前游戏铺其中一张。它们与自选壁纸共用同一对取样函数，所以必须放在这里而不是
+//! 前端资源目录——取样一旦分成两套实现，同一块右下角在内置图与自选图上就会判出不同的字色。
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use image::ImageReader;
 use image::imageops::FilterType;
@@ -42,6 +47,87 @@ pub struct BackgroundEntry {
     pub bytes: u64,
     /// 是否为当前正在使用的那张。
     pub is_current: bool,
+}
+
+// ===== 内置默认背景 =====
+
+/// 内置背景的图片字节，编译期嵌进二进制。
+///
+/// 不落数据目录也不交给前端打包：取样值必须由本文件的 [`tint_of`] 与 [`plate_zone_of`] 算出来，
+/// 换成前端另实现一套，同一块右下角在内置图与自选图上就会判出不同的字色。嵌进二进制还顺带
+/// 保证图跟着 exe 走——玩家清空数据目录之后，启动器不至于连默认背景都没有。
+const MASTER_IMAGE: &[u8] = include_bytes!("../assets/builtin-backgrounds/master.jpg");
+const ARENA_IMAGE: &[u8] = include_bytes!("../assets/builtin-backgrounds/arena.jpg");
+
+/// 内置背景登记表：id 到图片字节。
+///
+/// 这张表同时就是 id 的白名单。id 从不参与任何路径拼接，协议侧拿到什么都只在这里查一次，
+/// 查不到即 404——目录穿越那类构造在这条链路上根本没有落点。
+static BUILTIN_SOURCES: [(&str, &[u8]); 2] = [("master", MASTER_IMAGE), ("arena", ARENA_IMAGE)];
+
+/// 解码失败时的兜底色。
+///
+/// 兜底色只在图加载完成前垫那一瞬。启动器这边解不开，不代表 WebView 也解不开，
+/// 所以给中性灰而不是纯黑或纯白：真图无论深浅，都不会因为它闪出刺眼的一帧。
+const FALLBACK_TINT: &str = "#808080";
+
+/// 一张内置背景的登记信息。
+///
+/// 与自选壁纸的 [`BackgroundRef`] 分开：那个记的是数据目录里的文件名，会被删、会被换；
+/// 这个跟着二进制走，只有一个固定 id。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BuiltinBackground {
+    /// 白名单 id，同时是它在协议 URL 里的路径段。
+    pub id: &'static str,
+    /// 平均色，供图加载完成前铺底，避免闪白。
+    pub tint: String,
+    /// 右下角信息区的亮度取样，前端据此选裸字档位。
+    pub plate: PlateZone,
+}
+
+/// 全部内置背景及其取样值。
+///
+/// 首次调用解码两张图量一次，之后返回同一份缓存：取样值只取决于编译进来的字节，永远不会变，
+/// 而每次重解一张 1600x1124 的 JPEG 纯属白烧 CPU——界面每次切游戏都要读这张表。
+pub fn builtin_backgrounds() -> &'static [BuiltinBackground] {
+    static MEASURED: OnceLock<Vec<BuiltinBackground>> = OnceLock::new();
+    MEASURED.get_or_init(|| {
+        BUILTIN_SOURCES
+            .iter()
+            .map(|&(id, bytes)| measure_builtin(id, bytes))
+            .collect()
+    })
+}
+
+/// 按 id 取内置背景的原始字节；未登记的 id 返回 `None`。
+pub fn builtin_background_bytes(id: &str) -> Option<&'static [u8]> {
+    BUILTIN_SOURCES
+        .iter()
+        .find(|(known, _)| *known == id)
+        .map(|&(_, bytes)| bytes)
+}
+
+/// 解码一张内置背景，量出兜底色与右下角取样。
+fn measure_builtin(id: &'static str, bytes: &'static [u8]) -> BuiltinBackground {
+    match image::load_from_memory(bytes) {
+        Ok(decoded) => BuiltinBackground {
+            id,
+            tint: tint_of(&decoded),
+            plate: plate_zone_of(&decoded),
+        },
+        Err(err) => {
+            // 图是编译期嵌进来的，解不开只可能是资产被换坏或解码器出了问题。即便如此，
+            // 字节照样能交给 WebView 显示，量不出取样不该让启动器起不来——只是退回保守档。
+            tracing::warn!(id, error = %err, "内置背景解码失败，退回保守取样");
+            BuiltinBackground {
+                id,
+                tint: FALLBACK_TINT.to_owned(),
+                // 与 plate_zone_of 里 count == 0 那条同一个思路：给一对横跨全程的分位数，
+                // 让前端两种裸字都判不达标、老实退回磨砂纸片，而不是拿没量过的图赌可读性。
+                plate: PlateZone { p10: 0, p90: 255 },
+            }
+        }
+    }
 }
 
 impl Aurora {
@@ -131,7 +217,7 @@ impl Aurora {
         tokio::task::spawn_blocking(move || import_blocking(&source, &dir, &stem)).await?
     }
 
-    /// 切换当前背景。传 `None` 回到纯纸面。
+    /// 切换当前背景。传 `None` 清掉自选，回到按游戏挑的内置背景。
     ///
     /// 指定的文件必须已在图库里——允许写入一个不存在的文件名，等于让界面拿着断链的引用去加载。
     pub fn set_background(&mut self, file: Option<String>) -> Result<()> {
@@ -196,7 +282,7 @@ impl Aurora {
         true
     }
 
-    /// 从图库删掉一张图。删的是当前那张时顺带回到纯纸面。
+    /// 从图库删掉一张图。删的是当前那张时顺带清掉自选，回到内置背景。
     pub async fn remove_background(&mut self, file: &str) -> Result<()> {
         let path = resolve_in_library(&self.backgrounds_dir(), file)?;
         tokio::fs::remove_file(&path)
@@ -729,6 +815,95 @@ mod tests {
         }
         let tint = tint_of(&image::DynamicImage::ImageRgb8(img));
         assert_eq!(tint, "#c8281e");
+    }
+
+    /// 嵌进二进制的必须正是 assets 里那两张图，一个字节都不差。
+    ///
+    /// 字节数钉死：换图时这条会挂，正好逼着把新图的取样值一并核对一遍——
+    /// 那两个数决定右下角的字色，换了图却没看过，界面上不会报错，只会悄悄难读。
+    #[test]
+    fn builtin_bytes_match_the_files_on_disk() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/builtin-backgrounds");
+        for (id, file, len) in [
+            ("master", "master.jpg", 294_168usize),
+            ("arena", "arena.jpg", 384_604usize),
+        ] {
+            let bytes = builtin_background_bytes(id).expect("已登记的 id 必须取得到字节");
+            assert_eq!(bytes.len(), len, "{id} 的字节数与登记不符");
+            let on_disk = std::fs::read(dir.join(file)).expect("读 assets 里的源文件");
+            assert_eq!(bytes, on_disk.as_slice(), "{id} 应与源文件逐字节一致");
+            // JPEG 魔数：确认嵌进来的确实是图，而不是被误换成了别的文件。
+            assert_eq!(&bytes[..2], &[0xff, 0xd8], "{id} 应为 JPEG");
+        }
+    }
+
+    /// id 是一张闭合白名单：表里没有的一律取不到字节。
+    #[test]
+    fn builtin_ids_are_a_closed_whitelist() {
+        assert_eq!(
+            builtin_backgrounds()
+                .iter()
+                .map(|b| b.id)
+                .collect::<Vec<_>>(),
+            ["master", "arena"]
+        );
+        // 大小写、带扩展名、穿越构造，都只是「表里查不到的名字」。
+        for unknown in ["", "Master", "master.jpg", "../config.json", "arena/"] {
+            assert!(
+                builtin_background_bytes(unknown).is_none(),
+                "{unknown} 不该取到字节"
+            );
+        }
+    }
+
+    /// 两张内置图都必须真量出取样值，而不是落在解码失败的兜底上。
+    #[test]
+    fn builtin_measurements_are_real() {
+        for bg in builtin_backgrounds() {
+            // tint 直接进 CSS，形态一错就静默变成「没设背景色」，界面上看不出错。
+            let hex = bg.tint.strip_prefix('#').unwrap_or_else(|| {
+                panic!("{} 的 tint 应以 # 开头，实际 {}", bg.id, bg.tint);
+            });
+            assert!(
+                hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()),
+                "{} 的 tint 应为 #rrggbb，实际 {}",
+                bg.id,
+                bg.tint
+            );
+            assert!(
+                bg.plate.p10 <= bg.plate.p90,
+                "{} 的分位数颠倒了：p10={} p90={}",
+                bg.id,
+                bg.plate.p10,
+                bg.plate.p90
+            );
+            // 兜底那对值等于「这张图没量出来」。真图跨不满整个 0..=255，
+            // 落在这上面就说明解码挂了，而前端只会安静地退回纸片，没人会发现。
+            assert_ne!(
+                (bg.plate.p10, bg.plate.p90),
+                (0, 255),
+                "{} 落在了解码失败的兜底取样上",
+                bg.id
+            );
+            assert_ne!(bg.tint, FALLBACK_TINT, "{} 落在了解码失败的兜底色上", bg.id);
+        }
+    }
+
+    /// 取样只算一次：命中缓存时拿到的是同一块内存，而不是重新解码出的新表。
+    ///
+    /// 把 OnceLock 换成每次现算，这条就会挂——而功能上看不出任何差别，
+    /// 只是每次切游戏都白解一张 1600x1124 的 JPEG。
+    #[test]
+    fn builtin_table_is_measured_once() {
+        assert!(
+            std::ptr::eq(builtin_backgrounds(), builtin_backgrounds()),
+            "两次调用应命中同一份缓存"
+        );
+        assert_eq!(builtin_backgrounds().len(), 2);
+        // 字节侧同理：吐给协议的是嵌在二进制里的那一份，不是每次复制一遍。
+        let first = builtin_background_bytes("arena").expect("arena");
+        let second = builtin_background_bytes("arena").expect("arena");
+        assert!(std::ptr::eq(first, second), "字节应指向同一处");
     }
 
     #[tokio::test]

@@ -162,13 +162,15 @@ export function BackgroundPicker() {
         <div className="min-w-0">
           <div className="text-[15px] font-bold">应用背景</div>
           <div className="mt-1 text-[12.5px] text-ink/75">
-            这张图铺满整个启动器，标题栏、侧栏与每一页的面板都是压在它上面的玻璃。换一张就等于换掉整个界面的底色气质。
+            这张图铺满整个启动器，标题栏、侧栏与每一页的面板都是压在它上面的玻璃。换一张就等于换掉整个界面的底色气质。不选就用每台游戏自带的那张，随侧栏选中的游戏换。
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
           {appearance.background && (
+            // 只在真选过图时给这个出口。它撤掉的是「自选」这件事本身，撤完回到游戏自带的那张，
+            // 而不是回到一张白纸——启动器任何时候都有底图。
             <Button variant="secondary" onClick={doClear} disabled={busy}>
-              恢复纯纸面
+              恢复默认背景
             </Button>
           )}
           <Button
@@ -331,31 +333,31 @@ export function BackgroundPicker() {
         </ul>
       )}
 
-      {/* 柔化只在有背景时才有意义，没图时藏起来而不是摆一个拖了没反应的滑条。 */}
-      {appearance.background && (
-        <div className="mt-5 flex items-center gap-4 border-t border-ink/9 pt-4">
-          <div className="min-w-0">
-            <div className="text-[13.5px] font-bold">柔化</div>
-            <div className="mt-0.5 text-[12px] text-ink/75">图太花时压一层纸色</div>
-          </div>
-          <input
-            type="range"
-            className="ink-range ml-auto w-[180px]"
-            min={0}
-            max={MAX_VEIL}
-            step={5}
-            value={veilInput}
-            aria-label="背景柔化强度"
-            disabled={busy}
-            onChange={(e) => setVeilInput(Number(e.target.value))}
-            onPointerUp={() => commitVeil(veilInput)}
-            onKeyUp={() => commitVeil(veilInput)}
-          />
-          <span className="w-[42px] shrink-0 text-right font-mono text-[12px] text-ink/75 tabular-nums">
-            {veilInput}%
-          </span>
+      {/* 柔化常驻。原先只在选过图时才露出来，判据是「没图的时候拖了没反应」——
+          内置默认背景上线之后没有「没图」这一档了，纸色遮罩照样压在内置图上，
+          再按旧判据藏起来就成了：撤掉自选壁纸的人，眼前那层柔化再也调不回去。 */}
+      <div className="mt-5 flex items-center gap-4 border-t border-ink/9 pt-4">
+        <div className="min-w-0">
+          <div className="text-[13.5px] font-bold">柔化</div>
+          <div className="mt-0.5 text-[12px] text-ink/75">图太花时压一层纸色</div>
         </div>
-      )}
+        <input
+          type="range"
+          className="ink-range ml-auto w-[180px]"
+          min={0}
+          max={MAX_VEIL}
+          step={5}
+          value={veilInput}
+          aria-label="背景柔化强度"
+          disabled={busy}
+          onChange={(e) => setVeilInput(Number(e.target.value))}
+          onPointerUp={() => commitVeil(veilInput)}
+          onKeyUp={() => commitVeil(veilInput)}
+        />
+        <span className="w-[42px] shrink-0 text-right font-mono text-[12px] text-ink/75 tabular-nums">
+          {veilInput}%
+        </span>
+      </div>
     </div>
   );
 }

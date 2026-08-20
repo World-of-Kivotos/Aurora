@@ -711,9 +711,9 @@ export interface PlateZone {
  */
 export type GlassMode = "frost" | "liquid";
 
-/** 当前外观设置。background 为 null 表示纯纸面。 */
+/** 当前外观设置。 */
 export interface AppearanceDto {
-  /** 当前背景在图库里的文件名。 */
+  /** 玩家自选背景在图库里的文件名；null 表示没自选过，此时用按游戏挑的内置背景。 */
   background: string | null;
   /** 当前背景的平均色，图加载完成前先铺它，避免闪白。 */
   tint: string | null;
@@ -723,6 +723,20 @@ export interface AppearanceDto {
   veil: number;
   /** 玻璃模式。前端据此往 documentElement 写 data-glass。 */
   glass: GlassMode;
+}
+
+/**
+ * 一张内置背景（随二进制发行，一台游戏一张）。
+ *
+ * 只下发取样结果不下发图片：图片本体走 aurora-bg 协议直取，而 tint 与 plate 由 Rust 侧
+ * 用量用户壁纸的同两个函数量出来。前端若自己再取一遍样，同一张图就会有两个答案，
+ * 且随图片解码库的差异慢慢漂开。
+ */
+export interface BuiltinBackground {
+  /** 登记表里的 id，同时是协议路径 /builtin/<id> 的白名单值。 */
+  id: string;
+  tint: string;
+  plate: PlateZone;
 }
 
 /** 图库里的一张背景图。 */
@@ -739,15 +753,21 @@ export const getAppearance = (): Promise<AppearanceDto> => invoke<AppearanceDto>
 export const listBackgrounds = (): Promise<BackgroundEntry[]> =>
   invoke<BackgroundEntry[]>("list_backgrounds");
 
+/**
+ * 内置背景登记表。表的内容随二进制固定，进程内拉一次就够，后端也只在首次调用时解码一次。
+ */
+export const listBuiltinBackgrounds = (): Promise<BuiltinBackground[]> =>
+  invoke<BuiltinBackground[]>("list_builtin_backgrounds");
+
 /** 导入一张外部图片并立刻设为当前背景。传的是磁盘绝对路径，由系统文件框给出。 */
 export const importBackground = (path: string): Promise<AppearanceDto> =>
   invoke<AppearanceDto>("import_background", { path });
 
-/** 切换当前背景；传 null 回到纯纸面。 */
+/** 切换当前背景；传 null 清掉自选，回到按游戏挑的内置背景。 */
 export const setBackground = (file: string | null): Promise<AppearanceDto> =>
   invoke<AppearanceDto>("set_background", { file });
 
-/** 从图库删掉一张图；删的是当前那张时自动回到纯纸面。 */
+/** 从图库删掉一张图；删的是当前那张时自动回到内置背景。 */
 export const removeBackground = (file: string): Promise<AppearanceDto> =>
   invoke<AppearanceDto>("remove_background", { file });
 

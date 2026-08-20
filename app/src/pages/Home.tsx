@@ -29,7 +29,8 @@ import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
 import { AlertIcon, RefreshIcon } from "../components/icons";
 import { useAppearance } from "../lib/appearance-context";
-import { plateMode } from "../lib/appearance";
+import { MAIN_GAME_ID, resolveBackground } from "../lib/appearance";
+import { plateLook } from "../lib/plate";
 import { pageItem, springs } from "../lib/motion";
 import {
   currentAccount,
@@ -49,6 +50,8 @@ import {
   updateConfig,
   type AccountDto,
   type AccountType,
+  type AppearanceDto,
+  type BuiltinBackground,
   type CrashReport,
   type GameLog,
   type InstalledVersionDto,
@@ -236,7 +239,7 @@ function loaderText(v: InstalledVersionDto): string {
 // 右下角那撮内容的三种形态。恒定铺一块材质的做法已被否掉: 一块纸压在照片上,
 // 无论做得多透, 都还是在图里挖了一块出来; 真正融进去的做法是让字自己适应它压着的那片图。
 //
-// 全站铺图之后判定范围确实变了, 但启动屏仍是唯一把字裸压在图上的地方 ——
+// 把字裸压在图上的只有两屏: 本屏与竞技场屏, 判定共用 lib/plate.ts 的 plateLook。
 // 别的页面文字都落在容器材质上, 走 app.css 那张实算表; 这里走按图取样的 plateMode。
 // 两套账各管各的场景, 不冲突。
 // 贴底不靠这一撮自己: 上面那只告警滚动盒子是 flex-1, 它吃掉全部留白, 本 section 只按自然高度
@@ -249,6 +252,29 @@ const PLATE_NAKED = "ml-auto flex flex-col items-end gap-6 pt-10";
 const PLATE_FROSTED =
   "surface-panel-strong ml-auto flex flex-col items-end gap-6 rounded-panel px-7 py-6";
 
+/**
+ * 启动屏右下角那一撮的三态：这一帧铺的是哪张图、字用哪一档色、容器挂哪套类。
+ *
+ * 单独拆成导出的纯函数是为了它可测：整屏要路由、上下文与一串异步 effect 才渲染得起来,
+ * 而这段判定就是「默认状态下右下角还读不读得出来」的全部依据。它退化过一次——
+ * 当时按 appearance.background 判有没有图, 内置默认背景上线后那条就错了:
+ * 没自选壁纸时铺的仍是一张深色内置图, 旧判据却当成没图, 于是墨色字压在压暗后的深图上,
+ * 而这恰好是启动器默认状态下最常见的那一屏。
+ */
+export function launchPlate(appearance: AppearanceDto, builtins: readonly BuiltinBackground[]) {
+  // 这一屏恒定属于主服那台游戏; 自选壁纸压过内置图那条优先级归 resolveBackground。
+  const look = plateLook(resolveBackground(appearance, builtins, MAIN_GAME_ID), appearance.veil);
+  return {
+    ...look,
+    // 基色挂在容器上, 让没写颜色类的节点(版本名、账户名)自动继承对; 理由见 plate.ts 的 baseTone。
+    cls: !look.onPhoto
+      ? PLATE_BARE
+      : look.naked
+        ? `${PLATE_NAKED} ${look.baseTone}`
+        : PLATE_FROSTED,
+  };
+}
+
 export function Home() {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -257,29 +283,11 @@ export function Home() {
   // 否则游戏已经装着的人过来只会看到一颗 Start，深链等于没点。
   const [searchParams] = useSearchParams();
   const installIntent = managedModpackInstallIntent(searchParams);
-  const { appearance } = useAppearance();
-  // 只剩一个用处：崩溃横条据此决定要不要投影（压在照片上是两个平面要有影，
-  // 落在纯纸底上是纸对纸、由它自己挂 .surface-nested 摘掉）。字色与底色都归材质管，页面不再参与。
-  const onPhoto = appearance.background !== null;
-  // 有图时先问一句这块图撑不撑得住裸字。撑得住就不要纸片, 字直接压上去。
-  const mode = onPhoto ? plateMode(appearance.plate, appearance.veil) : "plate";
-  const naked = mode !== "plate";
-  /**
-   * 裸字模式下的字色。shade 是纸片模式沿用的原色阶, tier 是它在层级里的档位。
-   *
-   * 两种裸字档的余量天差地别, 不能套同一套规则:
-   * 满墨字压在浅色图上, 准入线只保证满强度达到 4.5:1, 所以这一档只能全满墨,
-   * 层级交给字号与字重; 纸色字压在压暗后的深色图上则宽裕得多, 三级都过得了 4.5,
-   * 层级该还回来就还回来, 全篇一个白只会读成一张扁平清单。
-   */
-  const fg = (shade: string, tier: "mid" | "weak") =>
-    mode === "ink"
-      ? "text-ink"
-      : mode === "paperOn"
-        ? tier === "mid"
-          ? "text-paper-on/85"
-          : "text-paper-on/70"
-        : shade;
+  const { appearance, builtins } = useAppearance();
+  // 三态判定见上面的 launchPlate（与竞技场屏共用 lib/plate.ts）。onPhoto 另有一个用处：
+  // 崩溃横条据此决定要不要投影（压在照片上是两个平面要有影，落在纯纸底上是纸对纸、
+  // 由它自己挂 .surface-nested 摘掉）。
+  const { mode, onPhoto, fg, cls: plateCls } = launchPlate(appearance, builtins);
   const [account, setAccount] = useState<AccountDto | null>(null);
   // 已保存的账户全表（微软 / 外置 / 离线三类同列一张表，见 list_accounts）。
   // 启动屏只拿它渲染切换器：增、删、登录一律归账户页，这一屏不重复造那套表单。
@@ -798,18 +806,7 @@ export function Home() {
         aria-label="启动"
         className="flex shrink-0 flex-col items-end gap-5"
       >
-        <div
-          className={
-            !onPhoto
-              ? PLATE_BARE
-              : naked
-                ? // 基色定在容器上而不是逐个节点写。版本名与账户名本来就没写颜色类、
-                  // 靠继承 body 的墨色, 压在深色图上直接看不见 —— 逐处去补是治标,
-                  // 往后谁再加一行不写颜色的文字就会重犯。定在容器上, 新增节点自动就是对的。
-                  `${PLATE_NAKED} ${mode === "paperOn" ? "text-paper-on" : "text-ink"}`
-                : PLATE_FROSTED
-          }
-        >
+        <div className={plateCls}>
           <div className="flex items-baseline gap-2.5 self-end">
             <span className={`text-[10px] font-bold tracking-[0.22em] ${fg("text-ink/75", "weak")}`}>状态</span>
             <span className={`font-mono text-[12px] tracking-[0.08em] ${fg("text-ink/75", "mid")} tabular-nums`}>

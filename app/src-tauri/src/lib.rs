@@ -18,7 +18,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aurora_core::{
-    detect_crash, Account, AccountType, AggregateResult, Aurora, BackgroundEntry, CoreEvent, CrashReport,
+    builtin_background_bytes, builtin_backgrounds, detect_crash, Account, AccountType,
+    AggregateResult, Aurora, BackgroundEntry, BuiltinBackground, CoreEvent, CrashReport,
     DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, GlassMode, History,
     InstallPlan,
     InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
@@ -1725,6 +1726,13 @@ const BACKGROUND_CURRENT_PATH: &str = "/current";
 /// 图库单张图的路径前缀，后接 percent-encoded 文件名。
 const BACKGROUND_LIBRARY_PREFIX: &str = "/library/";
 
+/// 内置背景的路径前缀，后接白名单 id（`master` / `arena`）。
+///
+/// 与图库那条分开而不是复用 `/library/`：内置图不在数据目录里，也没有文件名可言，
+/// 混进同一个前缀就得靠「先找文件、找不到再当 id 试试」这种猜法来分辨，那是把两套东西
+/// 揉成一个含糊的名字空间——玩家真导入一张叫 `master` 的图时就说不清该给哪张。
+const BACKGROUND_BUILTIN_PREFIX: &str = "/builtin/";
+
 /// 主页右下角信息区背后那块图的亮度取样 DTO。两端都按 0..=255 映射相对亮度 0..=1。
 #[derive(Serialize)]
 struct PlateZoneDto {
@@ -1737,7 +1745,7 @@ struct PlateZoneDto {
 /// 界面外观 DTO。
 #[derive(Serialize)]
 struct AppearanceDto {
-    /// 当前背景的文件名；null 表示纯纸面。
+    /// 玩家自选背景的文件名；null 表示没自选过，此时用按游戏挑的内置背景。
     background: Option<String>,
     /// 当前背景的平均色，供图加载完成前铺底，避免闪白。
     tint: Option<String>,
@@ -1812,7 +1820,7 @@ async fn import_background(
     Ok(appearance_dto(&aurora))
 }
 
-/// 切换当前背景；传 null 回到纯纸面。
+/// 切换当前背景；传 null 清掉自选，回到按游戏挑的内置背景。
 #[tauri::command]
 async fn set_background(
     file: Option<String>,
@@ -1824,7 +1832,7 @@ async fn set_background(
     Ok(appearance_dto(&aurora))
 }
 
-/// 从图库删掉一张图。删的是当前那张时自动回到纯纸面。
+/// 从图库删掉一张图。删的是当前那张时自动清掉自选，回到内置背景。
 #[tauri::command]
 async fn remove_background(
     file: String,
@@ -1866,19 +1874,75 @@ async fn set_glass_mode(
     Ok(appearance_dto(&aurora))
 }
 
-/// 把协议请求的路径解析成图库文件名。
+/// 列出随二进制分发的内置背景（id + 取样值）。
 ///
-/// `/current` 查配置里的当前背景，`/library/<名>` 取指定那张。文件名经 percent 解码后
-/// 仍要过门面的图库校验——这里只负责还原字符串，越界判定是 `read_background` 的职责。
-fn background_file_for(path: &str, current: Option<String>) -> Option<String> {
+/// 玩家没导入过壁纸时界面按当前游戏铺其中一张，取样值决定右下角那撮字用哪一档——
+/// 与自选壁纸走的是同一套判定，所以必须由这里下发，前端不能自己对着图估一个。
+///
+/// 直接返回门面类型而不另立 DTO：它只有 id/tint/plate 三个安全字段，
+/// 序列化形态与 [`AppearanceDto`] 的 plate 一致（`list_backgrounds` 同样是直接透传）。
+#[tauri::command]
+async fn list_builtin_backgrounds() -> Result<Vec<BuiltinBackground>, String> {
+    // 首次调用要解码两张 1600x1124 的 JPEG，是 CPU 密集的同步活，不能占着运行时的工作线程；
+    // 之后命中门面里的缓存，开销只剩一次克隆。
+    tokio::task::spawn_blocking(|| builtin_backgrounds().to_vec())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 协议请求解析出的取图来源。
+enum BackgroundSource {
+    /// 图库里的一张图，字节要去数据目录读。名字仍是不可信输入。
+    Library(String),
+    /// 内置背景，字节就在二进制里。
+    Builtin(&'static [u8]),
+}
+
+impl std::fmt::Debug for BackgroundSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Library(file) => f.debug_tuple("Library").field(file).finish(),
+            // 只打长度不打内容：一张内置图有几十万字节，断言失败时会把整个测试输出淹掉。
+            Self::Builtin(bytes) => f
+                .debug_tuple("Builtin")
+                .field(&format_args!("{} 字节", bytes.len()))
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for BackgroundSource {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Library(a), Self::Library(b)) => a == b,
+            // 内置图按「是不是同一份字节」比，逐字节比几十万个只为得到同一个答案。
+            (Self::Builtin(a), Self::Builtin(b)) => std::ptr::eq(*a, *b),
+            _ => false,
+        }
+    }
+}
+
+/// 把协议请求的路径解析成取图来源。
+///
+/// `/current` 查配置里的当前背景，`/library/<名>` 取图库指定那张，`/builtin/<id>` 取内置那张。
+/// 图库文件名经 percent 解码后仍要过门面的图库校验——这里只负责还原字符串，越界判定是
+/// `read_background` 的职责；内置 id 则在这里当场查白名单，因为它压根不对应任何路径，
+/// 查不到就是没有这张图。
+fn background_source_for(path: &str, current: Option<String>) -> Option<BackgroundSource> {
     if path == BACKGROUND_CURRENT_PATH {
-        return current;
+        return current.map(BackgroundSource::Library);
+    }
+    if let Some(encoded) = path.strip_prefix(BACKGROUND_BUILTIN_PREFIX) {
+        let decoded = percent_encoding::percent_decode_str(encoded)
+            .decode_utf8()
+            .ok()?;
+        return builtin_background_bytes(&decoded).map(BackgroundSource::Builtin);
     }
     let encoded = path.strip_prefix(BACKGROUND_LIBRARY_PREFIX)?;
     let decoded = percent_encoding::percent_decode_str(encoded)
         .decode_utf8()
         .ok()?;
-    Some(decoded.into_owned())
+    Some(BackgroundSource::Library(decoded.into_owned()))
 }
 
 /// 取图失败时的响应。
@@ -1926,36 +1990,41 @@ pub fn run() {
                     .background
                     .as_ref()
                     .map(|b| b.file.clone());
-                let Some(file) = background_file_for(&path, current) else {
-                    // 没设背景时请求 /current 会走到这里，属于常态而非错误。
+                let Some(source) = background_source_for(&path, current) else {
+                    // 没设背景时请求 /current、以及不在白名单里的内置 id，都落这里。
                     responder.respond(background_error(
                         tauri::http::StatusCode::NOT_FOUND,
                         format!("路径 {path} 没有对应的背景图"),
                     ));
                     return;
                 };
-                match aurora.read_background(&file).await {
-                    Ok(bytes) => {
-                        let response = tauri::http::Response::builder()
-                            .header(tauri::http::header::CONTENT_TYPE, "image/jpeg")
-                            // 换图靠 URL 上的版本戳失效，内容本身按文件名不可变缓存。
-                            .header(
-                                tauri::http::header::CACHE_CONTROL,
-                                "max-age=31536000, immutable",
-                            )
-                            .body(bytes)
-                            .expect("图片响应必定可构造");
-                        responder.respond(response);
-                    }
-                    // 越界文件名与「图被手动删了」都落这里，对 WebView 一律 404。
-                    Err(err) => {
-                        tracing::warn!(%file, error = %err, "背景图读取失败");
-                        responder.respond(background_error(
-                            tauri::http::StatusCode::NOT_FOUND,
-                            err.to_string(),
-                        ));
-                    }
-                }
+                let bytes = match source {
+                    // 内置图的字节是 'static 的，这里复制一份是 responder 要求所有权；
+                    // 有 immutable 缓存头兜着，一张图整个会话只走这一次。
+                    BackgroundSource::Builtin(bytes) => bytes.to_vec(),
+                    BackgroundSource::Library(file) => match aurora.read_background(&file).await {
+                        Ok(bytes) => bytes,
+                        // 越界文件名与「图被手动删了」都落这里，对 WebView 一律 404。
+                        Err(err) => {
+                            tracing::warn!(%file, error = %err, "背景图读取失败");
+                            responder.respond(background_error(
+                                tauri::http::StatusCode::NOT_FOUND,
+                                err.to_string(),
+                            ));
+                            return;
+                        }
+                    },
+                };
+                let response = tauri::http::Response::builder()
+                    .header(tauri::http::header::CONTENT_TYPE, "image/jpeg")
+                    // 换图靠 URL 上的版本戳失效，内容本身按文件名不可变缓存。
+                    .header(
+                        tauri::http::header::CACHE_CONTROL,
+                        "max-age=31536000, immutable",
+                    )
+                    .body(bytes)
+                    .expect("图片响应必定可构造");
+                responder.respond(response);
             });
         })
         .setup(|app| {
@@ -2018,6 +2087,7 @@ pub fn run() {
             list_ledger,
             get_appearance,
             list_backgrounds,
+            list_builtin_backgrounds,
             import_background,
             set_background,
             remove_background,
@@ -2065,39 +2135,48 @@ mod tests {
         );
     }
 
+    /// 图库来源的简写，让下面的断言只盯路径解析本身。
+    fn library(file: &str) -> Option<BackgroundSource> {
+        Some(BackgroundSource::Library(file.to_owned()))
+    }
+
     #[test]
     fn current_path_resolves_to_configured_background() {
         assert_eq!(
-            background_file_for(BACKGROUND_CURRENT_PATH, Some("雪山.jpg".to_owned())),
-            Some("雪山.jpg".to_owned())
+            background_source_for(BACKGROUND_CURRENT_PATH, Some("雪山.jpg".to_owned())),
+            library("雪山.jpg")
         );
         // 没设背景时 /current 无解，协议据此回 404 而不是去读一个空文件名。
-        assert_eq!(background_file_for(BACKGROUND_CURRENT_PATH, None), None);
+        assert_eq!(background_source_for(BACKGROUND_CURRENT_PATH, None), None);
     }
 
     #[test]
     fn library_path_percent_decodes_filename() {
         // WebView 发出的中文与空格都是 percent-encoded 的，不解码就读不到文件。
         assert_eq!(
-            background_file_for("/library/%E9%9B%AA%E5%B1%B1.jpg", None),
-            Some("雪山.jpg".to_owned())
+            background_source_for("/library/%E9%9B%AA%E5%B1%B1.jpg", None),
+            library("雪山.jpg")
         );
         assert_eq!(
-            background_file_for("/library/my%20photo.jpg", None),
-            Some("my photo.jpg".to_owned())
+            background_source_for("/library/my%20photo.jpg", None),
+            library("my photo.jpg")
         );
         // 未编码的普通名字照样能过。
         assert_eq!(
-            background_file_for("/library/plain.jpg", None),
-            Some("plain.jpg".to_owned())
+            background_source_for("/library/plain.jpg", None),
+            library("plain.jpg")
         );
     }
 
     #[test]
     fn unknown_paths_have_no_file() {
-        // 图库前缀之外的路径一概无解；越界判定仍由门面的 read_background 兜底。
-        for path in ["/", "/library", "/other/x.jpg", "/currentx"] {
-            assert_eq!(background_file_for(path, Some("雪山.jpg".to_owned())), None, "{path}");
+        // 三个前缀之外的路径一概无解；越界判定仍由门面的 read_background 兜底。
+        for path in ["/", "/library", "/other/x.jpg", "/currentx", "/builtin"] {
+            assert_eq!(
+                background_source_for(path, Some("雪山.jpg".to_owned())),
+                None,
+                "{path}"
+            );
         }
     }
 
@@ -2106,8 +2185,65 @@ mod tests {
         // 这里只还原字符串，不做安全判断——解出 `../config.json` 是对的，
         // 挡下它是 read_background 的职责（见 aurora-core 的 resolve_in_library 测试）。
         assert_eq!(
-            background_file_for("/library/..%2Fconfig.json", None),
-            Some("../config.json".to_owned())
+            background_source_for("/library/..%2Fconfig.json", None),
+            library("../config.json")
         );
+    }
+
+    #[test]
+    fn builtin_path_serves_embedded_bytes() {
+        // 内置图不查配置也不碰磁盘：没设背景（current 为 None）时照样出得来，
+        // 这正是「没导入过壁纸也有默认背景」赖以成立的一条。
+        for id in ["master", "arena"] {
+            assert_eq!(
+                background_source_for(&format!("/builtin/{id}"), None),
+                Some(BackgroundSource::Builtin(
+                    builtin_background_bytes(id).expect("已登记的内置背景")
+                )),
+                "{id}"
+            );
+        }
+    }
+
+    /// 内置背景的 JSON 形态是前端的契约。
+    ///
+    /// 字段名或 plate 的嵌套一漂，前端读到的就是 undefined，而界面上只表现为
+    /// 「默认背景的字色不对」——不抛错、不白屏，没人会往序列化上想。
+    #[test]
+    fn builtin_background_serializes_with_snake_case_fields() {
+        let master = builtin_backgrounds()
+            .iter()
+            .find(|b| b.id == "master")
+            .expect("master 必在登记表里");
+        let json = serde_json::to_value(master).expect("序列化");
+        assert_eq!(json["id"], "master");
+        // tint 只验形态不钉色值：换张图它就变，而这里要守的是契约。
+        let tint = json["tint"].as_str().expect("tint 应为字符串");
+        assert!(tint.starts_with('#'), "tint 应为 #rrggbb，实际 {tint}");
+        assert!(json["plate"]["p10"].is_u64() && json["plate"]["p90"].is_u64());
+        // 多出字段同样算契约变更：DTO 里混进新东西时这条会挂，逼着同步前端类型。
+        assert_eq!(json.as_object().expect("应为对象").len(), 3);
+    }
+
+    #[test]
+    fn builtin_path_rejects_unknown_ids_and_traversal() {
+        // id 只在白名单里查，从不参与路径拼接。穿越构造在这条链路上不过是查不到的名字——
+        // 但仍要把它钉成用例：哪天有人图省事把 id 当文件名去拼路径，这里会先挂。
+        for path in [
+            "/builtin/../config.json",
+            "/builtin/..%2Fconfig.json",
+            "/builtin/%2E%2E%2F%2E%2E%2Fconfig.json",
+            "/builtin//etc/passwd",
+            "/builtin/master.jpg",
+            "/builtin/Master",
+            "/builtin/",
+            "/builtin/nope",
+        ] {
+            assert_eq!(
+                background_source_for(path, Some("雪山.jpg".to_owned())),
+                None,
+                "{path}"
+            );
+        }
     }
 }

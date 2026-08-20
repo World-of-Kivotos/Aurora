@@ -308,8 +308,8 @@ const DISCOVERABLE: { name: string; path: string }[] = [
   { name: "HMCL", path: "D:\\HMCL\\.minecraft" },
 ];
 
-// 外观：mock 内存态。默认给一张背景，好让浏览器里直接看到「图 + 纸片」那套版式；
-// 想看纯纸面的样子在设置页点「恢复纯纸面」即可。
+// 外观：mock 内存态。默认给一张自选壁纸，好让浏览器里直接看到「自选压过内置」那条优先级；
+// 想看内置默认背景（随侧栏选中的游戏换）在设置页点「恢复默认背景」即可。
 const BACKGROUNDS: {
   file: string;
   width: number;
@@ -343,6 +343,14 @@ const APPEARANCE: {
 function appearanceDto() {
   return { ...APPEARANCE };
 }
+
+// 内置背景（随二进制发行，一台游戏一张）。tint 与 plate 照抄 Rust 侧对这两张图的实测值——
+// 那两个数被 aurora-core 的单测钉死，抄过来浏览器预览才会落在与真机同一条裸字分支上。
+// 图片本体在浏览器里取不到，appearance.ts 会统一顶上占位图。
+const BUILTIN_BACKGROUNDS = [
+  { id: "master", tint: "#8c8192", plate: { p10: 2, p90: 57 } },
+  { id: "arena", tint: "#474471", plate: { p10: 2, p90: 41 } },
+];
 
 /** 与后端同口径的路径比较：Windows 不分大小写，且抹平斜杠与结尾分隔符。 */
 function samePath(a: string, b: string): boolean {
@@ -1009,6 +1017,9 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
   }
   if (cmd === "list_backgrounds") {
     return BACKGROUNDS.map((b) => ({ ...b, is_current: b.file === APPEARANCE.background })) as T;
+  }
+  if (cmd === "list_builtin_backgrounds") {
+    return BUILTIN_BACKGROUNDS as T;
   }
   if (cmd === "import_background") {
     // 真实实现会把图复制进图库并转码；mock 只按路径末段编一个条目。

@@ -1,5 +1,6 @@
-// 侧栏游戏列表的契约。六件事值得钉死，因为它们坏掉都不会报错、只会悄悄变成另一种产品：
-// 1) 未上线的游戏必须不可点——它一旦被写成 NavLink，点进去就是启动屏，用户以为 Arena 能玩了；
+// 侧栏游戏列表的契约。八件事值得钉死，因为它们坏掉都不会报错、只会悄悄变成另一种产品：
+// 1) 每一行游戏都必须是链接，且各去各的一屏——Arena 已放开，它那一屏的现状由它自己说；
+//    哪天有人把它退回成不可点的死行、或把两行指到同一条路由，侧栏就又变回「只有一台游戏」；
 // 2) 「World of Kivotos」是启动屏的唯一入口（原「主页」项已删），它若丢了当前态，
 //    侧栏就再没有任何地方指示"你正在这一屏"；
 // 3) 排版把名字切成了眉标 + 主名两截，无障碍名必须仍是完整的一句，否则读屏念出来是断的；
@@ -11,7 +12,9 @@
 //    没装就把入口挂出去，玩家点进去只会撞上一页空态。它的出现与隐藏都得由断言守住；
 // 7) 箭头与游戏行主体必须是两个并列的可点元素，不是「链接里套链接」——嵌套可点物是无效 HTML，
 //    点击归属由浏览器自行发挥，读屏也会把两个可及名读成一团。这类结构错误渲染出来完全看不出来，
-//    只有断言能拦住。
+//    只有断言能拦住；
+// 8) 那枚箭头只属于受管的那一台。Arena 没有实例、没有卷宗页，跟着长出一枚箭头就是把人送进一页
+//    与它无关的主服卷宗——而两行的箭头长得一模一样，肉眼分不出点错了。
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
@@ -20,6 +23,7 @@ import { Sidebar, SidebarView } from "./Sidebar";
 
 const WOK_FULL = "World of Kivotos";
 const ARENA_TITLE = "Kivotos : Arena";
+const ARENA_FULL = "World of " + ARENA_TITLE;
 
 function renderAt(pathname: string, onPhoto = false): string {
   return renderToStaticMarkup(
@@ -66,13 +70,33 @@ function expectNoNestedInteractive(block: string): void {
 }
 
 describe("Sidebar 游戏列表", () => {
-  it("未上线的 Arena 渲染成不可点的行, 不是链接", () => {
+  it("Arena 已放开: 渲染成指向 /arena 的可点行, 侧栏不再替它说状态", () => {
     const markup = renderAt("/");
+    const arenaAnchor = anchors(markup).find((anchor) =>
+      anchor.includes('aria-label="' + ARENA_FULL + '"'),
+    );
 
-    expect(markup).toContain(ARENA_TITLE);
-    expect(markup).toContain('aria-disabled="true"');
-    expect(anchors(markup).some((anchor) => anchor.includes(ARENA_TITLE))).toBe(false);
-    expect(markup).toContain("敬请期待");
+    expect(arenaAnchor).toBeDefined();
+    expect(arenaAnchor).toContain('href="/arena"');
+    expect(arenaAnchor).toContain(">" + ARENA_TITLE + "<");
+    // 两行必须各去各的一屏。指到同一条路由等于侧栏只有一台游戏, 而竖规还会不知道该落在哪一行。
+    expect(arenaAnchor).not.toContain('href="/"');
+
+    // 不可点那条分支已整个删除, 连 note 字段一起。留着一句静态的「敬请期待」就是侧栏替那一屏
+    // 说了它自己该说的话: 现状写在两处, 改一处忘一处就开始互相打架。
+    expect(markup).not.toContain('aria-disabled="true"');
+    expect(markup).not.toContain("敬请期待");
+  });
+
+  it("Arena 那一行不长管理箭头: 卷宗页只属于受管的那一台", () => {
+    // 实例已就位是箭头出现的前提, 所以这一档才是真正会漏的那一格。
+    const markup = renderView("/", true);
+
+    expect(markup).toContain('href="/arena"');
+    // 全侧栏只有一枚箭头, 且它的可及名点名了是哪一台游戏。
+    expect(markup.split('href="/instance"').length - 1).toBe(1);
+    expect(markup).toContain('aria-label="管理 ' + WOK_FULL + '"');
+    expect(markup).not.toContain('aria-label="管理 ' + ARENA_FULL + '"');
   });
 
   it("World of Kivotos 指向启动屏, 且已无独立的「主页」导航项", () => {
@@ -116,6 +140,23 @@ describe("Sidebar 游戏列表", () => {
     expect(downloadWokAnchor).not.toContain("font-extrabold");
   });
 
+  it("切到 Arena 那一屏时由它接过当前态, 竖规仍只有一道", () => {
+    const markup = renderAt("/arena");
+    const arenaAnchor = anchors(markup).find((anchor) =>
+      anchor.includes('aria-label="' + ARENA_FULL + '"'),
+    );
+    const wokAnchor = anchors(markup).find((anchor) =>
+      anchor.includes('aria-label="' + WOK_FULL + '"'),
+    );
+
+    expect(markup.split("bg-accent").length - 1).toBe(1);
+    expect(arenaAnchor).toContain("bg-accent");
+    expect(arenaAnchor).toContain("font-extrabold");
+    // 主服那行按 end 匹配, 两行同时读成「你在这」就等于没有当前态。
+    expect(wokAnchor).not.toContain("bg-accent");
+    expect(wokAnchor).not.toContain("font-extrabold");
+  });
+
   it("两个条目共享眉标但主名不同, 且不再有任何图标", () => {
     const markup = renderAt("/");
 
@@ -136,8 +177,8 @@ describe("Sidebar 卷宗页入口", () => {
     expect(markup).not.toContain(MANAGE_LABEL);
     expect(markup).not.toContain(">管理<");
     expect(markup).not.toContain('href="/instance"');
-    // 主体那一条链接照旧, 少掉的只有箭头。
-    expect(anchors(markup)).toHaveLength(4);
+    // 两条游戏行照旧, 少掉的只有箭头。
+    expect(anchors(markup)).toHaveLength(5);
     // 探测是异步的, 静态渲染那一帧还没有结果 —— 那一帧也必须是「没有入口」,
     // 否则入口会先冒出来再消失, 玩家正好点上就撞进空态。
     expect(renderAt("/")).not.toContain('href="/instance"');
@@ -178,8 +219,8 @@ describe("Sidebar 卷宗页入口", () => {
     expectNoNestedInteractive(mainBlock);
     expectNoNestedInteractive(arrowBlock);
 
-    // 并列的形态还得体现在数量上: 这一屏只该有主体、箭头, 外加账户/下载/设置三条导航。
-    expect(anchors(markup)).toHaveLength(5);
+    // 并列的形态还得体现在数量上: 这一屏只该有两条游戏行、一枚箭头, 外加账户/下载/设置三条导航。
+    expect(anchors(markup)).toHaveLength(6);
   });
 
   it("进了卷宗页由箭头接过当前态, 竖规仍只有一道", () => {
@@ -231,12 +272,12 @@ describe("Sidebar 材质与圆角", () => {
     expect(markup.split("bg-accent").length - 1).toBe(1);
   });
 
-  it("只有可点的那条游戏行走 .surface-liquid, 且静态首帧不写内联 backdrop-filter", () => {
+  it("只有游戏行走 .surface-liquid, 且静态首帧不写内联 backdrop-filter", () => {
     const markup = renderView("/", true);
 
-    // 白名单里侧栏只有「可点的游戏行」这一格; 未上线的 Arena 行不许跟着一起发材质 ——
-    // 未上线的东西不该比在售的更抢眼。出现两次就是它也被套上了。
-    expect(markup.split("surface-liquid").length - 1).toBe(1);
+    // 白名单里侧栏只有「游戏行」这一格, 一台游戏一行, 不多不少 ——
+    // 多出来就是账户/下载/设置那几条导航也被套上了材质, 那正是「一列文字读成一列按钮」的回退。
+    expect(markup.split("surface-liquid").length - 1).toBe(2);
 
     // 折射透镜写的是内联 backdrop-filter, 优先级压过 .surface-liquid, 也压过 app.css 末尾
     // 那段「减少透明度 / 提高对比度」的降级(它靠 backdrop-filter: none 把玻璃退成实心纸)。

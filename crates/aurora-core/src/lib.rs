@@ -50,7 +50,10 @@ pub mod updates;
 pub mod versions;
 
 // ---- 门面自身的公开类型 ----
-pub use background::{BACKGROUNDS_DIR, BackgroundEntry};
+pub use background::{
+    BACKGROUNDS_DIR, BackgroundEntry, BuiltinBackground, builtin_background_bytes,
+    builtin_backgrounds,
+};
 pub use compat::{Compatibility, InstanceMatch, classify};
 pub use config::{
     AppearanceSettings, AuroraConfig, BackgroundRef, ConfigStore, DownloadSourcePolicy, GlassMode,

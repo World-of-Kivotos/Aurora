@@ -29,6 +29,7 @@ const SETTLE_MS = 1200;
 
 const ROUTES = [
   { hash: "#/", name: "启动屏" },
+  { hash: "#/arena", name: "竞技场" },
   { hash: "#/account", name: "账户" },
   { hash: "#/download", name: "下载" },
   { hash: "#/instance", name: "卷宗" },

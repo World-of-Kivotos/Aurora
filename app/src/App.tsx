@@ -9,6 +9,7 @@ import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { FirstRunWizard } from "./components/FirstRunWizard";
 import { Home } from "./pages/Home";
+import { Arena } from "./pages/Arena";
 import { Account } from "./pages/Account";
 import { InstanceDetail } from "./pages/InstanceDetail";
 import { Download } from "./pages/Download";
@@ -51,6 +52,10 @@ export default function App() {
           <Routes>
             <Route element={<AppShell />}>
               <Route index element={<Home />} />
+              {/* 竞技场：与主服启动屏并列的第二台游戏，现在整屏只有一句 COMING SOON。
+                  它仍然要有自己的路由而不是把侧栏那行做成不可点：背景随选中的游戏切换，
+                  「切过去」这件事本身就是路由的事，没有路由就没有可切的落点。 */}
+              <Route path="arena" element={<Arena />} />
               <Route path="account" element={<Account />} />
               {/* 实例卷宗。Aurora 收敛成 World of Kivotos 专用启动器后全程只有一个实例，
                   它的 id 存在后端 config 的 selected_version 里，所以这条路由不带参数：

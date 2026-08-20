@@ -372,7 +372,8 @@ pub enum GlassMode {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearanceSettings {
-    /// 当前背景；`None` 表示纯纸面——不装背景的人看到的仍是原来那个极简启动屏。
+    /// 玩家自选的背景；`None` 表示没自选过，此时铺的是按当前游戏挑的内置背景
+    /// （见 background.rs 的 `builtin_backgrounds`），而不是空白纸面。
     pub background: Option<BackgroundRef>,
     /// 背景之上的纸色遮罩强度（百分比，0 到 [`MAX_BACKGROUND_VEIL`]）。
     ///

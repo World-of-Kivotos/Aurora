@@ -16,7 +16,7 @@
 //   没装壁纸时不挂（与标题栏同一条判据）：那一档纸色压在纯纸底上像素不变，白采一遍背景而已；
 //   导航行不挂材质：静息无底、悬停浮一层极淡的墨，当前项靠朱红竖规与字重表达，
 //   这样侧栏的点按手感与设置页、卷宗页里的可点行是同一种，而不是各调各的；
-//   唯一的例外是可点的那条游戏行——它是契约白名单里四处小件之一，走 .surface-liquid，
+//   唯一的例外是游戏行——它是契约白名单里四处小件之一，走 .surface-liquid，
 //   并在液态模式下再叠一层真折射透镜（LiquidGlass）。材质与透镜是两件事：纸色归材质类，
 //   圆角归 rounded-control，透镜只出折射，三者各管一段，谁都不越界。
 
@@ -45,20 +45,17 @@ interface GameDef {
    */
   eyebrow: string;
   title: string;
-  /** 缺省即尚未上线：渲染成不可点的行，而不是点进去看空页。 */
-  to?: string;
-  /** 未上线时的说明；已上线的游戏靠竖规与字重表达当前态，不另占一行。 */
-  note?: string;
+  /**
+   * 必填。列表里不再有「点不进去」的条目：一台游戏还没上线也有自己的一屏，
+   * 现状（未上线 / 内测 / 已停运）由那一屏自己说清，侧栏只负责把人送过去。
+   * 这样侧栏的每一行都是同一种东西，不必再分「能点的」与「只能看的」两套渲染。
+   */
+  to: string;
 }
 
 const GAMES: GameDef[] = [
   { id: "world-of-kivotos", eyebrow: "World of", title: "Kivotos", to: "/" },
-  {
-    id: "world-of-kivotos-arena",
-    eyebrow: "World of",
-    title: "Kivotos : Arena",
-    note: "敬请期待",
-  },
+  { id: "world-of-kivotos-arena", eyebrow: "World of", title: "Kivotos : Arena", to: "/arena" },
 ];
 
 /** 只有这一台游戏有卷宗页，「管理」行挂在它下面。 */
@@ -152,7 +149,7 @@ function GameEyebrow({ text }: { text: string }) {
   return <span className={`${CAPTION_TYPE} uppercase ${RESTING_INK}`}>{text}</span>;
 }
 
-/** 一台游戏的字组：眉标（弱）压主名（强），未上线的再补一行说明。 */
+/** 一台游戏的字组：眉标（弱）压主名（强）。 */
 function GameLockup({ game, active }: { game: GameDef; active: boolean }) {
   return (
     <span className="flex min-w-0 flex-col">
@@ -165,7 +162,6 @@ function GameLockup({ game, active }: { game: GameDef; active: boolean }) {
       >
         {game.title}
       </span>
-      {game.note && <span className={`mt-[7px] ${CAPTION_TYPE} ${RESTING_INK}`}>{game.note}</span>}
     </span>
   );
 }
@@ -242,7 +238,7 @@ const LENS_BEVEL = 12;
 const LENS_SATURATION = 200;
 
 /**
- * 游戏行。可点的那一台是一个行容器 + 两个并列的可点元素：主体进启动屏，右侧箭头进卷宗页。
+ * 游戏行。一个行容器裹住主体链接（进这台游戏自己的那一屏）；受管的那一台在右侧再并一枚箭头进卷宗页。
  *
  * 箭头不做成嵌在主体链接里的按钮：可点物套可点物是无效 HTML，浏览器的点击归属没有定论，
  * 读屏也会把两个可及名读成一团。并列是唯一能让「点哪块去哪」既确定又可及的结构。
@@ -263,16 +259,6 @@ function GameRow({
   manageable: boolean;
 }) {
   const lensAllowed = useSyncExternalStore(subscribeLensPreference, readLensPreference, lensOff);
-
-  // 未上线：整行不可点，也不给任何材质——一块带描边的底会读成「能按」，那正是这一行要否掉的误解。
-  // 灰度同样不往下压：层级差异一律靠字号与字重，「敬请期待」那行才是真正的状态线索。
-  if (!game.to) {
-    return (
-      <div aria-disabled="true" className="py-[10px] pr-3 pl-[16px]">
-        <GameLockup game={game} active={false} />
-      </div>
-    );
-  }
 
   // overflow-hidden 让两个内层可点物的悬停墨洗跟着行的圆角走；焦点环是 -outline-offset，画在内侧，不受裁切。
   const rowClass = "surface-liquid relative flex items-stretch overflow-hidden rounded-control";
