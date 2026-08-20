@@ -1,5 +1,5 @@
-// 启动控件：Start -> 竖线从右扫到左「钉住不动」-> 沿草书单笔路径按笔顺「慢慢手写」出 Aurora（进度跟真实启动）
-//  -> 进程起 + 停留 2s -> Stop（竖线扫回右）。点 Stop 竖线先左移手势再复位 Start。日志不在此显示（后台存）。
+// 启动控件：Start -> 竖线从右扫到左「钉住不动」-> 亮出 Loading -> 进程起 + 停留 2s -> Stop（竖线扫回右）。
+// 点 Stop 竖线先左移手势再复位 Start。日志不在此显示（后台存）。
 //
 // 这颗按钮是启动屏唯一的主操作位，所以它还兼「把游戏装上」的三种形态（install 属性）：
 //   absent  —— 游戏没装上，字样从 Start 换成 Download，点下去开装；
@@ -12,15 +12,14 @@
 // 一块纸压在图上无论做得多透，都还是在图里挖了一块出来——启动屏整版留给图，
 // 是字去适应它压着的那片图，而不是拿一块底把图盖住。进度条形态同样不准套玻璃或纸片。
 //
-// 手写用 SVG stroke-dashoffset 沿单线草书路径（scriptc，见 auroraPath.ts）描绘 = 一笔笔写出来。
-// 进度模型：竖线扫左(SWEEP) 后开始写；慢速爬升到 90%(CREEP)；进程未起则停在 90%（真实进度感）；
-// 进程起后补满 100%(FINAL)；写满停留 HOLD 再切 Stop。逐帧直接改 DOM，避免 React 重渲染。
+// 启动中的字样是 Loading，与 Start / Stop / Download / Retry 共用同一套块体字版位。
+// 时序仍按原来那条进度模型走（它决定 Stop 何时出现，不只是视觉）：竖线扫左(SWEEP)、
+// 慢速爬升到 90%(CREEP)、进程未起则停在 90%、进程起后补满 100%(FINAL)、停留 HOLD 再切 Stop。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { springs } from "../lib/motion";
 import type { ModpackSyncStage } from "../lib/modpack-ui";
-import { AURORA_H, AURORA_PATH, AURORA_VIEWBOX, AURORA_W } from "./auroraPath";
 
 export type LaunchPhase = "idle" | "launching" | "spawned";
 
@@ -84,8 +83,11 @@ const FINAL_MS = 460; // 进程起后 90%->100%
 const HOLD_MS = 2000; // 写满(进程起)后停留再切 Stop
 const STOP_GESTURE_MS = 440; // 点 Stop 竖线左移手势时长
 
-const H_PX = 46; // Aurora 渲染高度（与 Start 同量级，不放大）
-const W_PX = Math.round((H_PX * AURORA_W) / AURORA_H);
+// 字样盒宽。192 沿用自它取代的那幅草书 Aurora（同宽），Loading 正好合身：
+// 实测 46px extrabold 下 Loading 占 180px，右缘贴 TEXT_RIGHT=12，左缘落在 22px，
+// 与左侧竖线（0..4px）余隙 18px —— 与草书时期一模一样。Start 108 / Stop 103 /
+// Retry 120 更短，同盒即可。只有 Download（229）装不下，才另有 DOWNLOAD_W。
+const START_W = 192;
 const BAR_GAP = 22; // 竖线 + 左侧留白
 // 撤掉玻璃框之后不再需要内缩：内缩本来是为了让笔画避开 16px 圆角的斜切，
 // 没有框就没有圆角可避，留着只会平白把按钮撑宽一圈。
@@ -222,15 +224,10 @@ export function LaunchControl({
   install,
   onDark,
 }: LaunchControlProps) {
-  const pathRef = useRef<SVGPathElement>(null);
   const rafRef = useRef<number | null>(null);
   const tl = useRef({ start: 0, spawnedAt: 0, completeAt: 0, holdTimer: 0, lastP: 0 });
   const [showStop, setShowStop] = useState(false);
   const [stopping, setStopping] = useState(false);
-
-  const setDraw = useCallback((p: number) => {
-    if (pathRef.current) pathRef.current.style.strokeDashoffset = String(1 - p);
-  }, []);
 
   const stopRaf = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
@@ -250,7 +247,6 @@ export function LaunchControl({
       window.clearTimeout(tl.current.holdTimer);
       tl.current = { start: 0, spawnedAt: 0, completeAt: 0, holdTimer: 0, lastP: 0 };
       setShowStop(false);
-      setDraw(0); // 收笔隐藏
       return;
     }
     if (phase === "launching") {
@@ -259,6 +255,9 @@ export function LaunchControl({
     }
     if (rafRef.current !== null) return; // launching -> spawned 沿用同一条 rAF
 
+    // 字样换成静态的 Loading 之后，这条 rAF 不再画任何东西，但它不是遗留物：
+    // 下面算出的 p 是 Stop 何时出现的唯一依据（要等进程真起来、且补满 100% 再停 HOLD），
+    // 换成一串定时器只会把同一条时序拆散在几处。
     const frame = (now: number) => {
       const t = now - tl.current.start;
       let p: number;
@@ -275,14 +274,13 @@ export function LaunchControl({
         }
       }
       tl.current.lastP = p;
-      setDraw(p);
       if (p >= 0.999 && tl.current.holdTimer === 0) {
         tl.current.holdTimer = window.setTimeout(() => setShowStop(true), HOLD_MS);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
-  }, [phase, setDraw, stopRaf]);
+  }, [phase, stopRaf]);
 
   useEffect(
     () => () => {
@@ -341,7 +339,7 @@ export function LaunchControl({
               : "开始游戏"
       }
       style={{
-        width: (view === "download" ? DOWNLOAD_W : W_PX + BAR_GAP) + PAD * 2,
+        width: (view === "download" ? DOWNLOAD_W : START_W + BAR_GAP) + PAD * 2,
         height: 62,
       }}
       // 不套任何材质：这颗按钮是裸字直接压在照片上。一块纸压在图上无论做得多透，
@@ -361,29 +359,8 @@ export function LaunchControl({
       {/* Retry 与 Start 一样是五个字身，沿用 Start 的盒宽即可，不必再造一个宽度常量。 */}
       <BareWord text="Retry" visible={view === "retry"} onDark={onDark} />
 
-      {/* Aurora：草书单线，stroke-dashoffset 沿笔顺描出（实体笔迹） */}
-      <svg
-        aria-hidden
-        viewBox={AURORA_VIEWBOX}
-        width={W_PX}
-        height={H_PX}
-        className={`absolute top-1/2 -translate-y-1/2 text-accent transition-opacity duration-300 ${
-          view === "writing" ? "opacity-100" : "opacity-0"
-        }`}
-        style={{ right: PAD }}
-      >
-        <path
-          ref={pathRef}
-          d={AURORA_PATH}
-          pathLength={1}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{ strokeDasharray: 1, strokeDashoffset: 1 }}
-        />
-      </svg>
+      {/* 启动中。与其余四个字样同源，只是可见性由 writing 这一态决定。 */}
+      <BareWord text="Loading" visible={view === "writing"} onDark={onDark} />
 
       {/* 竖线：右(idle/Download/运行) <-> 左(写字/停止手势)，CSS 过渡平移 */}
       <span
