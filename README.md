@@ -56,6 +56,35 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+### 本地打包安装包
+
+```
+cd app
+pnpm tauri build --bundles nsis
+```
+
+产物落在 `target/release/bundle/nsis/`，一个 `.exe` 安装包加一个 `.sig` 更新签名。
+`--bundles nsis` 与流水线一致；不加这个参数会连 MSI 一起打，多拖一次 WiX 下载。
+
+打包要两个环境变量，本机已按用户级配好（新开的终端才读得到）：
+
+| 变量 | 值 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | `C:\Users\<你>\.tauri\aurora-local-dev.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 空串 |
+
+密码那条即便密钥没设密码也不能省：变量缺失时 Tauri 会打印
+`Decrypting updater signing key, expect a prompt for password` 然后停在交互提示上等输入，
+本机实测就这么挂到超时被杀。空串则被当作「未加密私钥」直接放行。
+
+`aurora-local-dev.key` **只是本地开发密钥，不是发布密钥**。它与 `tauri.conf.json` 里的
+`pubkey` 不是一对，Tauri 对此只给一句 Warn 就照常出包，产物看起来完全正常 ——
+含义是「没人能从旧版本自动更新到你这个本地包」。自测随便用，**绝不能当正式版分发**。
+（流水线把这句 Warn 当错误拦下，正是为了防止这种包流出去。）
+
+手上有发布私钥时，把 `TAURI_SIGNING_PRIVATE_KEY` 指向它即可，其余不用动。
+不想再让本地构建自动签名，删掉这两个用户环境变量就行。
+
 ## 界面自检脚本
 
 两个脚本管的是编译与单测都看不见的那类问题，改界面前后各跑一次。
