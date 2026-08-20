@@ -45,6 +45,16 @@ function renderView(pathname: string, instanceReady: boolean): string {
   );
 }
 
+/**
+ * 按「滑块 + 行本体共处的那层 relative 容器」把侧栏切成一行一段。
+ *
+ * 滑块现在是行的兄弟节点而不是子节点（放进去会被行的 overflow-hidden 把滑行过程裁掉），
+ * 所以「当前态在谁身上」不能再去 <a> 里面找 bg-accent，得看它落在哪一段。
+ */
+function rows(markup: string): string[] {
+  return markup.split('<div class="relative">').slice(1);
+}
+
 /** 取游戏列表里每个 <li> 的 HTML，顺序与 GAMES 一致（0 = Kivotos，1 = Arena）。 */
 function gameItems(markup: string): string[] {
   const list = markup.split('aria-label="游戏"')[1] ?? "";
@@ -137,17 +147,17 @@ describe("Sidebar 游戏列表", () => {
     const onHome = renderAt("/");
     const onDownload = renderAt("/download");
 
-    // 朱红竖规全局只有一道, 在启动屏时它属于游戏行。
+    // 朱红滑块全局只有一枚, 在启动屏时它属于游戏行。
     expect(onHome.split("bg-accent").length - 1).toBe(1);
-    const homeWokAnchor = anchors(onHome).find((anchor) => anchor.includes('aria-label="' + WOK_FULL + '"'));
-    expect(homeWokAnchor).toContain("bg-accent");
-    expect(homeWokAnchor).toContain("font-extrabold");
+    const homeWokRow = rows(onHome).find((row) => row.includes('aria-label="' + WOK_FULL + '"'));
+    expect(homeWokRow).toContain("bg-accent");
+    expect(homeWokRow).toContain("font-extrabold");
 
-    // 换页后竖规仍只有一道, 但已不在游戏行里。
+    // 换页后滑块仍只有一枚, 但已不在游戏行里。
     expect(onDownload.split("bg-accent").length - 1).toBe(1);
-    const downloadWokAnchor = anchors(onDownload).find((anchor) => anchor.includes('aria-label="' + WOK_FULL + '"'));
-    expect(downloadWokAnchor).not.toContain("bg-accent");
-    expect(downloadWokAnchor).not.toContain("font-extrabold");
+    const downloadWokRow = rows(onDownload).find((row) => row.includes('aria-label="' + WOK_FULL + '"'));
+    expect(downloadWokRow).not.toContain("bg-accent");
+    expect(downloadWokRow).not.toContain("font-extrabold");
   });
 
   it("切到 Arena 那一屏时由它接过当前态, 竖规仍只有一道", () => {
@@ -159,12 +169,18 @@ describe("Sidebar 游戏列表", () => {
       anchor.includes('aria-label="' + WOK_FULL + '"'),
     );
 
+    expect(arenaAnchor).toBeDefined();
+    expect(wokAnchor).toBeDefined();
+
+    const arenaRow = rows(markup).find((row) => row.includes('aria-label="' + ARENA_FULL + '"'));
+    const wokRow = rows(markup).find((row) => row.includes('aria-label="' + WOK_FULL + '"'));
+
     expect(markup.split("bg-accent").length - 1).toBe(1);
-    expect(arenaAnchor).toContain("bg-accent");
-    expect(arenaAnchor).toContain("font-extrabold");
+    expect(arenaRow).toContain("bg-accent");
+    expect(arenaRow).toContain("font-extrabold");
     // 主服那行按 end 匹配, 两行同时读成「你在这」就等于没有当前态。
-    expect(wokAnchor).not.toContain("bg-accent");
-    expect(wokAnchor).not.toContain("font-extrabold");
+    expect(wokRow).not.toContain("bg-accent");
+    expect(wokRow).not.toContain("font-extrabold");
   });
 
   it("两个条目共享眉标但主名不同, 且不再有任何图标", () => {
@@ -207,9 +223,9 @@ describe("Sidebar 卷宗页入口", () => {
     expect(manageAnchor).not.toContain("surface-control");
     expect(manageAnchor).toContain("hover:bg-ink/6");
     expect(manageAnchor).toContain("focus-visible:outline-accent");
-    // 仍在启动屏, 当前态属于游戏行, 竖规全局只有一道。
+    // 仍在启动屏, 当前态属于游戏行, 滑块全局只有一枚。
     expect(markup.split("bg-accent").length - 1).toBe(1);
-    expect(anchors(markup).find((a) => a.includes('aria-label="' + WOK_FULL + '"'))).toContain(
+    expect(rows(markup).find((row) => row.includes('aria-label="' + WOK_FULL + '"'))).toContain(
       "bg-accent",
     );
   });
@@ -233,17 +249,22 @@ describe("Sidebar 卷宗页入口", () => {
     expect(anchors(markup)).toHaveLength(6);
   });
 
-  it("进了卷宗页由箭头接过当前态, 竖规仍只有一道", () => {
+  it("进了卷宗页, 当前态留在这台游戏那一行, 滑块仍只有一枚", () => {
     const markup = renderView("/instance", true);
-    const manageAnchor = anchors(markup).find((anchor) => anchor.includes(MANAGE_LABEL));
-    const wokAnchor = anchors(markup).find((anchor) =>
-      anchor.includes('aria-label="' + WOK_FULL + '"'),
-    );
+    const wokRow = rows(markup).find((row) => row.includes('aria-label="' + WOK_FULL + '"'));
+    const arenaRow = rows(markup).find((row) => row.includes('aria-label="' + ARENA_FULL + '"'));
 
     expect(markup.split("bg-accent").length - 1).toBe(1);
-    expect(manageAnchor).toContain("bg-accent");
-    // 游戏行按 end 匹配, 到了子页面就该把当前态交出去, 否则两行会同时读成「你在这」。
-    expect(wokAnchor).not.toContain("bg-accent");
+    // 卷宗页讲的就是这一台游戏 —— 它是这一行右侧那枚箭头通向的地方。所以当前态留在整行上,
+    // 而不是让滑块单独跑到箭头那一格、把这一行读成「没选中」。
+    // 这也保证了滑块与玻璃底永远同进同退: 两者都由这一个 active 决定, 不会各判各的。
+    expect(wokRow).toContain("bg-accent");
+    expect(wokRow).toContain("surface-liquid");
+    // 另一台游戏不许跟着一起亮。
+    expect(arenaRow).not.toContain("bg-accent");
+    expect(arenaRow).not.toContain("surface-liquid");
+    // 箭头自己仍要显出被选中(满墨), 否则玩家看不出当前正停在卷宗页。
+    expect(anchorBlock(markup, MANAGE_LABEL)).toContain("text-ink");
   });
 
   it("导航区只剩账户与下载, 「版本」已随多实例模型撤销", () => {

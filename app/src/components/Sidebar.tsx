@@ -97,59 +97,59 @@ const RESTING_INK = "text-ink/75";
 const ROW_INTERACTION =
   "transition-colors hover:bg-ink/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
 
-/**
- * 独立成行的可点物：交互反馈之外还要自己承担圆角与裁切。游戏行的这两样由外层的行容器统一给。
- *
- * overflow-hidden 是给竖规用的：它满高 4px，不裁就会在圆角处支出两个直角，
- * 而同一道规靠 layoutId 在导航行与游戏行之间滑动，两边的形状必须一致。
- * 焦点环走 -outline-offset 画在内侧，不受这层裁切影响。
- */
-const ROW_BASE = `overflow-hidden rounded-control ${ROW_INTERACTION}`;
+/** 独立成行的可点物：交互反馈之外还要自己承担圆角。游戏行的圆角由外层的行容器统一给。 */
+const ROW_BASE = `rounded-control ${ROW_INTERACTION}`;
 
 /** 眉标 / 附属行的字号档：10px + 0.22em 字距，全站小标签共用这一档（同 Home 右上角的「状态」）。 */
 const CAPTION_TYPE = "text-[10px] leading-none font-bold tracking-[0.22em]";
 
 function NavRow({ to, label, end }: NavDef) {
+  // 判据与 NavLink 的 isActive 逐字对齐（同一个 to、同一个 end），只是把结论提到链接外面来用——
+  // 滑块现在是链接的兄弟节点而不是子节点，拿不到 render prop 里那个 isActive。
+  const active = useMatch({ path: to, end: end ?? false }) !== null;
   return (
-    <NavLink
-      to={to}
-      end={end}
-      className={`group relative flex items-center py-[10px] pr-3 pl-[16px] ${ROW_BASE}`}
-    >
-      {({ isActive }) => (
-        <>
-          {isActive && <ActiveRule />}
-          <span
-            className={[
-              "text-[15px] tracking-[0.02em] transition-colors",
-              isActive
-                ? "font-extrabold text-ink"
-                : `font-semibold group-hover:text-ink ${RESTING_INK}`,
-            ].join(" ")}
-          >
-            {label}
-          </span>
-        </>
-      )}
-    </NavLink>
+    <div className="relative">
+      {active && <ActiveRule />}
+      <NavLink
+        to={to}
+        end={end}
+        className={`group flex items-center py-[10px] pr-3 pl-[16px] ${ROW_BASE}`}
+      >
+        <span
+          className={[
+            "text-[15px] tracking-[0.02em] transition-colors",
+            active
+              ? "font-extrabold text-ink"
+              : `font-semibold group-hover:text-ink ${RESTING_INK}`,
+          ].join(" ")}
+        >
+          {label}
+        </span>
+      </NavLink>
+    </div>
   );
 }
 
 /**
- * 竖规。全站只有一道，靠 layoutId 在当前项之间平滑滑动。
+ * 当前项滑块。全站只有一枚，靠 layoutId 在各项之间真的滑过去。
  *
- * 满高 4px，两端由行自己的 rounded-control + overflow-hidden 裁成圆角的形状，
- * 不再上下内缩。原先内缩 8px 的理由是「贴着上下缘会与相邻行的规连成一条通天柱」——
- * 那是竖规当时唯一的活儿；现在选中行同时还有玻璃底与字重在表达选中，
- * 竖规的职责变成给这一行封一道厚实的左边，内缩反而让它读起来像一小截悬空的短线。
- * 相邻行不会连成柱：一次只有一行是选中的。
+ * 形态取 Windows 11 导航栏那一路：短、全圆角、离左缘留一点缝，而不是贴边的一整条竖线。
+ * 定高 24px 而非按行高取百分比：导航行 40px、游戏行 56px，按比例取会让滑块在两类行之间
+ * 一边滑一边变形，读起来是「另一块东西长出来了」而不是「同一块滑过去了」。
+ *
+ * 居中刻意用 top 的 calc 而不是 -translate-y-1/2：layout 动画本身就是在写 transform，
+ * 再叠一个静态的 translate 会被它整个覆盖掉，滑块会在动画期间垂直错位半个身位。
+ *
+ * 它必须是行的兄弟节点而不是子节点：动画途中滑块要渲染到目标行的盒子之外，
+ * 而游戏行为了让内层悬停墨洗跟着圆角走带着 overflow-hidden —— 放进去就等于把滑行过程整个裁掉，
+ * 看到的只会是「在 A 消失、在 B 出现」。
  */
 function ActiveRule() {
   return (
     <motion.span
       layoutId="nav-rule"
       transition={springs.soft}
-      className="absolute inset-y-0 left-0 w-[4px] bg-accent"
+      className="absolute top-[calc(50%-12px)] left-[4px] z-10 h-6 w-[3px] rounded-full bg-accent"
     />
   );
 }
@@ -277,10 +277,14 @@ function GameRow({
   manageable: boolean;
 }) {
   const lensAllowed = useSyncExternalStore(subscribeLensPreference, readLensPreference, lensOff);
-  const active = useMatch(game.to) !== null;
+  // 卷宗页算这台游戏的当前态：它是这一行右侧那枚箭头通向的地方，讲的就是这一台游戏。
+  // 两个 useMatch 都无条件调用（hook 不能写在条件里），是否采信 instance 那条由 manageable 决定。
+  const onGameScreen = useMatch(game.to) !== null;
+  const onInstancePage = useMatch("/instance") !== null;
+  const active = onGameScreen || (manageable && onInstancePage);
 
-  // overflow-hidden 让竖规与两个内层可点物的悬停墨洗都跟着行的圆角走；
-  // 焦点环是 -outline-offset，画在内侧，不受裁切。
+  // overflow-hidden 让两个内层可点物的悬停墨洗跟着行的圆角走；
+  // 焦点环是 -outline-offset，画在内侧，不受裁切。滑块不在这层里面，见 ActiveRule。
   const rowClass = [
     "relative flex items-stretch overflow-hidden rounded-control",
     active ? "surface-liquid" : "",
@@ -295,32 +299,20 @@ function GameRow({
         end
         // 排版把名字切成了两截, 无障碍名得把它拼回完整的一句, 否则读屏念出来是断的。
         aria-label={fullName(game)}
-        className={`group relative flex min-w-0 flex-1 items-center py-[10px] pr-2 pl-[16px] ${ROW_INTERACTION}`}
+        className={`group flex min-w-0 flex-1 items-center py-[10px] pr-2 pl-[16px] ${ROW_INTERACTION}`}
       >
-        {({ isActive }) => (
-          <>
-            {isActive && <ActiveRule />}
-            <GameLockup game={game} active={isActive} />
-          </>
-        )}
+        <GameLockup game={game} active={active} />
       </NavLink>
       {manageable && (
         <NavLink
           to="/instance"
           // 光秃秃一枚箭头没有可及名。说清它去哪，且带上是哪台游戏——侧栏以后不止一行。
           aria-label={`管理 ${fullName(game)}`}
-          // 刻意不设 relative：竖规要落在整行的左缘而不是箭头自己的左缘，
-          // 让它的 absolute 一路解析到行容器上，那道规才与主体激活时严丝合缝地重合。
           className={`group flex w-[34px] shrink-0 items-center justify-center ${ROW_INTERACTION}`}
         >
-          {({ isActive }) => (
-            <>
-              {isActive && <ActiveRule />}
-              <ChevronRightGlyph
-                className={`transition-colors ${isActive ? "text-ink" : `group-hover:text-ink ${RESTING_INK}`}`}
-              />
-            </>
-          )}
+          <ChevronRightGlyph
+            className={`transition-colors ${onInstancePage ? "text-ink" : `group-hover:text-ink ${RESTING_INK}`}`}
+          />
         </NavLink>
       )}
     </>
@@ -329,18 +321,28 @@ function GameRow({
   // 静息行没有玻璃底，透镜自然也无从谈起——折射的是身下那块底，底都没有就只剩白烧采样。
   // 没装壁纸时同样不上透镜：backdrop 采的是一张纯色，位移一张纯色的结果还是同一个颜色。
   // 与侧栏本体「有图才挂外壳材质」是同一条判据。
-  if (!active || !lensAllowed || !onPhoto) return <div className={rowClass}>{body}</div>;
+  const row =
+    !active || !lensAllowed || !onPhoto ? (
+      <div className={rowClass}>{body}</div>
+    ) : (
+      <LiquidGlass
+        className={rowClass}
+        sheen={false}
+        strength={LENS_STRENGTH}
+        bevel={LENS_BEVEL}
+        saturation={LENS_SATURATION}
+      >
+        {body}
+      </LiquidGlass>
+    );
 
+  // 滑块与行并列，两者共处一个不裁切的定位容器：这是滑动动画能被看见的前提。
+  // 滑块与行并列，两者共处一个不裁切的定位容器：这是滑动动画能被看见的前提。
   return (
-    <LiquidGlass
-      className={rowClass}
-      sheen={false}
-      strength={LENS_STRENGTH}
-      bevel={LENS_BEVEL}
-      saturation={LENS_SATURATION}
-    >
-      {body}
-    </LiquidGlass>
+    <div className="relative">
+      {active && <ActiveRule />}
+      {row}
+    </div>
   );
 }
 
