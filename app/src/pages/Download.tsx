@@ -37,7 +37,7 @@ import {
   SearchIcon,
   SunIcon,
 } from "../components/icons";
-import { pageItem, springs } from "../lib/motion";
+import { pageItem, springs, tabPanel } from "../lib/motion";
 import {
   getConfig,
   getVersionSettings,
@@ -1137,11 +1137,14 @@ export function Download() {
           </div>
         ) : (
           <AnimatePresence mode="wait" initial={false}>
+            {/* 变体标签而非对象字面量：此刻这里面还没有带 variants 的子元素，所以对象写法也看不出毛病，
+                但加进第一个就会永久透明（设置页已经这么中过一次），原委见 motion.ts 的 tabPanel。 */}
             <motion.div
               key={tab}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
+              variants={tabPanel}
+              initial="hidden"
+              animate="show"
+              exit="exit"
               transition={springs.tap}
               className="flex min-h-0 flex-1 flex-col"
             >

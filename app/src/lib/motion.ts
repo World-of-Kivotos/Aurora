@@ -28,3 +28,29 @@ export const pageItem: Variants = {
   hidden: { opacity: 0, y: 8 },
   show: { opacity: 1, y: 0, transition: springs.soft },
 };
+
+/**
+ * 页签正文的切换过渡：设置 / 下载 / 卷宗三页共用一份。
+ *
+ * 必须写成变体标签，不能写成 initial={{...}} animate={{...}} 的对象字面量——这不是风格问题，
+ * 写成对象会让内部所有带 variants 的子元素永久停在 hidden（表现为切一次页签整片正文变透明，
+ * 内容还在 DOM 里、滚动条也还在，就是看不见）。成因：
+ *
+ *   1. 带 variants 的子元素属于「等父级变体节点来编排」的继承子级，自己不主动播放；
+ *      唯一的例外是 framer-motion 的 manuallyAnimateOnMount，它取 Boolean(parent && parent.current)。
+ *   2. AnimatePresence 换 key 时，这块面板与它内部的子元素在同一次提交里挂载。子元素的
+ *      VisualElement 在 render 阶段就构造，那时面板的 DOM 还没落地，parent.current 是 null，
+ *      于是 manuallyAnimateOnMount 为 false，这条自救通道关闭。
+ *   3. 面板若不是变体节点，getClosestVariantNode 会越过它、把子元素挂到更上层那个变体节点上；
+ *      而上层只在页面挂载时编排过一次，此后不会因为换页签再编排一轮。编排永远不会到来。
+ *
+ * 首屏之所以正常，是 AnimatePresence 的 initial={false} 让子元素直接以 animate 态渲染，
+ * 绕过了整个编排链路——所以这个坑只在「切过一次页签」之后才现形，五道关一道也拦不住。
+ *
+ * 标签名必须与 pageItem 同名（hidden / show），子元素才接得住这次编排。
+ */
+export const tabPanel: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  show: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -4 },
+};

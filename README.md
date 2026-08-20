@@ -56,6 +56,20 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+## 界面自检脚本
+
+两个脚本管的是编译与单测都看不见的那类问题，改界面前后各跑一次。
+
+```
+node scripts/contrast-budget.mjs   # 玻璃材质上的文字对比度实算，改不透明度前必跑
+node scripts/page-smoke.mjs        # 逐页逐页签点一遍，抓「整块区域不可见」
+```
+
+`page-smoke.mjs` 需要 `npm run dev` 起着，它挂 CDP 驱动一个无头 Chromium 连上去。
+之所以要真跑浏览器：framer-motion 的变体编排有没有真的到达子元素，是运行时行为，
+tsc / vitest / vite build / clippy / cargo test 五道关全绿的同时，页面可以是整片透明的
+（设置页就这么发生过一次，见 `app/src/lib/motion.ts` 的 `tabPanel`）。
+
 ## 许可
 
 本项目开源,详见 [LICENSE](LICENSE)。

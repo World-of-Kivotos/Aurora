@@ -23,7 +23,7 @@ import {
 import { BackgroundPicker } from "../components/BackgroundPicker";
 import { useToast } from "../components/Toast";
 import { useMotionPref } from "../lib/motion-pref";
-import { pageItem, springs } from "../lib/motion";
+import { pageItem, springs, tabPanel } from "../lib/motion";
 import { checkUpdate, installUpdate, type UpdateStatus } from "../lib/updater";
 import {
   addGameDirectory,
@@ -641,11 +641,15 @@ export function Settings() {
           溢出原样传回外壳（那层是 overflow-clip，只会把底下的分区无声裁掉）。 */}
       <motion.div variants={pageItem} className="mt-7 min-h-0 flex-1 overflow-y-auto pr-1">
         <AnimatePresence mode="wait" initial={false}>
+          {/* 这块必须用变体标签而不是对象字面量，否则下面每个 Section 切一次页签就永久透明，
+              原委写在 motion.ts 的 tabPanel 上。本页是三个页签容器里唯一内部真有 variants 子元素的，
+              也就是唯一踩过这颗雷的。 */}
           <motion.div
             key={tab}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
+            variants={tabPanel}
+            initial="hidden"
+            animate="show"
+            exit="exit"
             transition={springs.tap}
           >
             {tab === "launcher" && (
