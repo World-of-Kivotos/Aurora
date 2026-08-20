@@ -70,20 +70,28 @@ pnpm tauri build --bundles nsis
 
 | 变量 | 值 |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` | `C:\Users\<你>\.tauri\aurora-local-dev.key` |
+| `TAURI_SIGNING_PRIVATE_KEY` | `C:\Users\<你>\.tauri\aurora-release.key` |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 空串 |
 
-密码那条即便密钥没设密码也不能省：变量缺失时 Tauri 会打印
+密码那条即便密钥没设密码也不能省：rsign 始终按「加密私钥」走解密流程，变量缺失时 Tauri 打印
 `Decrypting updater signing key, expect a prompt for password` 然后停在交互提示上等输入，
 本机实测就这么挂到超时被杀。空串则被当作「未加密私钥」直接放行。
 
-`aurora-local-dev.key` **只是本地开发密钥，不是发布密钥**。它与 `tauri.conf.json` 里的
-`pubkey` 不是一对，Tauri 对此只给一句 Warn 就照常出包，产物看起来完全正常 ——
-含义是「没人能从旧版本自动更新到你这个本地包」。自测随便用，**绝不能当正式版分发**。
-（流水线把这句 Warn 当错误拦下，正是为了防止这种包流出去。）
+用的就是发布密钥本身，与 `tauri.conf.json` 里的 `pubkey` 成对，所以本地产出的包与流水线产出的
+在签名上等价，不会出现那句 `does not match the public key` 的 Warn（Tauri 对不成对只警告不报错，
+包照出，装到用户那儿才在校验时失败 —— 流水线把这句 Warn 当错误拦下就是为了防这个）。
 
-手上有发布私钥时，把 `TAURI_SIGNING_PRIVATE_KEY` 指向它即可，其余不用动。
-不想再让本地构建自动签名，删掉这两个用户环境变量就行。
+### 更新签名密钥
+
+`aurora-release.key` 是**唯一**能给自更新包签名的东西，它只存在于两个地方：本机 `~/.tauri/`，
+以及仓库 secret `PRIVATE_KEY`（只写不可读）。两处都丢就再也无法给**已装机的用户**推送更新 ——
+只能让所有人手动重装。请另外备份到密码管理器。
+
+2026-08-20 轮换过一次：原密钥本机已无副本，只剩在 secret 里读不出来，等于失去备份。
+当时一版都还没发过，换密钥的代价为零；发版之后再换，老用户就永远收不到更新了。
+换密钥的动作是「`tauri signer generate` 生成新对 -> `.pub` 文件内容原样填进 `pubkey` ->
+私钥内容更新到 secret `PRIVATE_KEY`」，三处必须同时改，改漏任何一处流水线都会在
+「构建 NSIS 安装包」那步失败。
 
 ## 界面自检脚本
 
