@@ -8,6 +8,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { nearestIndex } from "./Slider";
+// ?raw 拿源码本身。走 Vite 的 raw 导入而不是 node:fs：
+// 后者要给这个纯浏览器工程装一份 @types/node，为一条接线断言添一个依赖不划算。
+import sliderSource from "./Slider.tsx?raw";
 import { MemoryBar, gb } from "../pages/Settings";
 
 // 后端 slider_stops(32768) 的真实输出，与 aurora_launch::memory 的三段折线一致。
@@ -88,6 +91,31 @@ describe("MemoryBar", () => {
   it("整机内存为 0 这种脏数据不产生 NaN 宽度", () => {
     const zero = renderToStaticMarkup(<MemoryBar totalMb={0} othersMb={0} gameMb={4096} />);
     expect(zero).not.toContain("NaN");
+  });
+});
+
+describe("Slider 的提交时机", () => {
+  // 这一条守的是本组件最容易回退的一处: 把提交接回 React 的 onChange。
+  //
+  // React 在表单元素上的 onChange 底层绑的是原生 input, 每挪一格触发一次;
+  // 而内存滑块的提交会存盘并弹「已保存」, 接错了就是拖一次滑块糊满一屏提示(真发生过)。
+  // 静态渲染看不见事件绑定, 所以这里直接读源码断言接线 —— 不优雅, 但它拦得住,
+  // 而这个错误一旦回退, 类型、构建、渲染测试全都不会响。
+  const source = sliderSource;
+
+  it("提交走原生 change 监听器, 不走 React 的 onChange", () => {
+    expect(source).toContain('addEventListener("change"');
+    // onCommit 只该出现在类型定义、解构、注释与那个原生监听器里, 不能出现在 JSX 的事件属性上。
+    expect(source).not.toMatch(/onChange=\{[^}]*onCommit/);
+    expect(source).not.toMatch(/onInput=\{[^}]*onCommit/);
+  });
+
+  it("装上的监听器要拆干净, 否则换一次刻度表就多攒一个", () => {
+    expect(source).toContain('removeEventListener("change"');
+  });
+
+  it("受控输入仍带 onChange(给实时预览), 免得 React 报「有 value 没有 onChange」", () => {
+    expect(source).toMatch(/onChange=\{[^}]*onPreview/);
   });
 });
 

@@ -10,6 +10,8 @@
 // 外观复用 app.css 里既有的 .ink-range（壁纸遮罩那根滑条用的同一套），只额外加 .ink-range--filled
 // 把「已选到哪」画进轨道——全站只该有一种滑块，另造一套迟早会与它长得不一样。
 
+import { useEffect, useRef } from "react";
+
 interface SliderProps {
   /** 刻度表，严格递增。滑块位置是它的下标。 */
   stops: number[];
@@ -53,7 +55,37 @@ export function Slider({
   format,
   disabled,
 }: SliderProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // 原生监听器只挂一次, 但它要用到的东西每次渲染都可能变。放进 ref 里让监听器现取,
+  // 比把它们写进依赖、每次重新装卸一遍监听器省事也更稳。
+  const latest = useRef({ stops, onCommit });
+  useEffect(() => {
+    latest.current = { stops, onCommit };
+  });
+
+  /*
+   * 提交只认原生 change, 不能用 React 的 onChange。
+   *
+   * React 在表单元素上的 onChange 底层绑的是原生 input 事件, 每挪一格就触发一次 ——
+   * 接在这里等于拖一次滑块存一次盘、弹一次「已保存」。实测一次鼠标拖拽 input 14 次、
+   * 而原生 change 只有 1 次(抬起时); 键盘则是每次真实变值一次 change, 那正好是一次离散调节。
+   * 也就是说原生 change 的语义恰恰就是我们要的「调完了」, 只是 React 把这个名字占用了,
+   * 只能绕开合成事件直接挂到 DOM 上。
+   */
+  useEffect(() => {
+    const node = inputRef.current;
+    if (node === null) return;
+    const commit = () => {
+      const { stops: table, onCommit: fire } = latest.current;
+      const at = Number(node.value);
+      if (table[at] !== undefined) fire(table[at]);
+    };
+    node.addEventListener("change", commit);
+    return () => node.removeEventListener("change", commit);
+  }, []);
+
   // 空表画不出滑块。后端的 slider_stops 保证至少一格，这里只是不让组件在坏数据上崩掉。
+  // 判空放在所有 hook 之后：提前 return 会让下面的 hook 在某些渲染里被跳过，违反 hook 顺序。
   if (stops.length === 0) return null;
 
   const index = nearestIndex(stops, value);
@@ -75,8 +107,11 @@ export function Slider({
       // 原生 range 的 aria-valuenow 是下标（0..N），对听觉用户毫无意义，必须用 valuetext 盖掉。
       aria-valuetext={format(stops[index])}
       style={{ ["--aurora-slider-filled" as string]: `${filled * 100}%` }}
-      onInput={(event) => onPreview?.(stops[Number(event.currentTarget.value)])}
-      onChange={(event) => onCommit(stops[Number(event.currentTarget.value)])}
+      ref={inputRef}
+      // 这里的 onChange 是 React 那个「每挪一格都触发」的合成事件, 名字虽叫 change,
+      // 语义其实是 input, 正好拿来做实时预览。真正的提交在上面那个原生监听器里。
+      // 受控输入必须给 onChange, 否则 React 会警告「有 value 没有 onChange」。
+      onChange={(event) => onPreview?.(stops[Number(event.currentTarget.value)])}
     />
   );
 }

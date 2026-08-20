@@ -26,6 +26,14 @@ interface ToastApi {
 const ToastContext = createContext<ToastApi | null>(null);
 const AUTO_DISMISS_MS = 3500;
 
+/**
+ * 同时在场的提示条数上限。
+ *
+ * 取 3 是按最坏情形算的：一条两行的错误提示约 76px，加 10px 间距，三条 258px，
+ * 在最小窗口 960x720 里从 46px 起排到 304px，仍在上半屏之内，不会盖住下方的主内容。
+ */
+const MAX_VISIBLE = 3;
+
 /*
  * kind → 材质 + 文字档。三档刻意不同材质，理由各自独立：
  *
@@ -83,7 +91,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const toast = useCallback(
     (message: string, kind: ToastKind = "info") => {
       const id = ++seq.current;
-      setItems((list) => [...list, { id, message, kind }]);
+      // 同时在场的条数封顶, 超了就把最旧的挤掉。
+      //
+      // 这是兜底而不是主要手段: 真出过一次「拖内存滑块每挪一格存一次盘」的事故,
+      // 十几条「已保存」从上到下糊满整个右边, 底下的界面一点都看不见了。
+      // 那次的根因已在滑块那侧修掉(提交只认原生 change), 但提示这一层不该指望每个调用方都克制 ——
+      // 任何一处循环里误调一次 toast, 都不该有能力把窗口糊死。
+      setItems((list) => [...list, { id, message, kind }].slice(-MAX_VISIBLE));
       window.setTimeout(() => remove(id), AUTO_DISMISS_MS);
     },
     [remove],
@@ -93,7 +107,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={{ toast }}>
       {children}
       {createPortal(
-        <div className="pointer-events-none fixed right-5 bottom-5 z-[60] flex w-[min(92vw,360px)] flex-col items-stretch gap-2.5">
+        // 右上角。top-[46px] = 标题栏 38px + 8px 间隙 —— 顶到 top-5 会压住那三颗窗口按钮，
+        // 而关窗是任何时候都不该被一条提示挡住的操作。
+        // 从上往下堆：新的接在旧的下面，靠下的自然先消失，视线不必跟着整摞往上跳。
+        <div className="pointer-events-none fixed top-[46px] right-5 z-[60] flex w-[min(92vw,360px)] flex-col items-stretch gap-2.5">
           <AnimatePresence initial={false}>
             {items.map((t) => (
               <motion.div
