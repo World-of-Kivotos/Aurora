@@ -22,7 +22,7 @@ use aurora_core::{
     DetectSource, DeviceCodeResponse, DownloadSourcePolicy, GameSession, GlassMode, History,
     InstallPlan,
     InstalledMod, InstanceMatch, IsolationOverride, IsolationPolicy, JavaInstallation, JavaVersion,
-    LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemorySettings, ModLoader,
+    LaunchOptions, Ledger, LoaderChoice, LogLine, LogStream, MemoryAdvice, MemorySettings, ModLoader,
     ManagedModpackFile, ManagedModpackStatus, ModVersionInfo, ModpackInstallOutcome,
     ModpackSyncError, ModpackSyncOutcome, ModpackSyncProgress, NamedDirectory, Platform,
     ResolvedIsolation, ResourceType, RollbackCheck, SearchHit, SearchQuery, SortField,
@@ -664,6 +664,16 @@ async fn get_config(state: State<'_, RwLock<Aurora>>) -> Result<ConfigDto, Strin
         auto_download_java: config.auto_download_java,
         selected_version: config.selected_version.clone(),
     })
+}
+
+/// 内存态势：本机物理内存、其它程序占用、滑块刻度阶梯、自动分配此刻会给多少。
+///
+/// 设置页每次进入「游戏」那一页都会取一次。刻意不做成订阅推送：可用内存每秒都在动，
+/// 推上去只会让那根条抖个不停；玩家要的是「我现在拖到哪合适」，一张打开页面那一刻的快照就够。
+#[tauri::command]
+async fn memory_advice(state: State<'_, RwLock<Aurora>>) -> Result<MemoryAdvice, String> {
+    let aurora = state.read().await;
+    aurora.memory_advice().await.map_err(|e| e.to_string())
 }
 
 /// 扫描游戏目录下已安装的版本（含损坏版本单列）。
@@ -1977,6 +1987,7 @@ pub fn run() {
             launch_game,
             stop_game,
             detect_java,
+            memory_advice,
             install_java,
             update_config,
             set_game_directory,

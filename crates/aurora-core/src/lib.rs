@@ -63,7 +63,7 @@ pub use event::{CoreEvent, DownloadProgress, EventSink};
 pub use facade::Aurora;
 pub use history::{History, HistoryEvent, HistoryStore, RollbackCheck};
 pub use install::{InstallOutcome, LoaderChoice};
-pub use launch::LaunchOptions;
+pub use launch::{LaunchOptions, MemoryAdvice};
 pub use ledger::{Ledger, LedgerEntry, LedgerStore};
 pub use modpack::{
     KnownModpackVersions, ManagedModpackFile, ManagedModpackStatus, ModpackCacheSource,
@@ -86,7 +86,7 @@ pub use aurora_instance::{
 };
 pub use aurora_java::{DetectSource, InstalledRuntime, JavaInstallation, JavaVersion};
 pub use aurora_launch::{
-    CrashCategory, CrashDiagnosis, ExitReport, GameSession, LogLine, LogStream, analyze,
+    CrashCategory, CrashDiagnosis, ExitReport, GameSession, LogLine, LogStream, MemoryTier, analyze,
     detect_crash,
 };
 pub use aurora_modplatform::{

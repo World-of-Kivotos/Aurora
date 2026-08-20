@@ -28,7 +28,28 @@ export type SortField = "relevance" | "downloads" | "follows" | "newest" | "upda
 
 export interface MemorySettings {
   max_mb: number;
+  /**
+   * 最小堆 `-Xms`。设置界面不再暴露它（PCL2 同样不暴露），但字段保留：
+   * 老配置里写过的值继续生效，前端读到什么就原样写回什么，绝不在保存时把它抹成 null。
+   */
   min_mb: number | null;
+  /** 是否按本机可用内存自动分配最大堆。开启时 max_mb 不参与启动，但仍原样保留。 */
+  auto: boolean;
+}
+
+/** 内存档位。决定自动分配的上下限，由后端按「是否受管整合包 / 有没有加载器」判定。 */
+export type MemoryTier = "vanilla" | "modded" | "large_modpack";
+
+/** 画内存滑块所需的一整份事实，全部由后端算好，前端不自己推导任何一个数。 */
+export interface MemoryAdviceDto {
+  total_mb: number;
+  available_mb: number;
+  used_by_others_mb: number;
+  tier: MemoryTier;
+  /** 打开自动分配的话，此刻会给多少。 */
+  recommended_mb: number;
+  /** 滑块刻度阶梯，下标即滑块位置。折线由后端 slider_to_mb 生成，前端不重算。 */
+  stops: number[];
 }
 
 export interface ConfigDto {
@@ -311,6 +332,10 @@ export const detectJava = (): Promise<JavaInstallationDto[]> =>
 
 export const installJava = (requiredMajor: number): Promise<InstalledRuntimeDto> =>
   invoke<InstalledRuntimeDto>("install_java", { requiredMajor });
+
+/** 取一次内存态势快照。可用内存每秒都在动，取的是「打开设置页那一刻」，不做订阅推送。 */
+export const memoryAdvice = (): Promise<MemoryAdviceDto> =>
+  invoke<MemoryAdviceDto>("memory_advice");
 
 export interface ConfigPatch {
   downloadSource?: DownloadSourcePolicy;

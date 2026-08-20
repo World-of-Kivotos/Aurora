@@ -14,7 +14,8 @@ use aurora_java::{
 };
 use aurora_launch::{
     AuthValues, CheckStatus, CommandBuilder, GamePaths, GameSession, LaunchCommand, LogLine,
-    MemoryConfig, PreLaunchInput, precheck, spawn,
+    MemoryConfig, MemoryTier, PreLaunchInput, auto_allocate, precheck, probe_system_memory,
+    slider_stops, spawn,
 };
 use aurora_version::{RuntimeContext, VersionJson, resolve};
 use tokio::sync::mpsc;
@@ -167,7 +168,10 @@ impl Aurora {
 
         let pack_version = self.managed_pack_version_for_launch(version_id).await?;
         let effective_options = with_managed_pack_version(options, pack_version.as_deref());
-        let memory = self.memory_config(&effective_options);
+        // 档位判定复用 MemoryTier::resolve，与设置页显示「自动会给多少」的那处同一份实现：
+        // 两边各判一套的话，界面上写着 6G、真启动却按 4G 上限夹掉，谁也查不出来。
+        let tier = MemoryTier::resolve(pack_version.is_some(), target.has_mod_loader());
+        let memory = self.memory_config(&effective_options, tier);
         let mut command = assemble_command(
             &merged,
             &java_path,
@@ -264,14 +268,80 @@ impl Aurora {
     }
 
     /// 由启动选项与全局配置算出内存配置。
-    fn memory_config(&self, options: &LaunchOptions) -> MemoryConfig {
-        let max = options.max_memory_mb.unwrap_or(self.config().memory.max_mb);
+    ///
+    /// 三者优先级：本次启动选项 > 自动分配 > 配置里手写的 max_mb。
+    /// 自动分配读的是「此刻的可用物理内存」而不是总量——它的整条曲线就是按「给系统和其它进程留头绪」
+    /// 设计的（见 aurora_launch::memory），拿总量去算等于把别人正在用的内存也许给游戏。
+    /// 代价是同一台机器两次启动可能给出不同的数，但那正是「自动」的含义：
+    /// 挂着浏览器开游戏和干净开机开游戏，本来就不该分同样多。
+    fn memory_config(&self, options: &LaunchOptions, tier: MemoryTier) -> MemoryConfig {
+        let settings = self.config().memory;
+        let max = options.max_memory_mb.unwrap_or_else(|| {
+            if settings.auto {
+                // 一次 GlobalMemoryStatusEx 级别的读取，微秒量级，不值得 spawn_blocking。
+                auto_allocate(probe_system_memory().available_mb, tier)
+            } else {
+                settings.max_mb
+            }
+        });
         let mut config = MemoryConfig::fixed(max);
-        if let Some(min) = options.min_memory_mb.or(self.config().memory.min_mb) {
+        if let Some(min) = options.min_memory_mb.or(settings.min_mb) {
             config = config.with_min(min);
         }
         config
     }
+
+    /// 设置界面要画那根滑块所需的全部事实。
+    ///
+    /// 刻意与 [`Self::memory_config`] 同处一个 impl：两者必须对同一台机器给出同一个自动分配值，
+    /// 摆在一起才不会有人只改了一边。唯一允许的差异是「此刻的可用内存」——
+    /// 设置页读的是打开页面那一刻，启动读的是按下开始那一刻。
+    pub async fn memory_advice(&self) -> Result<MemoryAdvice> {
+        let system = probe_system_memory();
+        let tier = self.selected_memory_tier().await?;
+        Ok(MemoryAdvice {
+            total_mb: system.total_mb,
+            available_mb: system.available_mb,
+            used_by_others_mb: system.used_by_others_mb(),
+            tier,
+            recommended_mb: auto_allocate(system.available_mb, tier),
+            stops: slider_stops(system.total_mb),
+        })
+    }
+
+    /// 当前选中实例的内存档位。
+    ///
+    /// 两处「查不到」都不是错误，都按大型整合算，理由是同一个：Aurora 唯一会装的就是那个受管整合包。
+    /// 游戏还没装时按原版给建议，等装完数字又跳一次，只会让人以为哪里坏了。
+    async fn selected_memory_tier(&self) -> Result<MemoryTier> {
+        let Some(version_id) = self.config().selected_version.clone() else {
+            return Ok(MemoryTier::LargeModpack);
+        };
+        let scan = self.list_installed().await?;
+        let Some(target) = scan.versions.iter().find(|v| v.id == version_id) else {
+            return Ok(MemoryTier::LargeModpack);
+        };
+        // 只读本地那份订阅文件，不碰网络：设置页不该为了画一根滑块去等一次远端往返。
+        let is_managed = self.modpack_subscription(&version_id).await?.is_some();
+        Ok(MemoryTier::resolve(is_managed, target.has_mod_loader()))
+    }
+}
+
+/// 设置界面画内存滑块所需的一整份事实。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MemoryAdvice {
+    /// 物理内存总量（MB）。
+    pub total_mb: u32,
+    /// 此刻可用（MB）。
+    pub available_mb: u32,
+    /// 此刻被其它程序占用（MB）。
+    pub used_by_others_mb: u32,
+    /// 当前选中实例落在哪一档。
+    pub tier: MemoryTier,
+    /// 打开自动分配的话，此刻会给多少（MB）。
+    pub recommended_mb: u32,
+    /// 滑块刻度阶梯，下标即滑块位置。界面不自己算折线，见 [`aurora_launch::slider_stops`]。
+    pub stops: Vec<u32>,
 }
 
 /// 沿 `inheritsFrom` 链找到继承根版本 id（持有客户端 jar / natives 的版本）。
@@ -397,6 +467,79 @@ mod tests {
         // 环不应死循环；返回环上某个 id（不 panic 即可）。
         let base = resolve_base_id(&provider, "a");
         assert!(base == "a" || base == "b");
+    }
+
+    fn aurora_with_memory(memory: crate::config::MemorySettings) -> Aurora {
+        Aurora::for_test(
+            crate::config::AuroraConfig {
+                memory,
+                ..crate::config::AuroraConfig::default()
+            },
+            PathBuf::from("/data"),
+            PathBuf::from("/data/.minecraft"),
+        )
+    }
+
+    /// 关掉自动时，配置里手写的那个数必须原样上机。
+    #[test]
+    fn manual_memory_is_used_verbatim() {
+        let aurora = aurora_with_memory(crate::config::MemorySettings {
+            max_mb: 10240,
+            min_mb: Some(2048),
+            auto: false,
+        });
+        let memory = aurora.memory_config(&LaunchOptions::default(), MemoryTier::LargeModpack);
+        assert_eq!(memory.max_mb, 10240);
+        assert_eq!(memory.min_mb, Some(2048));
+    }
+
+    /// 打开自动时，配置里的 max_mb 不再参与，档位上限说了算。
+    ///
+    /// 断言不钉具体数值——它取决于跑测试这台机器此刻的可用内存。钉的是两件不依赖机器的事：
+    /// 一、10240 这个手写值确实被绕过了（自动值必然落在档位上限 8192 之内，不可能等于 10240）；
+    /// 二、结果落在该档位的 [下限, 上限] 里。把 auto 分支删掉，第一条立刻挂。
+    #[test]
+    fn auto_memory_overrides_manual_value_within_tier_bounds() {
+        let aurora = aurora_with_memory(crate::config::MemorySettings {
+            max_mb: 10240,
+            min_mb: None,
+            auto: true,
+        });
+        for tier in [
+            MemoryTier::Vanilla,
+            MemoryTier::Modded,
+            MemoryTier::LargeModpack,
+        ] {
+            let memory = aurora.memory_config(&LaunchOptions::default(), tier);
+            assert_ne!(memory.max_mb, 10240, "{tier:?} 档没有绕过手写值");
+            assert!(
+                (tier.min_mb()..=tier.cap_mb()).contains(&memory.max_mb),
+                "{tier:?} 档给出 {} MB，越出 [{}, {}]",
+                memory.max_mb,
+                tier.min_mb(),
+                tier.cap_mb()
+            );
+        }
+    }
+
+    /// 本次启动显式指定的内存压过一切，自动分配也得让路。
+    #[test]
+    fn explicit_launch_option_beats_auto() {
+        let aurora = aurora_with_memory(crate::config::MemorySettings {
+            max_mb: 4096,
+            min_mb: None,
+            auto: true,
+        });
+        let options = LaunchOptions {
+            max_memory_mb: Some(12288),
+            ..LaunchOptions::default()
+        };
+        assert_eq!(
+            aurora
+                .memory_config(&options, MemoryTier::LargeModpack)
+                .max_mb,
+            12288
+        );
     }
 
     #[test]

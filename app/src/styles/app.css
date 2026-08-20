@@ -478,6 +478,36 @@
 }
 
 /*
+ * 填充修饰：把「已选到哪」画进轨道本身。
+ *
+ * 为什么不叠一层 absolute 的填充条：那层与原生 thumb 是两套渲染路径，拖拽时会差一帧，
+ * 快速来回拖能看见钮跑在填充前面。画进 background 就与 thumb 同帧。
+ * 填充比例由组件写在 --aurora-slider-filled 上，默认 0% 保证这个类单独出现时不会画出脏东西。
+ *
+ * 只有需要表达「量」的滑条才加它：壁纸遮罩那根表达的是强度而非进度，保持原样的纯轨。
+ */
+.ink-range--filled {
+  --aurora-slider-filled: 0%;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) 0 var(--aurora-slider-filled),
+    color-mix(in srgb, var(--color-ink) 14%, transparent) var(--aurora-slider-filled) 100%
+  );
+}
+
+/* 自动分配开着时滑块不可拖。禁用态压到 40%，与 Toggle / Button 的 disabled 同一档。 */
+.ink-range:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.ink-range:disabled::-webkit-slider-thumb {
+  cursor: default;
+}
+.ink-range:disabled::-webkit-slider-thumb:hover {
+  transform: none;
+}
+
+/*
  * 自定义滚动条：杜绝原生外观。细窄悬浮药丸，纸墨低调，无轨道无箭头。
  * WebView2 = Chromium，用 ::-webkit-scrollbar 完全接管（故不设 scrollbar-width，避免它反而禁用 webkit 定制）。
  * border + background-clip:padding-box 做出“悬浮内缩”的药丸滑块。

@@ -326,10 +326,19 @@ impl SourceSpeedCache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemorySettings {
-    /// 最大堆 `-Xmx`（MB）。
+    /// 最大堆 `-Xmx`（MB）。`auto` 为真时这个值不参与启动，但仍原样保留——
+    /// 关掉自动就该回到用户上次亲手拖的那个数，而不是被自动算出来的数悄悄覆盖掉。
     pub max_mb: u32,
     /// 最小堆 `-Xms`（MB）；`None` 表示不显式设置。
+    ///
+    /// 设置界面不再暴露它（PCL2 同样不暴露，`-Xms` 对玩家几乎没有调节价值），
+    /// 但配置与启动路径一律保留：老配置里写过的值继续生效，启动选项也仍可显式覆盖。
     pub min_mb: Option<u32>,
+    /// 是否按本机可用内存自动分配最大堆。
+    ///
+    /// 默认关闭，且必须保持关闭：老配置里没有这个键，`#[serde(default)]` 会让它落到这里的默认值上，
+    /// 默认开就等于在一次升级里把所有老用户亲手设的内存数悄悄换掉。
+    pub auto: bool,
 }
 
 impl Default for MemorySettings {
@@ -338,6 +347,7 @@ impl Default for MemorySettings {
         Self {
             max_mb: 4096,
             min_mb: None,
+            auto: false,
         }
     }
 }
@@ -527,6 +537,7 @@ mod tests {
         assert_eq!(c.download_concurrency, 64);
         assert_eq!(c.memory.max_mb, 4096);
         assert!(c.memory.min_mb.is_none());
+        assert!(!c.memory.auto, "自动分配默认必须关闭");
         assert!(c.auto_download_java);
         assert_eq!(c.isolation_policy, IsolationPolicy::ModLoadersAndNonRelease);
     }
@@ -615,6 +626,7 @@ mod tests {
             memory: MemorySettings {
                 max_mb: 8192,
                 min_mb: Some(1024),
+                auto: true,
             },
             msa_client_id: Some("client-abc".to_owned()),
             ..AuroraConfig::default()
@@ -637,6 +649,24 @@ mod tests {
         assert_eq!(loaded.download_concurrency, 8);
         assert_eq!(loaded.download_source, DownloadSourcePolicy::Auto);
         assert_eq!(loaded.memory.max_mb, 4096);
+    }
+
+    /// 自动分配这个键是后加的，老 config.json 里没有它。
+    ///
+    /// 这条钉的是升级安全：老用户亲手设的 max_mb 必须原样保留，`auto` 必须落成 false。
+    /// 一旦有人把 `MemorySettings::default().auto` 改成 true，这台机器上所有老配置
+    /// 会在下次启动时被自动算出来的数顶掉，而且没有任何提示——所以它值一条独立断言。
+    #[tokio::test]
+    async fn config_without_auto_key_keeps_manual_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        tokio::fs::write(&path, br#"{"memory":{"max_mb":10240,"min_mb":2048}}"#)
+            .await
+            .unwrap();
+        let loaded = ConfigStore::at(&path).load().await.unwrap();
+        assert_eq!(loaded.memory.max_mb, 10240);
+        assert_eq!(loaded.memory.min_mb, Some(2048));
+        assert!(!loaded.memory.auto);
     }
 
     #[tokio::test]

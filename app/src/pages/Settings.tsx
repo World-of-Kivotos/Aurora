@@ -21,6 +21,7 @@ import {
   SparkleIcon,
 } from "../components/icons";
 import { BackgroundPicker } from "../components/BackgroundPicker";
+import { Slider } from "../components/Slider";
 import { useToast } from "../components/Toast";
 import { useMotionPref } from "../lib/motion-pref";
 import { pageItem, springs, tabPanel } from "../lib/motion";
@@ -37,6 +38,7 @@ import {
   setGlassMode,
   detectJava,
   installJava,
+  memoryAdvice,
   onCoreEvent,
   type ConfigDto,
   type ConfigPatch,
@@ -45,6 +47,9 @@ import {
   type IsolationPolicy,
   type JavaInstallationDto,
   type GlassMode,
+  type MemoryAdviceDto,
+  type MemorySettings,
+  type MemoryTier,
   type NamedDirectory,
 } from "../lib/ipc";
 import { useAppearance } from "../lib/appearance-context";
@@ -190,6 +195,77 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+const TIER_LABEL: Record<MemoryTier, string> = {
+  vanilla: "原版",
+  modded: "装 Mod",
+  large_modpack: "大型整合",
+};
+
+/** MB -> 「6.0 GB」。全站内存读数只经这一个函数，省得有的地方写 G 有的地方写 GB。 */
+export function gb(mb: number): string {
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+/**
+ * 内存占用条：其他程序 / 分配给游戏 / 空闲，三段拼满一整条。
+ *
+ * 这条是这一区真正在回答的问题——「我拖到 8G 到底占了这台机器多少」。
+ * 光给一个数字没有参照，玩家只能凭感觉猜；把它放进整机内存的比例里，多少算多就一眼看得见。
+ *
+ * 超额（分配量大于当前可用）不藏起来也不阻止：玩家有权把内存开到超过此刻可用量
+ * （关掉浏览器再开游戏是完全正常的用法），但必须让他知道自己正处在这个状态。
+ */
+export function MemoryBar({ totalMb, othersMb, gameMb }: { totalMb: number; othersMb: number; gameMb: number }) {
+  const availableMb = Math.max(0, totalMb - othersMb);
+  const overflow = gameMb > availableMb;
+  // 超额时游戏段占满剩余空间即可：画一条比容器还长的条只会把别的段挤没，反而看不出发生了什么。
+  const shownGameMb = Math.min(gameMb, availableMb);
+  const freeMb = Math.max(0, availableMb - shownGameMb);
+  const pct = (mb: number) => (totalMb === 0 ? 0 : (mb / totalMb) * 100);
+
+  return (
+    <div className="mt-4">
+      <div className="flex h-2.5 w-full overflow-hidden rounded-chip" role="presentation">
+        {/* 其他程序：中性墨块，不参与语义，只是「这块不归你」。 */}
+        <div className="bg-ink/25" style={{ width: `${pct(othersMb)}%` }} />
+        {/* 游戏：唯一强调色。超额时转危险色，与下面那行提示同源。 */}
+        <div
+          className={overflow ? "bg-danger" : "bg-accent"}
+          style={{ width: `${pct(shownGameMb)}%` }}
+        />
+        {/* 空闲：下沉档的墨洗，比「其他程序」浅一档，读起来才是「空的」。 */}
+        <div className="flex-1 bg-ink/8" />
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] text-ink/75">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-ink/25" aria-hidden="true" />
+          其他程序 {gb(othersMb)}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${overflow ? "bg-danger" : "bg-accent"}`}
+            aria-hidden="true"
+          />
+          分配给游戏 {gb(gameMb)}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-ink/8" aria-hidden="true" />
+          空闲 {gb(freeMb)}
+        </span>
+        <span className="ml-auto tabular-nums">共 {gb(totalMb)}</span>
+      </div>
+
+      {overflow && (
+        <p className="mt-2 text-[12px] leading-relaxed text-danger">
+          分配量已超过此刻可用的 {gb(availableMb)}。游戏仍会启动，但系统需要靠虚拟内存补差额，
+          表现是卡顿而不是报错。先关掉别的程序，或把这里调低。
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * 设置行：左侧标题+说明，右侧控件槽（定宽）。
  *
@@ -234,12 +310,17 @@ export function Settings() {
 
   // 数字/文本输入的本地镜像（仅在载入时同步，避免打字被服务端值覆盖）。
   const [concurrencyInput, setConcurrencyInput] = useState("");
-  const [maxMemInput, setMaxMemInput] = useState("");
-  const [minMemInput, setMinMemInput] = useState("");
   const [gameDirInput, setGameDirInput] = useState("");
   const [clientIdInput, setClientIdInput] = useState("");
   const [savingGameDir, setSavingGameDir] = useState(false);
   const [savingClientId, setSavingClientId] = useState(false);
+
+  // ---- 内存态势 ----
+  // 可用内存每秒都在动，这里存的是「进这一页那一刻」的快照。拖拽中的值单独存 memoryDrag：
+  // 直接改 config 会每动一格发一次 IPC，滑块也会因为乐观更新的往返而在手指底下跳。
+  const [advice, setAdvice] = useState<MemoryAdviceDto | null>(null);
+  const [adviceError, setAdviceError] = useState<string | null>(null);
+  const [memoryDrag, setMemoryDrag] = useState<number | null>(null);
 
   // ---- Java 区 ----
   const [javas, setJavas] = useState<JavaInstallationDto[] | null>(null);
@@ -258,8 +339,6 @@ export function Settings() {
       const c = await getConfig();
       setConfig(c);
       setConcurrencyInput(String(c.download_concurrency));
-      setMaxMemInput(String(c.memory.max_mb));
-      setMinMemInput(c.memory.min_mb === null ? "" : String(c.memory.min_mb));
       setGameDirInput(c.game_dir);
     } catch (e) {
       if (silent) toast(String(e), "error");
@@ -340,37 +419,16 @@ export function Settings() {
     void save({ downloadConcurrency: n }, (c) => ({ ...c, download_concurrency: n }));
   };
 
-  const commitMemory = () => {
+  /**
+   * 内存设置的局部更新：只改传进来的那几个键，其余原样带走。
+   *
+   * 必须整份带走而不是只发改动的键——update_config 收的是整个 MemorySettings，
+   * 只发 { max_mb } 会让 min_mb 被反序列化成默认值，把老配置里的 -Xms 悄悄抹掉。
+   */
+  const saveMemory = async (patch: Partial<MemorySettings>) => {
     if (!config) return;
-    const max = Number.parseInt(maxMemInput, 10);
-    const revert = () => {
-      setMaxMemInput(String(config.memory.max_mb));
-      setMinMemInput(config.memory.min_mb === null ? "" : String(config.memory.min_mb));
-    };
-    if (!Number.isInteger(max) || max < 1) {
-      toast("最大内存需为不小于 1 的整数（MB）", "error");
-      revert();
-      return;
-    }
-    const minTrim = minMemInput.trim();
-    let min: number | null = null;
-    if (minTrim !== "") {
-      const m = Number.parseInt(minTrim, 10);
-      if (!Number.isInteger(m) || m < 0) {
-        toast("最小内存需为非负整数（MB）或留空", "error");
-        revert();
-        return;
-      }
-      min = m;
-    }
-    if (min !== null && min > max) {
-      toast("最小内存不能大于最大内存", "error");
-      revert();
-      return;
-    }
-    if (max === config.memory.max_mb && min === config.memory.min_mb) return;
-    const memory = { max_mb: max, min_mb: min };
-    void save({ memory }, (c) => ({ ...c, memory }));
+    const memory: MemorySettings = { ...config.memory, ...patch };
+    await save({ memory }, (c) => ({ ...c, memory }));
   };
 
   const applyGameDir = async () => {
@@ -410,6 +468,27 @@ export function Settings() {
   useEffect(() => {
     void loadDirs();
   }, [loadDirs]);
+
+  // 内存态势按「进这一页」重取：可用内存随时在变，切回来还显示十分钟前的占用只会误导。
+  // 依赖里带 tab，是因为设置页切页签不重挂载组件，只靠 mount 那一次会永远停在第一次的读数。
+  useEffect(() => {
+    if (tab !== "game") return;
+    let alive = true;
+    memoryAdvice()
+      .then((next) => {
+        if (!alive) return;
+        setAdvice(next);
+        setAdviceError(null);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setAdviceError(String(e));
+      });
+    // 切走时把结果丢掉：慢响应回来时这一页可能已经不在了，写进 state 只会触发无意义的重渲染。
+    return () => {
+      alive = false;
+    };
+  }, [tab]);
 
   const adoptDir = async (name: string, path: string) => {
     setDirsBusy(true);
@@ -540,6 +619,15 @@ export function Settings() {
   };
 
   const activeTab = TABS.find((t) => t.key === tab)!;
+
+  /**
+   * 此刻该显示成多少 MB。三者依次让位：手指正拖着的值 > 自动算出来的值 > 配置里存的值。
+   *
+   * 自动开着时显示 recommended 而不是 config.memory.max_mb：后者在自动态下根本不参与启动，
+   * 把一个不生效的数摆在滑块上，等于让界面说一句不算数的话。
+   */
+  const effectiveMemoryMb =
+    memoryDrag ?? (config?.memory.auto ? (advice?.recommended_mb ?? 0) : (config?.memory.max_mb ?? 0));
 
   return (
     <>
@@ -947,42 +1035,78 @@ export function Settings() {
               <>
                 {config && (
                   <Section title="运行时">
-                    <Row
-                      title="内存分配（MB）"
-                      desc="最大 / 最小堆内存，最小留空表示不限制"
-                      control={
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={1}
-                            inputMode="numeric"
-                            aria-label="最大内存 MB"
-                            className={`${inputCls} w-24 text-right tabular-nums`}
-                            value={maxMemInput}
-                            onChange={(e) => setMaxMemInput(e.target.value)}
-                            onBlur={commitMemory}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") e.currentTarget.blur();
-                            }}
-                          />
-                          <span className="text-ink/75">/</span>
-                          <input
-                            type="number"
-                            min={0}
-                            inputMode="numeric"
-                            aria-label="最小内存 MB"
-                            placeholder="不限"
-                            className={`${inputCls} w-24 text-right tabular-nums`}
-                            value={minMemInput}
-                            onChange={(e) => setMinMemInput(e.target.value)}
-                            onBlur={commitMemory}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") e.currentTarget.blur();
-                            }}
-                          />
+                    {/*
+                      内存这一区不用 Row：Row 的控件槽是右侧定宽的，装不下一根要横跨整行的滑块。
+                      最小堆（-Xms）在这一版从界面撤走了，配置字段与启动逻辑都还在——
+                      它对玩家没有调节价值，留在这里只会让这一区没法做成一根干净的滑块。
+                    */}
+                    <div className="border-b border-ink/12 py-[18px] first:pt-0">
+                      <div className="flex items-start justify-between gap-6">
+                        <div className="min-w-0">
+                          <div className="text-[15px] font-bold">内存分配</div>
+                          <div className="mt-1 text-[12.5px] text-ink/75">
+                            {advice
+                              ? `游戏能用的最大内存。自动按「${TIER_LABEL[advice.tier]}」档，随开机时的空闲内存浮动`
+                              : "游戏能用的最大内存"}
+                          </div>
                         </div>
-                      }
-                    />
+                        <label className="flex shrink-0 items-center gap-2.5">
+                          <span className="text-[13px] font-bold text-ink/75">自动</span>
+                          <Toggle
+                            ariaLabel="自动分配内存"
+                            checked={config.memory.auto}
+                            onChange={(v) => void saveMemory({ auto: v })}
+                          />
+                        </label>
+                      </div>
+
+                      {adviceError && (
+                        <p className="mt-3 text-[12.5px] break-words text-danger" role="alert">
+                          读不到本机内存信息：{adviceError}
+                        </p>
+                      )}
+
+                      {!adviceError && !advice && (
+                        <p className="mt-3 text-[12.5px] text-ink/75">正在读取本机内存…</p>
+                      )}
+
+                      {advice && (
+                        <>
+                          {/* 读数与滑块同处一行的上方：拖的时候眼睛不用在两个地方来回跳。 */}
+                          <div className="mt-4 flex items-baseline justify-between gap-4">
+                            <span className="text-[26px] leading-none font-extrabold tabular-nums">
+                              {gb(effectiveMemoryMb)}
+                            </span>
+                            {/* 自动态下不重复播报那个数（左边的大字已经是它了），
+                                改说可用量——它才解释了「为什么是这个数」。 */}
+                            <span className="text-[12px] text-ink/75">
+                              可用 {gb(advice.available_mb)}
+                            </span>
+                          </div>
+
+                          <div className="mt-3">
+                            <Slider
+                              stops={advice.stops}
+                              value={effectiveMemoryMb}
+                              disabled={config.memory.auto}
+                              ariaLabel="最大内存"
+                              format={gb}
+                              onPreview={setMemoryDrag}
+                              onCommit={(mb) => {
+                                setMemoryDrag(null);
+                                void saveMemory({ max_mb: mb });
+                              }}
+                            />
+                          </div>
+
+                          <MemoryBar
+                            totalMb={advice.total_mb}
+                            othersMb={advice.used_by_others_mb}
+                            gameMb={effectiveMemoryMb}
+                          />
+                        </>
+                      )}
+                    </div>
                     <Row
                       title="版本隔离档位"
                       desc="决定哪些版本使用独立的存档与配置目录"

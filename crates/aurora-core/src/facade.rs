@@ -423,6 +423,7 @@ mod tests {
         aurora.set_memory(MemorySettings {
             max_mb: 8192,
             min_mb: Some(1024),
+            auto: false,
         });
         aurora.set_isolation_policy(IsolationPolicy::All);
 

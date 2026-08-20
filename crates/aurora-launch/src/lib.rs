@@ -37,7 +37,10 @@ pub use command::{CommandBuilder, GamePaths, LaunchCommand};
 pub use crash::{CrashCategory, CrashDiagnosis, analyze, has_crash_marker, primary_cause};
 pub use error::{LaunchError, Result};
 pub use logfile::{LogArchiver, list_archived_logs, log_dir, session_log_path};
-pub use memory::{MemoryConfig, MemoryTier, auto_allocate, slider_to_mb};
+pub use memory::{
+    MIN_STOP_MB, MemoryConfig, MemoryTier, SystemMemory, auto_allocate, probe_system_memory,
+    slider_stops, slider_to_mb,
+};
 pub use placeholder::Placeholders;
 pub use precheck::{CheckItem, CheckStatus, PreLaunchInput, PreLaunchReport};
 pub use process::{ExitReport, GameSession, LogLine, LogStream, detect_crash, spawn};

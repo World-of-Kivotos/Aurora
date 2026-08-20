@@ -162,11 +162,28 @@ const CONFIG = {
   download_source: "auto",
   version_list_source: "auto",
   download_concurrency: 64,
-  memory: { max_mb: 8192, min_mb: null },
+  memory: { max_mb: 8192, min_mb: null, auto: false },
   isolation_policy: "mod_loaders_and_non_release",
   has_client_id: true,
   auto_download_java: true,
   selected_version: "World of Kivotos 2.0 beta",
+};
+
+// 浏览器预览用的内存态势：一台 32G、当前被别的程序吃掉 12G 的机器。
+// stops 按后端 slider_to_mb 的三段折线逐格展开（0.25G / 0.5G / 1G / 2G），截到 32G 为止——
+// 这里必须与 Rust 那份一致，否则拿 mock 调出来的手感在真机上对不上。
+const MEMORY_ADVICE = {
+  total_mb: 32768,
+  available_mb: 20480,
+  used_by_others_mb: 12288,
+  tier: "large_modpack",
+  recommended_mb: 6144,
+  stops: [
+    512, 768, 1024, 1280, 1536, 1792, 2048,
+    2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144,
+    7168, 8192, 9216, 10240, 11264, 12288, 13312, 14336,
+    16384, 18432, 20480, 22528, 24576, 26624, 28672, 30720, 32768,
+  ],
 };
 
 const MOCK_MANAGED_VERSION_ID = "World of Kivotos 2.0 beta";
@@ -1131,6 +1148,7 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
 
   const table: Record<string, unknown> = {
     get_config: CONFIG,
+    memory_advice: MEMORY_ADVICE,
     list_installed: INSTALLED,
     install_version: { vanilla: { id: "1.21.1", libraries: 42, assets: 3200, natives: 6 }, loader: null },
     launch_game: { pid: 73136 },
