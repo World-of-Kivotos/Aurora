@@ -310,6 +310,10 @@ impl<'a> CommandBuilder<'a> {
         if !self.extra_jvm_args.is_empty() {
             jvm_args.extend(self.extra_jvm_args.clone());
         }
+        // 放在合并自定义 JVM 参数之后：玩家若自带一条 -DignoreList，同样要按真实 jar 名补齐。
+        if let Some(name) = self.paths.client_jar.file_name().and_then(|n| n.to_str()) {
+            args::ensure_client_jar_ignored(&mut jvm_args, name);
+        }
         let jvm_args = args::dedup_jvm_args(jvm_args);
 
         let main_class = self

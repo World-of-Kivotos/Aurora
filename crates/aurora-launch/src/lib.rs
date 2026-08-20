@@ -31,7 +31,9 @@ pub mod process;
 pub mod workspace;
 
 pub use account::{AuthValues, AuthlibInjector, OFFLINE_ACCESS_TOKEN};
-pub use args::{GcPolicy, dedup_jvm_args, merge_game_args, split_args};
+pub use args::{
+    GcPolicy, dedup_jvm_args, ensure_client_jar_ignored, merge_game_args, split_args,
+};
 pub use classpath::{classpath_entries, classpath_separator, classpath_string};
 pub use command::{CommandBuilder, GamePaths, LaunchCommand};
 pub use crash::{CrashCategory, CrashDiagnosis, analyze, has_crash_marker, primary_cause};

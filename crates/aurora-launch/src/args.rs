@@ -148,6 +148,44 @@ pub fn split_args(input: &str) -> Vec<String> {
     out
 }
 
+/// `-DignoreList` 的前缀，Forge/NeoForge 的 bootstraplauncher 用它划分 classpath 与模块路径。
+const IGNORE_LIST_PREFIX: &str = "-DignoreList=";
+
+/// 把客户端主 jar 的真实文件名补进 `-DignoreList`，让它留在传统 classpath 而不被升格成模块。
+///
+/// 背景：Forge/NeoForge 的主类是 bootstraplauncher，它把 `legacyClassPath` 的每一条按
+/// `文件名.startsWith(条目)` 与 `-DignoreList` 逐项比对，命中的留在 classpath，没命中的一律
+/// 交给 `SecureJar` 变成模块塞进模块层（判定见 bootstraplauncher 1.1.2 `main` 的字节码）。
+///
+/// Forge 版本 JSON 里写的是 `${version_name}.jar`，它成立的前提是「客户端 jar 与被启动的版本同名」——
+/// 官启 / PCL / HMCL 都把原版 jar 复制进各自版本目录并改名，故前提成立。Aurora 不复制：加载器版本共用
+/// 继承根版本目录里的那一份（见 [`crate::command::GamePaths`]），于是 `${version_name}` 展开成
+/// `1.20.1-forge-47.4.16.jar`，而真实文件名是 `1.20.1.jar`，前缀对不上——原版 jar 被升格为自动模块
+/// `_1._20._1`，与 Forge 那个同样导出 `net.minecraft.client.main` 的 `minecraft` 模块撞车，JVM 抛
+/// `ResolutionException` 直接退出。
+///
+/// 这个失败特别难查：它发生在 ModLauncher 建类加载器时，log4j 尚未接管，游戏侧 `latest.log` 只留半截、
+/// 崩溃报告也不会生成，异常只出现在进程 stderr 上。
+///
+/// 「是否已覆盖」按 bootstraplauncher 的原样判定（含空串条目命中一切这一点），免得两边对同一条
+/// ignoreList 得出不同结论而重复追加。
+pub fn ensure_client_jar_ignored(args: &mut [String], client_jar_name: &str) {
+    if client_jar_name.is_empty() {
+        return;
+    }
+    for arg in args.iter_mut() {
+        let covered = match arg.strip_prefix(IGNORE_LIST_PREFIX) {
+            Some(list) => list.split(',').any(|entry| client_jar_name.starts_with(entry)),
+            None => continue,
+        };
+        if covered {
+            continue;
+        }
+        arg.push(',');
+        arg.push_str(client_jar_name);
+    }
+}
+
 /// JVM 参数去重：保序保留首个，丢弃**完全相同**的项。
 ///
 /// 不做键级去重——`-Xmx2g` 与 `-Xmx4g` 是两个不同字符串，都保留（交由 JVM「后者生效」），也因此不会把
@@ -417,5 +455,68 @@ mod tests {
         // 负数值不应被当成新键；--height 的值被覆盖为 -100。
         let extra = vec!["--height".to_string(), "-100".to_string()];
         assert_eq!(merge_game_args(base, extra), vec!["--height", "-100"]);
+    }
+
+    /// 真实事故的最小复现：Forge 47.4.16 的 ignoreList 写死 `${version_name}.jar`，
+    /// 而 Aurora 让加载器版本共用继承根版本目录里的 `1.20.1.jar`，两者前缀对不上。
+    #[test]
+    fn client_jar_name_appended_when_ignore_list_misses_it() {
+        let mut args = vec![
+            "-DignoreList=bootstraplauncher,securejarhandler,client-extra,forge-,1.20.1-forge-47.4.16.jar"
+                .to_string(),
+        ];
+        ensure_client_jar_ignored(&mut args, "1.20.1.jar");
+        assert_eq!(
+            args[0],
+            "-DignoreList=bootstraplauncher,securejarhandler,client-extra,forge-,1.20.1-forge-47.4.16.jar,1.20.1.jar"
+        );
+    }
+
+    #[test]
+    fn already_covered_ignore_list_is_left_alone() {
+        // 版本名与 jar 名一致时（官启/PCL 布局），原样即可命中，不该再追加一遍。
+        let mut args = vec!["-DignoreList=client-extra,1.20.1.jar".to_string()];
+        ensure_client_jar_ignored(&mut args, "1.20.1.jar");
+        assert_eq!(args[0], "-DignoreList=client-extra,1.20.1.jar");
+    }
+
+    #[test]
+    fn coverage_uses_prefix_matching_like_bootstraplauncher() {
+        // bootstraplauncher 判的是 `文件名.startsWith(条目)`：条目 `1.20.1` 已经能命中 `1.20.1.jar`。
+        let mut args = vec!["-DignoreList=forge-,1.20.1".to_string()];
+        ensure_client_jar_ignored(&mut args, "1.20.1.jar");
+        assert_eq!(args[0], "-DignoreList=forge-,1.20.1");
+
+        // 反向不成立：条目比文件名长，前缀匹配失败，必须补。
+        let mut longer = vec!["-DignoreList=1.20.1.jar.bak".to_string()];
+        ensure_client_jar_ignored(&mut longer, "1.20.1.jar");
+        assert_eq!(longer[0], "-DignoreList=1.20.1.jar.bak,1.20.1.jar");
+    }
+
+    #[test]
+    fn non_ignore_list_args_are_untouched() {
+        // 原版/Fabric 没有这条参数，函数必须是纯粹的空操作。
+        let mut args = vec![
+            "-Xmx4096m".to_string(),
+            "-Dmy.ignoreList=whatever".to_string(),
+            "-cp".to_string(),
+            "a.jar;1.20.1.jar".to_string(),
+        ];
+        let before = args.clone();
+        ensure_client_jar_ignored(&mut args, "1.20.1.jar");
+        assert_eq!(args, before);
+    }
+
+    #[test]
+    fn every_ignore_list_occurrence_is_repaired() {
+        // JVM 取最后一条 -D 生效，只修第一条等于没修。
+        let mut args = vec![
+            "-DignoreList=forge-".to_string(),
+            "-Xmx2g".to_string(),
+            "-DignoreList=client-extra".to_string(),
+        ];
+        ensure_client_jar_ignored(&mut args, "1.20.1.jar");
+        assert_eq!(args[0], "-DignoreList=forge-,1.20.1.jar");
+        assert_eq!(args[2], "-DignoreList=client-extra,1.20.1.jar");
     }
 }

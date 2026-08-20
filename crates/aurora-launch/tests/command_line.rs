@@ -339,3 +339,113 @@ fn custom_args_merge_into_command() {
     assert_eq!(command.args[idx + 1], "Alex");
     assert!(!command.args.iter().any(|a| a == "Steve"));
 }
+
+/// Forge 47.4.16 那条真实的 bootstraplauncher JVM 段（截取与模块路径判定相关的部分）。
+/// `ignoreList` 末项 `${version_name}.jar` 是原样照抄，正是 2026-08-20 那次启动失败的现场。
+const FORGE_1_20_1: &str = r#"{
+    "id": "1.20.1-forge-47.4.16",
+    "type": "release",
+    "inheritsFrom": "1.20.1",
+    "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher",
+    "assets": "5",
+    "assetIndex": {"id":"5","sha1":"idx0500000000000000000000000000000000000","size":100,"url":"https://piston-meta.mojang.com/5.json"},
+    "arguments": {
+        "jvm": [
+            "-DignoreList=bootstraplauncher,securejarhandler,asm,JarJarFileSystems,client-extra,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge-,${version_name}.jar",
+            "-DlibraryDirectory=${library_directory}",
+            "-p",
+            "${library_directory}/cpw/mods/bootstraplauncher/1.1.2/bootstraplauncher-1.1.2.jar",
+            "--add-modules",
+            "ALL-MODULE-PATH",
+            "-cp",
+            "${classpath}"
+        ],
+        "game": ["--version", "${version_name}", "--launchTarget", "forgeclient"]
+    },
+    "libraries": [
+        {"name":"cpw.mods:bootstraplauncher:1.1.2","downloads":{"artifact":{"path":"cpw/mods/bootstraplauncher/1.1.2/bootstraplauncher-1.1.2.jar","sha1":"c1","size":1,"url":"u"}}}
+    ]
+}"#;
+
+/// 加载器版本与客户端 jar 不同名时，`-DignoreList` 必须补上 jar 的真实文件名。
+///
+/// 漏了这一条，原版 `1.20.1.jar` 会被 bootstraplauncher 升格成自动模块 `_1._20._1`，和 Forge 的
+/// `minecraft` 模块同时导出 `net.minecraft.client.main`，JVM 在建类加载器时抛 ResolutionException
+/// 退出；那时 log4j 还没接管，游戏日志只有半截、也不生成崩溃报告，只有进程 stderr 里有线索。
+#[test]
+fn forge_ignore_list_covers_inherited_client_jar() {
+    let version = VersionJson::from_json_str(FORGE_1_20_1).unwrap();
+    let minecraft_dir = PathBuf::from("D:/mc/.minecraft");
+    // jar_id 传继承根版本：加载器版本目录里没有 jar，共用 versions/1.20.1/1.20.1.jar。
+    let paths = GamePaths::standard(&minecraft_dir, "1.20.1");
+
+    let command = CommandBuilder::new(
+        &version,
+        win10(),
+        PathBuf::from("C:/jdk17/bin/java.exe"),
+        paths.clone(),
+        &minecraft_dir,
+        AuthValues::offline("Steve", UUID),
+    )
+    // ${version_name} 走版本自身的 id，与 aurora-core 的调用一致。
+    .with_version_name("1.20.1-forge-47.4.16")
+    .with_memory(MemoryConfig::fixed(8192))
+    .build()
+    .unwrap();
+
+    let ignore = command
+        .args
+        .iter()
+        .find(|arg| arg.starts_with("-DignoreList="))
+        .expect("Forge 版本必须有 -DignoreList");
+    let entries: Vec<&str> = ignore
+        .trim_start_matches("-DignoreList=")
+        .split(',')
+        .collect();
+
+    // 判定与 bootstraplauncher 一致：文件名 startsWith 某个条目才留在 classpath。
+    let jar_name = paths.client_jar.file_name().unwrap().to_str().unwrap();
+    assert!(
+        entries.iter().any(|entry| jar_name.starts_with(entry)),
+        "客户端 jar {jar_name} 未被 ignoreList 覆盖：{ignore}"
+    );
+    // 版本 JSON 原有的条目一个都不能丢。
+    assert!(entries.contains(&"client-extra"));
+    assert!(entries.contains(&"forge-"));
+    assert!(entries.contains(&"1.20.1-forge-47.4.16.jar"));
+
+    // 游戏参数里的 ${version_name} 仍是被启动的版本 id，不该被 jar 名顶掉。
+    assert!(command.args.contains(&s("1.20.1-forge-47.4.16")));
+}
+
+/// 原版布局（版本名与 jar 同名）本就命中，不该被追加出重复条目。
+#[test]
+fn vanilla_layout_ignore_list_is_not_rewritten() {
+    let version = VersionJson::from_json_str(FORGE_1_20_1).unwrap();
+    let minecraft_dir = PathBuf::from("D:/mc/.minecraft");
+    let paths = GamePaths::standard(&minecraft_dir, "1.20.1-forge-47.4.16");
+
+    let command = CommandBuilder::new(
+        &version,
+        win10(),
+        PathBuf::from("C:/jdk17/bin/java.exe"),
+        paths,
+        &minecraft_dir,
+        AuthValues::offline("Steve", UUID),
+    )
+    .with_version_name("1.20.1-forge-47.4.16")
+    .with_memory(MemoryConfig::fixed(8192))
+    .build()
+    .unwrap();
+
+    let ignore = command
+        .args
+        .iter()
+        .find(|arg| arg.starts_with("-DignoreList="))
+        .unwrap();
+    assert_eq!(
+        ignore.matches("1.20.1-forge-47.4.16.jar").count(),
+        1,
+        "已命中的条目被重复追加：{ignore}"
+    );
+}
