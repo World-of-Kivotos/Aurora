@@ -245,22 +245,39 @@ export function ModpackInstallFlow({
         </div>
       )}
 
+      {/*
+       * 这里刻意没有「安装游戏」按钮, 别再加回来。
+       *
+       * 启动屏右下角那颗主操作键在未安装时本身就是 Download, 它与这块面板要做的是同一件事。
+       * 两处并列会让新玩家对着两个「下载」发愣, 也让「这一屏的主操作只有一个」这条版面规则失效。
+       * 这块面板的职责是说清将要发生什么、以及给测试服改地址, 触发交给主操作位。
+       *
+       * 保留的两颗按钮都不是重复: complete 的「进入管理」是装完之后的去处,
+       * failed 的「重新安装」是兜底 —— 安装若在创建实例之后才失败, current 已非空,
+       * 主操作键会回到 Start 语义, 那时这颗就是唯一的重试入口。
+       */}
       <div className="mt-5 flex items-center gap-3">
         {state.kind === "complete" && onOpenInstance ? (
           <Button variant="primary" onClick={() => onOpenInstance(state.instance_id)}>
             进入管理
           </Button>
-        ) : (
+        ) : state.kind === "failed" ? (
           <Button
             variant="primary"
             icon={<DownloadIcon size={16} />}
             disabled={running}
             onClick={submit}
           >
-            {running ? "正在安装" : state.kind === "failed" ? "重新安装" : "安装游戏"}
+            重新安装
           </Button>
-        )}
-        <span className="text-[11.5px] text-ink/75">安装与日后更新共用同一条同步路径</span>
+        ) : null}
+        <span className="text-[11.5px] text-ink/75">
+          {state.kind === "complete" || state.kind === "failed"
+            ? "安装与日后更新共用同一条同步路径"
+            : running
+              ? "安装进行中, 进度显示在右下角"
+              : "地址确认后点右下角的 Download 开始, 也可以在地址栏直接回车"}
+        </span>
       </div>
     </section>
   );

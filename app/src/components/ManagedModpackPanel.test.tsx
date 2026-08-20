@@ -200,7 +200,10 @@ describe("ModpackInstallFlow", () => {
     expect(html).toContain("安装 Minecraft");
     expect(html).toContain("安装加载器");
     expect(html).toContain("同步整合包");
-    expect(html).toContain("安装游戏");
+    // 面板不得自带安装触发器: 启动屏右下角那颗主操作键在未安装时本身就是 Download,
+    // 两处并列会让新玩家对着两个「下载」发愣。这条断言守的就是它别再被加回来。
+    expect(html).not.toContain("安装游戏");
+    expect(html).toContain("点右下角的 Download 开始");
   });
 
   it("renders the real one-click installer at the conflict destination", () => {
@@ -213,7 +216,8 @@ describe("ModpackInstallFlow", () => {
     expect(intent.requested).toBe(true);
     expect(html).toContain("安装 World of Kivotos");
     expect(html).toContain('value="https://api.mcwok.cn/api/v1/pack/latest"');
-    expect(html).toContain("安装游戏");
+    // 同上: 深链过来时面板照样展开, 但触发仍归主操作位, 面板只负责说清与改地址。
+    expect(html).not.toContain("安装游戏");
   });
 
   it("prefills the subscribed custom pointer and keeps the built-in reset", () => {
