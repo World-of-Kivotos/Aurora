@@ -14,14 +14,15 @@
 // 材质（背景图铺满全站之后的定档，依据见 app.css 的对比度表）：
 //   侧栏本体是窗口外壳的一部分，装了壁纸时整块走 .surface-shell —— 全站最透的一档，让背景图透上来；
 //   没装壁纸时不挂（与标题栏同一条判据）：那一档纸色压在纯纸底上像素不变，白采一遍背景而已；
-//   导航行不挂材质：静息无底、悬停浮一层极淡的墨，当前项靠朱红竖规与字重表达，
-//   这样侧栏的点按手感与设置页、卷宗页里的可点行是同一种，而不是各调各的；
-//   唯一的例外是游戏行——它是契约白名单里四处小件之一，走 .surface-liquid，
+//   所有行静息都不挂材质：无底、悬停浮一层极淡的墨，与设置页、卷宗页里的可点行同一种手感；
+//   唯一升起玻璃的是「当前选中的那一台游戏」——它是契约白名单里四处小件之一，走 .surface-liquid，
 //   并在液态模式下再叠一层真折射透镜（LiquidGlass）。材质与透镜是两件事：纸色归材质类，
 //   圆角归 rounded-control，透镜只出折射，三者各管一段，谁都不越界。
+//   玻璃只给选中行而不是给所有游戏行，是因为它本身就是「当前是哪台」的主要依据：
+//   两行都铺就只剩竖规与字重在表达选中，实测读起来两行一样亮、分不出来。
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useMatch } from "react-router-dom";
 import { motion } from "framer-motion";
 import { springs } from "../lib/motion";
 import { getConfig, listInstalled } from "../lib/ipc";
@@ -96,8 +97,14 @@ const RESTING_INK = "text-ink/75";
 const ROW_INTERACTION =
   "transition-colors hover:bg-ink/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
 
-/** 独立成行的可点物：交互反馈之外还要自己承担圆角。游戏行的圆角由外层的行容器统一给。 */
-const ROW_BASE = `rounded-control ${ROW_INTERACTION}`;
+/**
+ * 独立成行的可点物：交互反馈之外还要自己承担圆角与裁切。游戏行的这两样由外层的行容器统一给。
+ *
+ * overflow-hidden 是给竖规用的：它满高 4px，不裁就会在圆角处支出两个直角，
+ * 而同一道规靠 layoutId 在导航行与游戏行之间滑动，两边的形状必须一致。
+ * 焦点环走 -outline-offset 画在内侧，不受这层裁切影响。
+ */
+const ROW_BASE = `overflow-hidden rounded-control ${ROW_INTERACTION}`;
 
 /** 眉标 / 附属行的字号档：10px + 0.22em 字距，全站小标签共用这一档（同 Home 右上角的「状态」）。 */
 const CAPTION_TYPE = "text-[10px] leading-none font-bold tracking-[0.22em]";
@@ -130,14 +137,19 @@ function NavRow({ to, label, end }: NavDef) {
 
 /**
  * 竖规。全站只有一道，靠 layoutId 在当前项之间平滑滑动。
- * 上下各内缩 8px：贴着行的上下缘会与相邻行的规连成一条通天柱，读不出「一行」的边界。
+ *
+ * 满高 4px，两端由行自己的 rounded-control + overflow-hidden 裁成圆角的形状，
+ * 不再上下内缩。原先内缩 8px 的理由是「贴着上下缘会与相邻行的规连成一条通天柱」——
+ * 那是竖规当时唯一的活儿；现在选中行同时还有玻璃底与字重在表达选中，
+ * 竖规的职责变成给这一行封一道厚实的左边，内缩反而让它读起来像一小截悬空的短线。
+ * 相邻行不会连成柱：一次只有一行是选中的。
  */
 function ActiveRule() {
   return (
     <motion.span
       layoutId="nav-rule"
       transition={springs.soft}
-      className="absolute top-[8px] bottom-[8px] left-0 w-[2px] bg-accent"
+      className="absolute inset-y-0 left-0 w-[4px] bg-accent"
     />
   );
 }
@@ -243,11 +255,17 @@ const LENS_SATURATION = 200;
  * 箭头不做成嵌在主体链接里的按钮：可点物套可点物是无效 HTML，浏览器的点击归属没有定论，
  * 读屏也会把两个可及名读成一团。并列是唯一能让「点哪块去哪」既确定又可及的结构。
  *
- * 材质与透镜是两件事，都挂在行容器上：
+ * 材质与透镜只给选中的那一行，这是「哪台游戏是当前」的主要视觉依据：
+ *   两行都铺玻璃时，剩下能表达选中的只有一道 2px 竖规和字重，实测两行读起来一样亮、分不出来。
+ *   静息行不铺底（与账户/下载那几行同一种手感：无底、悬停才浮一层极淡的墨），
+ *   选中行才升起一块玻璃 —— 差异这才够一眼看死。
  *   纸色配比走 .surface-liquid（契约白名单里侧栏游戏行的那一格，对比度预算表已经把 80%
  *   这个数算好了），圆角走 rounded-control，LiquidGlass 只出折射不出纸也不出圆角。
  *   sheen 关掉：内联 boxShadow 会盖掉 .surface-liquid 的整条投影（含液态档的顶缘亮边与
  *   下缘暗线），关了才由 CSS 一处说了算。
+ *
+ * 选中与否在这里再判一次（useMatch），不能只靠 NavLink 的 isActive：那个值只在链接内部拿得到，
+ * 而材质挂在链接外面那层行容器上。判据与 NavLink 一致 —— 两者都是对 game.to 做精确匹配。
  */
 function GameRow({
   game,
@@ -259,9 +277,16 @@ function GameRow({
   manageable: boolean;
 }) {
   const lensAllowed = useSyncExternalStore(subscribeLensPreference, readLensPreference, lensOff);
+  const active = useMatch(game.to) !== null;
 
-  // overflow-hidden 让两个内层可点物的悬停墨洗跟着行的圆角走；焦点环是 -outline-offset，画在内侧，不受裁切。
-  const rowClass = "surface-liquid relative flex items-stretch overflow-hidden rounded-control";
+  // overflow-hidden 让竖规与两个内层可点物的悬停墨洗都跟着行的圆角走；
+  // 焦点环是 -outline-offset，画在内侧，不受裁切。
+  const rowClass = [
+    "relative flex items-stretch overflow-hidden rounded-control",
+    active ? "surface-liquid" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const body = (
     <>
@@ -301,9 +326,10 @@ function GameRow({
     </>
   );
 
-  // 没装壁纸时不上透镜：backdrop 采的是一张纯色，位移一张纯色的结果还是同一个颜色，
-  // 白烧三遍全区域采样。与侧栏本体「有图才挂外壳材质」是同一条判据。
-  if (!lensAllowed || !onPhoto) return <div className={rowClass}>{body}</div>;
+  // 静息行没有玻璃底，透镜自然也无从谈起——折射的是身下那块底，底都没有就只剩白烧采样。
+  // 没装壁纸时同样不上透镜：backdrop 采的是一张纯色，位移一张纯色的结果还是同一个颜色。
+  // 与侧栏本体「有图才挂外壳材质」是同一条判据。
+  if (!active || !lensAllowed || !onPhoto) return <div className={rowClass}>{body}</div>;
 
   return (
     <LiquidGlass

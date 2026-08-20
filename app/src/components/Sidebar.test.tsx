@@ -45,6 +45,16 @@ function renderView(pathname: string, instanceReady: boolean): string {
   );
 }
 
+/** 取游戏列表里每个 <li> 的 HTML，顺序与 GAMES 一致（0 = Kivotos，1 = Arena）。 */
+function gameItems(markup: string): string[] {
+  const list = markup.split('aria-label="游戏"')[1] ?? "";
+  const body = list.split("</ul>")[0] ?? "";
+  return body
+    .split("<li")
+    .slice(1)
+    .map((chunk) => chunk.split("</li>")[0]);
+}
+
 /** 取 markup 里所有 <a> 的开标签到闭合，用于判定某段文字是否落在链接内。 */
 function anchors(markup: string): string[] {
   return markup.split("<a ").slice(1).map((chunk) => chunk.split("</a>")[0]);
@@ -272,18 +282,45 @@ describe("Sidebar 材质与圆角", () => {
     expect(markup.split("bg-accent").length - 1).toBe(1);
   });
 
-  it("只有游戏行走 .surface-liquid, 且静态首帧不写内联 backdrop-filter", () => {
+  it("只有当前选中的那台游戏走 .surface-liquid, 且静态首帧不写内联 backdrop-filter", () => {
     const markup = renderView("/", true);
 
-    // 白名单里侧栏只有「游戏行」这一格, 一台游戏一行, 不多不少 ——
-    // 多出来就是账户/下载/设置那几条导航也被套上了材质, 那正是「一列文字读成一列按钮」的回退。
-    expect(markup.split("surface-liquid").length - 1).toBe(2);
+    // 恰好一处。玻璃是「当前是哪台游戏」的主要视觉依据:
+    // 给两台都铺(曾经如此)就只剩竖规与字重在表达选中, 两行读起来一样亮、分不出来;
+    // 铺到三处以上则说明账户/下载/设置那几条导航也被套了材质,
+    // 那是「一列文字读成一列按钮」的另一种回退。
+    expect(markup.split("surface-liquid").length - 1).toBe(1);
 
     // 折射透镜写的是内联 backdrop-filter, 优先级压过 .surface-liquid, 也压过 app.css 末尾
     // 那段「减少透明度 / 提高对比度」的降级(它靠 backdrop-filter: none 把玻璃退成实心纸)。
     // 所以静态渲染这一帧必须干净: 问不到 DOM 就没有依据判断玻璃模式与无障碍偏好,
     // 一旦这里冒出内联滤镜, 就说明透镜绕开了全局开关。
     expect(markup).not.toContain("backdrop-filter");
+  });
+
+  it("玻璃跟着选中走: 站在哪台游戏的屏上, 玻璃就在哪一行", () => {
+    const home = gameItems(renderView("/", true));
+    expect(home).toHaveLength(2);
+    expect(home[0]).toContain(WOK_FULL);
+    expect(home[0]).toContain("surface-liquid");
+    expect(home[1]).toContain(ARENA_TITLE);
+    expect(home[1]).not.toContain("surface-liquid");
+
+    const arena = gameItems(renderView("/arena", true));
+    expect(arena[0]).not.toContain("surface-liquid");
+    expect(arena[1]).toContain("surface-liquid");
+  });
+
+  it("竖规与玻璃永远落在同一行", () => {
+    // 两者各判各的(竖规看 NavLink 的 isActive, 玻璃看行容器上的 useMatch), 判据一旦漂移,
+    // 就会出现「这一行亮着、红条却在另一行」这种自相矛盾的画面, 而且两条都还各自"能用"。
+    for (const path of ["/", "/arena"]) {
+      const items = gameItems(renderView(path, true));
+      const glass = items.findIndex((html) => html.includes("surface-liquid"));
+      const rule = items.findIndex((html) => html.includes("bg-accent"));
+      expect(glass).toBeGreaterThanOrEqual(0);
+      expect(rule).toBe(glass);
+    }
   });
 
   it("圆角只走令牌类, 弱色阶不得低于玻璃上的正文门槛", () => {
