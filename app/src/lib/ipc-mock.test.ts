@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { mockInvoke } from "./ipc-mock";
-import type { AppearanceDto, ManagedModpackFile } from "./ipc";
+import { describe, expect, it, vi } from "vitest";
+import { mockInvoke, mockListen } from "./ipc-mock";
+import type { AccountDto, AppearanceDto, DeviceCode, ManagedModpackFile } from "./ipc";
 import type { CheckedManagedModpackStatus } from "./modpack-ui";
 
 describe("managed modpack browser mock", () => {
@@ -81,5 +81,43 @@ describe("glass mode mock", () => {
     expect(after.background).toBe(before.background);
     expect(after.veil).toBe(before.veil);
     await mockInvoke<AppearanceDto>("set_glass_mode", { glass: "frost" });
+  });
+});
+
+describe("microsoft login browser mock", () => {
+  it("先把配对码推给订阅者，再让登录落定", async () => {
+    vi.useFakeTimers();
+    try {
+      const seen: DeviceCode[] = [];
+      const unlisten = await mockListen<DeviceCode>("aurora://device-code", (e) =>
+        seen.push(e.payload),
+      );
+
+      let settled = false;
+      const login = mockInvoke<AccountDto>("microsoft_login").then((account) => {
+        settled = true;
+        return account;
+      });
+
+      // 越过 mockInvoke 头部那 180ms：此刻配对码必须已经在弹窗上，而登录还不许成功——
+      // 顺序反过来（登录先落定）弹窗就一闪而过，账户页那段交互在浏览器里等于没有。
+      await vi.advanceTimersByTimeAsync(200);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].user_code).toBe("AURORA-DEV");
+      expect(seen[0].verification_uri).toContain("microsoft.com");
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(login).resolves.toMatchObject({ account_type: "microsoft" });
+
+      // unlisten 必须真把订阅摘掉：账户页每登录一次就重订一次，不摘就越积越多。
+      unlisten();
+      const again = mockInvoke<AccountDto>("microsoft_login");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await again;
+      expect(seen).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

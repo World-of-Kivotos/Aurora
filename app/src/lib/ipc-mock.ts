@@ -7,6 +7,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   CrashDiagnosis,
   CrashReport,
+  DeviceCode,
   GlassMode,
   History,
   HistoryEvent,
@@ -24,10 +25,107 @@ import type { CheckedManagedModpackStatus, ModpackSyncError } from "./modpack-ui
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const ACCOUNTS = [
+interface MockAccount {
+  uuid: string;
+  name: string;
+  account_type: "microsoft" | "offline" | "authlib_injector";
+}
+
+// 账户在 mock 里是有状态的：离线账户后端已改成持久化（明文 offline_accounts.json），
+// 浏览器里也必须能增/删/切换后立刻在列表上看到结果，否则这一页在 dev 模式下看着永远是死的。
+const ACCOUNTS: MockAccount[] = [
   { uuid: "853c80ef3c3749fdaa49938b674adae6", name: "Shinoyuki_Miyako", account_type: "microsoft" },
-  { uuid: "069a79f444e94726a5befca90e38aaf5", name: "Steve", account_type: "offline" },
+  // uuid 走与 create_offline_account 同一个派生函数，重复添加 Steve 才会如实表现成幂等。
+  { uuid: mockOfflineUuid("Steve"), name: "Steve", account_type: "offline" },
 ];
+
+let currentAccountUuid: string | null = ACCOUNTS[0].uuid;
+
+// 浏览器里没有 md5，造不出与原版一致的离线 UUID；mock 只需保证「同名恒同 uuid」这一条
+// 可观测性质（头像与「当前」判定都吃它），故用 FNV-1a 摊成 32 位十六进制顶替。
+function mockOfflineUuid(name: string): string {
+  let hash = 0x811c9dc5;
+  for (const ch of name) {
+    hash = Math.imul(hash ^ ch.codePointAt(0)!, 0x01000193) >>> 0;
+  }
+  return Array.from({ length: 4 }, (_, i) =>
+    (Math.imul(hash + i * 0x9e3779b9, 0x85ebca6b) >>> 0).toString(16).padStart(8, "0"),
+  ).join("");
+}
+
+// 保存离线账户：同名幂等，且照后端语义把它设为当前账户。
+function addOfflineAccount(name: string): MockAccount {
+  // 三条硬性规则照抄后端 validate_username，好让浏览器里也能看到真实的报错文案。
+  if (!name) throw new Error("离线用户名不合法: 用户名不能为空");
+  if (name.includes('"')) throw new Error("离线用户名不合法: 用户名不能包含双引号");
+  if (Array.from(name).length > 16) {
+    throw new Error("离线用户名不合法: 用户名不能超过 16 个字符（1.20.3 及以上版本限制）");
+  }
+  const account: MockAccount = {
+    uuid: mockOfflineUuid(name),
+    name,
+    account_type: "offline",
+  };
+  const existing = ACCOUNTS.find((a) => a.uuid === account.uuid);
+  if (!existing) ACCOUNTS.push(account);
+  currentAccountUuid = account.uuid;
+  return existing ?? account;
+}
+
+function removeMockAccount(uuid: string): void {
+  const index = ACCOUNTS.findIndex((a) => a.uuid === uuid);
+  if (index < 0) throw new Error(`账户不存在: ${uuid}`);
+  ACCOUNTS.splice(index, 1);
+  // 删掉的正是当前账户时回落到剩余第一个，与后端两个库的删除语义一致。
+  if (currentAccountUuid === uuid) currentAccountUuid = ACCOUNTS[0]?.uuid ?? null;
+}
+
+function setMockCurrentAccount(uuid: string): void {
+  if (!ACCOUNTS.some((a) => a.uuid === uuid)) throw new Error(`账户不存在: ${uuid}`);
+  currentAccountUuid = uuid;
+}
+
+// 在线登录：账户被删掉后还能再登回来，登录成功即成为当前账户（与后端 upsert 一致）。
+function loginMockAccount(account: MockAccount): MockAccount {
+  if (!ACCOUNTS.some((a) => a.uuid === account.uuid)) ACCOUNTS.push(account);
+  currentAccountUuid = account.uuid;
+  return account;
+}
+
+// 设备码事件的订阅表。微软登录在 mock 里也走真后端那套两段式（先推配对码、再等轮询完成），
+// 否则浏览器里那个登录弹窗永远停在「正在向微软申请配对码」，180ms 后直接登录成功——
+// 弹窗的排版、让位与「打开验证网址」那颗键在 dev 模式下根本没机会露面，验不了。
+const deviceCodeHandlers = new Set<(code: DeviceCode) => void>();
+
+// 配对码停留时长：短到不至于让人干等，长到看得清那串码与那行网址。真登录是玩家去网页上输码，
+// 时长由玩家自己决定；mock 只需把这一段「有码可看」的时间做出来。
+const MOCK_DEVICE_CODE_MS = 2600;
+
+// 微软登录：推一帧假配对码给订阅者，停留一会儿再落账户，与后端 microsoft_login 的时序同构。
+async function microsoftLoginMock(): Promise<MockAccount> {
+  const code: DeviceCode = {
+    user_code: "AURORA-DEV",
+    verification_uri: "https://www.microsoft.com/link",
+    expires_in: 900,
+    interval: 5,
+    message: "浏览器 mock 的假配对码：真登录只在 Tauri 里走，这里只为把弹窗的样子做出来。",
+  };
+  deviceCodeHandlers.forEach((notify) => notify(code));
+  await delay(MOCK_DEVICE_CODE_MS);
+  return loginMockAccount(MICROSOFT_SEED);
+}
+
+const MICROSOFT_SEED: MockAccount = {
+  uuid: "853c80ef3c3749fdaa49938b674adae6",
+  name: "Shinoyuki_Miyako",
+  account_type: "microsoft",
+};
+
+const AUTHLIB_SEED: MockAccount = {
+  uuid: "1f5c3a7d9b2e4c6a8d0f2b4c6e8a0d2f",
+  name: "LittleSkin_Player",
+  account_type: "authlib_injector",
+};
 
 const INSTALLED = {
   versions: [
@@ -821,6 +919,29 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
   if (cmd === "is_first_run") {
     return FIRST_RUN.pending as T;
   }
+  if (cmd === "list_accounts") {
+    return ACCOUNTS.slice() as T;
+  }
+  if (cmd === "current_account") {
+    return (ACCOUNTS.find((a) => a.uuid === currentAccountUuid) ?? null) as T;
+  }
+  if (cmd === "create_offline_account") {
+    return addOfflineAccount(String(_args?.name ?? "").trim()) as T;
+  }
+  if (cmd === "set_current_account") {
+    setMockCurrentAccount(_args?.uuid as string);
+    return undefined as T;
+  }
+  if (cmd === "remove_account") {
+    removeMockAccount(_args?.uuid as string);
+    return undefined as T;
+  }
+  if (cmd === "microsoft_login") {
+    return (await microsoftLoginMock()) as T;
+  }
+  if (cmd === "authlib_login") {
+    return loginMockAccount(AUTHLIB_SEED) as T;
+  }
   if (cmd === "list_game_directories") {
     return listGameDirs() as T;
   }
@@ -1011,13 +1132,6 @@ export async function mockInvoke<T>(cmd: string, _args?: Record<string, unknown>
   const table: Record<string, unknown> = {
     get_config: CONFIG,
     list_installed: INSTALLED,
-    current_account: ACCOUNTS[0],
-    list_accounts: ACCOUNTS,
-    create_offline_account: ACCOUNTS[1],
-    microsoft_login: ACCOUNTS[0],
-    authlib_login: ACCOUNTS[0],
-    set_current_account: undefined,
-    remove_account: undefined,
     install_version: { vanilla: { id: "1.21.1", libraries: 42, assets: 3200, natives: 6 }, loader: null },
     launch_game: { pid: 73136 },
     stop_game: undefined,
@@ -1051,6 +1165,15 @@ export async function mockListen<T>(
     stages.forEach((message, i) =>
       setTimeout(() => handler({ event, payload: { kind: "stage", message } as T }), 400 * (i + 1)),
     );
+  }
+  if (event === "aurora://device-code") {
+    // 这一条与别的事件不同：它由 microsoft_login 那次调用现场推送，故必须真把订阅者记下来，
+    // 返回的 unlisten 也要真把它摘掉——账户页每次登录都会重新订一次，不摘就越积越多。
+    const notify = (code: DeviceCode) => handler({ event, payload: code as T });
+    deviceCodeHandlers.add(notify);
+    return () => {
+      deviceCodeHandlers.delete(notify);
+    };
   }
   return () => {};
 }

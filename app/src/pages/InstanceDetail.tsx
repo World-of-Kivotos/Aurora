@@ -446,6 +446,8 @@ function OverviewTab({
   const pendingCount = updatableCount > 0 ? 1 : 0;
 
   return (
+    // 这一面是一列按自然高度顺排的正文，不参与高度分配：出口由外层那块滚动区给（见 tab 分支处的注释）。
+    // 别在这里加 flex-1 或 overflow-y-auto —— 前者会让内容被压扁而不是滚起来，后者是第二根滚动轴。
     <div className="min-w-0">
       {crash && (
         <div className="mb-5">
@@ -676,7 +678,8 @@ function ContentTab({ versionId, rows, ownershipError, filter, onFilterChange, o
   };
 
   return (
-    // 本页三面里唯一允许滚的一面：Mod 数量没有上界，工具条与提示条定高不动，清单自己滚。
+    // 这一面自己把高度分完：工具条与提示条定高不动，剩下的全给清单，清单在自己身上滚。
+    // 因此外层（页签内容区）刻意不给它再套一层滚动区——那会变成同一根轴上的双层滚动。
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {ownershipError && (
         <div
@@ -883,6 +886,7 @@ function HistoryTab({ versionId, history, checks, backupBytes, onReload }: Histo
 
   return (
     // 高度由外层分配（原来是 min-h-full，那是给会滚的外壳写的），备份条继续靠 mt-auto 钉在页尾。
+    // 与「内容」同理：事件流在面板内部滚，这一面因此不需要、也不许再被外层套一层滚动区。
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {events.length === 0 ? (
         <div className="surface-panel rounded-panel px-[18px] py-2">
@@ -1312,7 +1316,9 @@ export function InstanceDetail() {
       {/* 卷宗抬头：面包屑、标题、刷新与三面 tab 合成同一块面板。
           它们本来就是同一组导航件，图铺满之后各自浮一片纸只会在照片上多出一道无意义的缝。 */}
       {/* 抬头连同三面 tab 是本页的固定件（shrink-0）：外壳已不滚（app.css 第六节），
-          高度由这一页自己分配，长内容只准滚在「内容」页签的 Mod 清单里。 */}
+          高度由这一页自己分配。三面各有各的出口，且每面只有一根滚动轴：
+          概览滚整篇正文（滚动区在下面那个 tab 分支里），内容滚 Mod 清单 / UpdatePanel，
+          变更史滚事件流；页签切换时抬头一格不动。 */}
       <motion.div
         variants={pageItem}
         className="surface-panel mb-5 shrink-0 rounded-panel px-5 pt-4 pb-3"
@@ -1434,7 +1440,24 @@ export function InstanceDetail() {
               className="flex min-h-0 flex-1 flex-col"
             >
               {tab === "overview" && (
-                <>
+                /*
+                 * 概览是本页唯一「自然长度不设上限」的一面：整合包面板、崩溃诊断（正文来自日志分析，
+                 * 条数没有上界）、身份条、实例设置、待处理清单顺排下来，在 960x720 的内容盒（618）里必超。
+                 * 它又不像另外两面那样内部只有一条长清单可以单独关进滚动区——五块都要按顺序读，
+                 * 所以滚的是这一面的整篇正文，滚动区就开在页签内容区这一层。
+                 *
+                 * 为什么必须开出口而不是把内容压紧：外壳是 overflow-clip（开发期换 hidden，见 app.css
+                 * 第六之三节），溢出的那截不是滚出去而是被无声裁掉；更糟的是 hidden 仍吃编程滚动，
+                 * 「实例描述」输入框一旦落在被裁的那截里，敲键时浏览器会把它滚进视野、随即被复位，
+                 * 表现成「打一个字就丢焦点」。给这一面一个真出口，两件事一起消失。
+                 *
+                 * 只有这一面在外层滚：另外两面（内容 / 变更史）的长清单各自在面板内部滚，
+                 * 它们的根是 min-h-0 flex-1 的分配式布局，本身不会超出，外层再套一层滚动
+                 * 就成了同一根轴上的双层滚动。所以外层滚动区只加在这个分支里，不加在共用的页签容器上。
+                 * 概览内部也没有任何自带滚动的子件（ManagedModpackPanel / CrashBanner 都是自然高度），
+                 * 这一层是它唯一的滚动轴。
+                 */
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
                   {managedStatusLoading && managedStatus === null && (
                     <Skeleton className="mb-5 h-[196px] w-full" />
                   )}
@@ -1470,7 +1493,7 @@ export function InstanceDetail() {
                       setTab("content");
                     }}
                   />
-                </>
+                </div>
               )}
               {tab === "content" && (
                 <ContentTab

@@ -2,13 +2,16 @@
 //!
 //! 微软登录的编排（设备码 -> 轮询 -> 令牌链 -> 落库）抽成与平台无关的 [`perform_microsoft_login`]，
 //! 便于用注入端点的 [`MicrosoftAuth`] 与任意 [`CredentialStore`] 做 mock 测试。凭据的加密落盘只有
-//! Windows（DPAPI）实现，故门面上「读写账户库」的方法用 `#[cfg(windows)]` 圈起；离线账户创建不依赖
-//! 凭据库，跨平台可用。
+//! Windows（DPAPI）实现，故登录本身用 `#[cfg(windows)]` 圈起。
+//!
+//! 账户分两个库：带凭据的（微软/外置）落 DPAPI 加密的 `credentials.bin`，离线账户落明文
+//! `offline_accounts.json`（理由见 [`aurora_auth::offline_store`]）。对外的读取/切换/删除四个方法
+//! 跨两库统一寻址，故它们本身是跨平台的——非 Windows 上凭据库那一半恒为空，离线那一半照常可用。
 
 use aurora_auth::{
     Account, AccountCredentials, AccountManager, AuthError, CredentialStore, DeviceCodeResponse,
-    GameProfile, MicrosoftAuth, MicrosoftCredentials, MicrosoftSession, UsernameCheck,
-    YggdrasilClient, YggdrasilCredentials, offline_account, validate_username,
+    GameProfile, MicrosoftAuth, MicrosoftCredentials, MicrosoftSession, OfflineAccountStore,
+    UsernameCheck, YggdrasilClient, YggdrasilCredentials, offline_account, validate_username,
 };
 
 use crate::error::Result;
@@ -26,6 +29,9 @@ pub const MSA_CLIENT_ID_ENV: &str = "AURORA_MSA_CLIENT_ID";
 /// 旧的 login.live 调试 id `00000000402B5328` 不适用本项目的 Azure AD v2 端点（报 AADSTS700016），已弃用。
 /// 用户在 config.json 填 msa_client_id 或设环境变量 AURORA_MSA_CLIENT_ID 均可覆盖此默认。
 pub const DEFAULT_MSA_CLIENT_ID: &str = "bf8c139d-45e9-48c0-b469-175e8234e516";
+
+/// 离线账户库文件名，与 `config.json` 同挂在数据目录下。明文 JSON，可随数据目录整包迁移。
+pub const OFFLINE_ACCOUNTS_FILE: &str = "offline_accounts.json";
 
 /// 走完微软设备码登录全链并把结果账户写入账户库。
 ///
@@ -136,9 +142,10 @@ impl Aurora {
             .unwrap_or_else(|| DEFAULT_MSA_CLIENT_ID.to_owned()))
     }
 
-    /// 创建一个离线账户（不落库，供离线启动即用即弃）。
+    /// 就地造一个离线账户（不落库，供 `launch_offline` 那种「给个名字直接开」的即用即弃场景）。
     ///
     /// 用户名先过硬性校验（空/引号/超长直接报错），软性告警（含非标准字符）经事件通道上抛。
+    /// 要让账户在下次开启动器时还在，用 [`Aurora::add_offline_account`]。
     pub fn create_offline_account(
         &self,
         name: &str,
@@ -150,6 +157,140 @@ impl Aurora {
         }
         Ok(offline_account(name)?)
     }
+
+    /// 打开离线账户库（明文 JSON，跨平台可用）。
+    fn open_offline_accounts(&self) -> Result<OfflineAccountStore> {
+        Ok(OfflineAccountStore::load(
+            self.data_dir().join(OFFLINE_ACCOUNTS_FILE),
+        )?)
+    }
+
+    /// 保存一个离线账户并把它设为当前账户，返回落库后的账户。
+    ///
+    /// 校验与告警走与 [`Aurora::create_offline_account`] 同一条路（硬性错误冒泡、软性告警经事件通道），
+    /// 保证「即用即弃」与「持久保存」两条入口对用户名的判定完全一致。同名重复保存是幂等的。
+    pub fn add_offline_account(&self, name: &str, events: Option<&EventSink>) -> Result<Account> {
+        let UsernameCheck { warnings } = validate_username(name)?;
+        for warning in warnings {
+            emit(events, CoreEvent::warning(warning));
+        }
+        Ok(self.open_offline_accounts()?.add(name)?)
+    }
+
+    /// 已保存的离线账户列表。
+    pub fn offline_accounts(&self) -> Result<Vec<Account>> {
+        Ok(self.open_offline_accounts()?.accounts())
+    }
+
+    /// 全部账户：凭据库（微软/外置）在前，离线账户在后。
+    pub fn accounts(&self) -> Result<Vec<Account>> {
+        let mut accounts = self.credential_accounts()?;
+        accounts.extend(self.open_offline_accounts()?.accounts());
+        Ok(accounts)
+    }
+
+    /// 按 uuid 跨两库查账户（含令牌，供启动路径取用）。
+    pub fn find_account(&self, uuid: &str) -> Result<Option<Account>> {
+        if let Some(account) = self.open_offline_accounts()?.find(uuid) {
+            return Ok(Some(account));
+        }
+        Ok(self
+            .credential_accounts()?
+            .into_iter()
+            .find(|a| a.uuid == uuid))
+    }
+
+    /// 当前账户（若有）。
+    ///
+    /// 两个库各自记着自己的「当前」，仲裁规则只有一条：离线库里存着选中项时它就是全局当前账户。
+    /// 这条规则成立的前提是 [`Aurora::set_current_account`] 切到微软/外置账户时会清空离线选中项，
+    /// 二者必须一起看。
+    pub fn current_account(&self) -> Result<Option<Account>> {
+        if let Some(account) = self.open_offline_accounts()?.current() {
+            return Ok(Some(account));
+        }
+        self.credential_current()
+    }
+
+    /// 切换当前账户（uuid 属哪个库自动判定）。
+    pub fn set_current_account(&self, uuid: &str) -> Result<()> {
+        let mut offline = self.open_offline_accounts()?;
+        if offline.find(uuid).is_some() {
+            return Ok(offline.set_current(uuid)?);
+        }
+        // 目标是微软/外置账户：先把凭据库那边的选择落定，成功后才清掉离线选中项——
+        // 顺序反过来的话，凭据库那步失败就会留下「两个库都没选中」的空当。
+        self.credential_set_current(uuid)?;
+        Ok(offline.clear_current()?)
+    }
+
+    /// 删除账户（uuid 属哪个库自动判定）。
+    ///
+    /// 删掉凭据账户后必须补一次选中权回落：切到凭据账户的那一刻离线选中项已被清空（见
+    /// [`Aurora::set_current_account`]），若删掉的又正是最后一个凭据账户，两个库就会同时没有选中项——
+    /// 账户列表里明明还留着离线号，当前账户却是空的，用户得手动再点一次「设为当前」才能开游戏。
+    /// 回落到剩余离线账户的第一个，与 [`OfflineAccountStore::remove`] 自身的回落语义一致。
+    pub fn remove_account(&self, uuid: &str) -> Result<()> {
+        let mut offline = self.open_offline_accounts()?;
+        if offline.find(uuid).is_some() {
+            return Ok(offline.remove(uuid)?);
+        }
+        self.credential_remove(uuid)?;
+        if self.credential_current()?.is_none()
+            && offline.current().is_none()
+            && let Some(first) = offline.accounts().into_iter().next()
+        {
+            offline.set_current(&first.uuid)?;
+        }
+        Ok(())
+    }
+}
+
+// ---- 凭据库（微软/外置）一侧的跨平台缝 ----
+//
+// 凭据加密只有 Windows(DPAPI) 实现。非 Windows 上「读」返回空、「写」报账户不存在——那里确实没有
+// 任何凭据账户，这是如实回答而非兜底掩盖（离线账户走另一个库，不受影响）。
+
+#[cfg(windows)]
+impl Aurora {
+    fn credential_accounts(&self) -> Result<Vec<Account>> {
+        Ok(self.open_accounts()?.accounts().to_vec())
+    }
+
+    fn credential_current(&self) -> Result<Option<Account>> {
+        Ok(self.open_accounts()?.current().cloned())
+    }
+
+    fn credential_set_current(&self, uuid: &str) -> Result<()> {
+        let mut manager = self.open_accounts()?;
+        manager.set_current(uuid)?;
+        Ok(())
+    }
+
+    fn credential_remove(&self, uuid: &str) -> Result<()> {
+        let mut manager = self.open_accounts()?;
+        manager.remove(uuid)?;
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+impl Aurora {
+    fn credential_accounts(&self) -> Result<Vec<Account>> {
+        Ok(Vec::new())
+    }
+
+    fn credential_current(&self) -> Result<Option<Account>> {
+        Ok(None)
+    }
+
+    fn credential_set_current(&self, uuid: &str) -> Result<()> {
+        Err(AuthError::AccountNotFound(uuid.to_owned()).into())
+    }
+
+    fn credential_remove(&self, uuid: &str) -> Result<()> {
+        Err(AuthError::AccountNotFound(uuid.to_owned()).into())
+    }
 }
 
 #[cfg(windows)]
@@ -160,7 +301,17 @@ impl Aurora {
         Ok(AccountManager::load(store)?)
     }
 
-    /// 走微软设备码登录并把账户写入加密账户库，返回登录到的账户。
+    /// 把刚登录成功的账户落定为当前账户。
+    ///
+    /// 登录本身只往凭据库里 upsert，而 [`Aurora::current_account`] 的仲裁是「离线库存着选中项就赢」；
+    /// 不走这一步的话，玩家在选着某个离线账户时登录微软/外置，登完界面上的当前账户还是那个离线号，
+    /// 点开始游戏进的也仍是离线号。落定当前账户同时清掉离线选中项，两个库的选择因此永远只有一处。
+    fn adopt_as_current(&self, account: Account) -> Result<Account> {
+        self.set_current_account(&account.uuid)?;
+        Ok(account)
+    }
+
+    /// 走微软设备码登录并把账户写入加密账户库，返回登录到的账户（登录后即为当前账户）。
     pub async fn microsoft_login(
         &self,
         on_code: impl FnOnce(&DeviceCodeResponse),
@@ -168,7 +319,9 @@ impl Aurora {
         let client_id = self.msa_client_id()?;
         let auth = MicrosoftAuth::new(self.http(), client_id);
         let mut manager = self.open_accounts()?;
-        perform_microsoft_login(&auth, &mut manager, on_code).await
+        let account = perform_microsoft_login(&auth, &mut manager, on_code).await?;
+        drop(manager);
+        self.adopt_as_current(account)
     }
 
     /// 确保要启动的微软账户持有有效 Minecraft 令牌：缓存令牌在当前时刻仍有效则原样返回（不联网、不开库）；
@@ -198,6 +351,7 @@ impl Aurora {
     /// `server_url` 为用户填写的第三方验证服务器地址：先经 `resolve_api_root` 解析出真正的 API
     /// 根地址（跟随重定向与 `X-Authlib-Injector-API-Location` 头），再据此构造 Yggdrasil 客户端
     /// 完成认证与落库。解析出的根地址随凭据一并存储，供后续刷新/校验与 javaagent 拼装复用。
+    /// 登录后该账户即为当前账户。
     pub async fn authlib_login(
         &self,
         server_url: &str,
@@ -207,31 +361,10 @@ impl Aurora {
         let api_root = aurora_auth::yggdrasil::resolve_api_root(&self.http(), server_url).await?;
         let client = YggdrasilClient::new(self.http(), &api_root);
         let mut manager = self.open_accounts()?;
-        perform_authlib_login(&client, &api_root, &mut manager, username, password).await
-    }
-
-    /// 读取账户库中的全部账户。
-    pub fn accounts(&self) -> Result<Vec<Account>> {
-        Ok(self.open_accounts()?.accounts().to_vec())
-    }
-
-    /// 读取当前选中账户（若有）。
-    pub fn current_account(&self) -> Result<Option<Account>> {
-        Ok(self.open_accounts()?.current().cloned())
-    }
-
-    /// 切换当前账户。
-    pub fn set_current_account(&self, uuid: &str) -> Result<()> {
-        let mut manager = self.open_accounts()?;
-        manager.set_current(uuid)?;
-        Ok(())
-    }
-
-    /// 删除账户。
-    pub fn remove_account(&self, uuid: &str) -> Result<()> {
-        let mut manager = self.open_accounts()?;
-        manager.remove(uuid)?;
-        Ok(())
+        let account =
+            perform_authlib_login(&client, &api_root, &mut manager, username, password).await?;
+        drop(manager);
+        self.adopt_as_current(account)
     }
 }
 
@@ -560,6 +693,263 @@ mod tests {
             aurora.create_offline_account("", None),
             Err(CoreError::Auth(_))
         ));
+    }
+
+    /// 用同一个数据目录重开一个门面，等价于「关掉启动器再打开」。
+    fn aurora_at(data_dir: &std::path::Path) -> Aurora {
+        Aurora::for_test(
+            crate::config::AuroraConfig::default(),
+            data_dir.to_path_buf(),
+            data_dir.to_path_buf(),
+        )
+    }
+
+    #[test]
+    fn added_offline_accounts_survive_restart_with_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let aurora = aurora_at(tmp.path());
+            aurora.add_offline_account("Steve", None).unwrap();
+            aurora.add_offline_account("Alex", None).unwrap();
+        }
+
+        // 换一个门面实例重新读盘：账户与当前选中都必须还在（删掉 add 的落盘此断言即挂）。
+        let restarted = aurora_at(tmp.path());
+        let names: Vec<_> = restarted
+            .offline_accounts()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(names, ["Steve", "Alex"]);
+        assert_eq!(restarted.current_account().unwrap().unwrap().name, "Alex");
+        // 统一列表里也看得到（此处凭据库为空，故全部来自离线库）。
+        assert_eq!(restarted.accounts().unwrap().len(), 2);
+
+        // 明文落点就在数据目录下，与 config.json 同级。
+        assert!(tmp.path().join(OFFLINE_ACCOUNTS_FILE).is_file());
+    }
+
+    #[test]
+    fn offline_uuid_stays_stable_across_restart_and_readd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aurora = aurora_at(tmp.path());
+        let created = aurora.add_offline_account("Steve", None).unwrap();
+        // 与原版 UUID.nameUUIDFromBytes 一致的固定值——换了它，老存档里的玩家数据就对不上了。
+        assert_eq!(created.uuid, "5627dd98e6be3c21b8a8e92344183641");
+
+        aurora.remove_account(&created.uuid).unwrap();
+        let again = aurora_at(tmp.path())
+            .add_offline_account("Steve", None)
+            .unwrap();
+        assert_eq!(again.uuid, created.uuid);
+    }
+
+    #[test]
+    fn switching_and_removing_offline_accounts_moves_the_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aurora = aurora_at(tmp.path());
+        let steve = aurora.add_offline_account("Steve", None).unwrap();
+        let alex = aurora.add_offline_account("Alex", None).unwrap();
+
+        aurora.set_current_account(&steve.uuid).unwrap();
+        assert_eq!(
+            aurora_at(tmp.path())
+                .current_account()
+                .unwrap()
+                .unwrap()
+                .uuid,
+            steve.uuid
+        );
+
+        // 删掉当前选中项 -> 回落到剩下的第一个，且这一回落也要落盘。
+        aurora.remove_account(&steve.uuid).unwrap();
+        let restarted = aurora_at(tmp.path());
+        assert_eq!(
+            restarted.current_account().unwrap().unwrap().uuid,
+            alex.uuid
+        );
+        assert!(restarted.find_account(&steve.uuid).unwrap().is_none());
+
+        // 删光之后不再有当前账户。
+        restarted.remove_account(&alex.uuid).unwrap();
+        assert!(restarted.current_account().unwrap().is_none());
+        assert!(restarted.offline_accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn find_account_resolves_persisted_offline_uuid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aurora = aurora_at(tmp.path());
+        let created = aurora.add_offline_account("Steve", None).unwrap();
+
+        // 启动路径按 uuid 取账户：离线账户也必须查得到，否则「当前账户」点了启动会报账户不存在。
+        let found = aurora_at(tmp.path())
+            .find_account(&created.uuid)
+            .unwrap()
+            .expect("已保存的离线账户应能按 uuid 查到");
+        assert_eq!(found.name, "Steve");
+        assert_eq!(found.account_type, aurora_auth::AccountType::Offline);
+        assert!(
+            aurora
+                .find_account("ffffffffffffffffffffffffffffffff")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn add_offline_account_validates_like_the_ephemeral_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aurora = aurora_at(tmp.path());
+
+        // 非法用户名冒泡，且一个字节都不落盘。
+        assert!(matches!(
+            aurora.add_offline_account("bad\"name", None),
+            Err(CoreError::Auth(_))
+        ));
+        assert!(!tmp.path().join(OFFLINE_ACCOUNTS_FILE).exists());
+
+        // 含非标准字符：保存成功，同时经事件通道发出告警。
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let saved = aurora.add_offline_account("玩家一", Some(&tx)).unwrap();
+        drop(tx);
+        assert_eq!(saved.name, "玩家一");
+        let mut warned = false;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, CoreEvent::Warning(_)) {
+                warned = true;
+            }
+        }
+        assert!(warned, "非标准字符用户名应发出告警事件");
+        assert_eq!(aurora_at(tmp.path()).offline_accounts().unwrap().len(), 1);
+    }
+
+    /// 登录成功必须把「当前账户」从离线号手里接过来。
+    ///
+    /// 这是两个库共存后最容易漏的一处：登录只往凭据库 upsert，而 current_account 的仲裁让离线库先赢，
+    /// 于是玩家选着离线号去登微软，登完当前账户还是离线号，点开始游戏进的也是离线号。
+    /// 走 adopt_as_current（登录方法末尾调的正是它）才成立——把那一句删掉，或把
+    /// set_current_account 里的 clear_current 删掉，本用例即挂。
+    ///
+    /// 只在 Windows 跑：凭据库是 DPAPI，别的平台上根本没有「凭据账户」这一半。
+    #[cfg(windows)]
+    #[test]
+    fn login_takes_over_the_current_account_from_the_offline_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aurora = aurora_at(tmp.path());
+
+        let offline = aurora.add_offline_account("Steve", None).unwrap();
+        assert_eq!(
+            aurora.current_account().unwrap().unwrap().uuid,
+            offline.uuid,
+            "刚保存的离线账户应当是当前账户"
+        );
+
+        // 登录落库那一步：真登录只是多走一趟网络，最终动作就是把账户 upsert 进凭据库。
+        let logged_in = Account::new(
+            "0123456789abcdef0123456789abcdef",
+            "AuroraPlayer",
+            AccountCredentials::Microsoft(MicrosoftCredentials {
+                refresh_token: "rotated-refresh".into(),
+                minecraft_token: Some("MC-TOKEN".into()),
+                minecraft_expires_at: Some(u64::MAX),
+            }),
+        );
+        aurora
+            .open_accounts()
+            .unwrap()
+            .upsert(logged_in.clone())
+            .unwrap();
+
+        let adopted = aurora.adopt_as_current(logged_in.clone()).unwrap();
+        assert_eq!(adopted.uuid, logged_in.uuid);
+
+        // 重开门面读盘：当前账户已换成刚登录的那个，离线号还在列表里但不再被选中。
+        let restarted = aurora_at(tmp.path());
+        let current = restarted.current_account().unwrap().unwrap();
+        assert_eq!(current.uuid, logged_in.uuid);
+        assert_eq!(current.name, "AuroraPlayer");
+        assert_eq!(
+            current.account_type,
+            aurora_auth::AccountType::Microsoft,
+            "接管当前账户的必须是凭据账户本身，而不是同名回退"
+        );
+        let offline_names: Vec<_> = restarted
+            .offline_accounts()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(offline_names, ["Steve"], "登录不该删掉已保存的离线账户");
+
+        // 反向再切回离线号仍然成立，两个库的选择始终只有一处。
+        restarted.set_current_account(&offline.uuid).unwrap();
+        assert_eq!(
+            aurora_at(tmp.path())
+                .current_account()
+                .unwrap()
+                .unwrap()
+                .uuid,
+            offline.uuid
+        );
+    }
+
+    /// 删掉最后一个凭据账户后，当前账户必须回落到还留着的离线号。
+    ///
+    /// 这是两个库共存的另一半（上一条守的是登录方向）：登录时离线选中项被清空，此后再把那个凭据
+    /// 账户删掉，若不补一次回落，界面上就会出现「列表里明明还有账户，却没有一个是当前账户」，
+    /// 玩家必须手动再点一次「设为当前」。把 remove_account 里那段回落删掉，本用例即挂。
+    ///
+    /// 同时守住反向边界：凭据库里还剩别的账户时，选中权必须留在凭据库，不许被离线号抢走。
+    #[cfg(windows)]
+    #[test]
+    fn removing_the_last_credential_account_hands_the_selection_back_to_offline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aurora = aurora_at(tmp.path());
+        let offline = aurora.add_offline_account("Alex", None).unwrap();
+
+        let credential_account = |uuid: &str, name: &str| {
+            let account = Account::new(
+                uuid,
+                name,
+                AccountCredentials::Microsoft(MicrosoftCredentials {
+                    refresh_token: "rotated-refresh".into(),
+                    minecraft_token: Some("MC-TOKEN".into()),
+                    minecraft_expires_at: Some(u64::MAX),
+                }),
+            );
+            aurora
+                .open_accounts()
+                .unwrap()
+                .upsert(account.clone())
+                .unwrap();
+            aurora.adopt_as_current(account.clone()).unwrap();
+            account
+        };
+        let first = credential_account("0123456789abcdef0123456789abcdef", "AuroraPlayer");
+        let second = credential_account("fedcba9876543210fedcba9876543210", "AuroraBackup");
+
+        // 凭据库里还有别的账户：删完当前项由凭据库自己回落，离线号不该被拉上来。
+        aurora.remove_account(&second.uuid).unwrap();
+        let after_first_removal = aurora.current_account().unwrap().unwrap();
+        assert_eq!(after_first_removal.uuid, first.uuid);
+        assert_eq!(
+            after_first_removal.account_type,
+            aurora_auth::AccountType::Microsoft
+        );
+
+        // 删掉最后一个凭据账户：账户列表里只剩离线号，它就必须接手当前账户。
+        aurora.remove_account(&first.uuid).unwrap();
+        let restarted = aurora_at(tmp.path());
+        assert_eq!(restarted.accounts().unwrap().len(), 1);
+        let current = restarted
+            .current_account()
+            .unwrap()
+            .expect("删掉最后一个凭据账户后，剩下的离线账户必须接手当前账户");
+        assert_eq!(current.uuid, offline.uuid);
+        assert_eq!(current.name, "Alex");
+        assert_eq!(current.account_type, aurora_auth::AccountType::Offline);
     }
 
     #[test]

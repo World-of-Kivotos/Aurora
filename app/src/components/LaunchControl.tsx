@@ -34,7 +34,16 @@ export type LaunchPhase = "idle" | "launching" | "spawned";
 export interface LaunchInstallProgress {
   /** 总进度 0..1，四步加权后的值。按步骤推进单调不回退。 */
   overall: number;
-  /** 左下角那行「当前在干什么」，调用方已把步骤名、步内百分比与现场拼好。 */
+  // 左下角那行拆成 head / detail / rate 三段传进来，而不是一根拼好的字符串。
+  // 条只有这么宽，长文案必须有明确的让位次序（见 InstallProgress 里的 lead / tail）；
+  // 拼成一根就只能整行 truncate，而被切掉的永远是排在最后、也最要紧的速度。
+  /** 第一段：步骤名 + 步内百分比。 */
+  head: string;
+  /** 第二段：现场（文件计数 / 字节数 / 后端那句阶段说明）。窄的时候先让它走。 */
+  detail: string | null;
+  /** 第三段：速度。靠右钉住，永不让位；这一步报不出速度时为 null。 */
+  rate: string | null;
+  /** 三段拼齐的整行。只给 title 与 aria-valuetext 用——读屏与悬停提示不受版面宽度约束。 */
   activity: string;
   /**
    * 当前这一步有没有自己的计数。没有时这里补一个本步已用时——
@@ -85,7 +94,10 @@ const TEXT_RIGHT = 12; // 字样右缘：让开右侧竖线（4px 宽）再留 8
 // Download 比 Start 长三个字身，按 Start 那个盒宽会有半个词落在盒外点不着。
 // 盒子右缘不动、只往左长，所以竖线与字样右缘的位置在两种字样间不会跳。
 const DOWNLOAD_W = 268;
-const PROGRESS_W = 320; // 进度条形态：够放下一行阶段说明而不至于把整版留白吃掉
+// 进度条形态的盒宽。320 装不下「步骤名 + 步内百分比 + 文件计数 + 速度」这一整行，
+// 玩家看到的是被截成 "11.2 M…" 的速度；420 是在「装得下」与「不抢图」之间取的：
+// 它仍窄于右下角那一列已有的 460 上限，故这一列的最宽处没变，启动屏的版面不动。
+const PROGRESS_W = 420;
 
 function easeOut(t: number): number {
   return 1 - Math.pow(1 - t, 3);
@@ -149,10 +161,18 @@ function InstallProgress({
 
   // 总进度总是算得出来：四步的起点在启动屏那边写死，步内没有计数时就停在本步起点，
   // 也仍是一个不说谎的数。这里不再有 --% 与来回跑的加载条。
-  const percent = Math.round(Math.min(1, Math.max(0, progress.overall)) * 100);
+  //
+  // 大号数字与那道朱红轨画的都是**总进度**，同源于 progress.overall，故两者永远是同一个数；
+  // 步内百分比只出现在下面那行的 head 里，绝不许挪到这两处来。
+  const ratio = Math.min(1, Math.max(0, progress.overall));
+  const percent = Math.round(ratio * 100);
   const activity = counted
     ? progress.activity
     : `${progress.activity} · 已用 ${formatElapsed(elapsedMs)}`;
+  // 让位次序：左半（步骤名 + 现场）可以被截，右半（速度 / 已用时）钉死不截。
+  // 一行里最先失去意义的是「装到第几个文件」这种量级信息，最要紧的是还在动的那个数。
+  const lead = progress.detail === null ? progress.head : `${progress.head} · ${progress.detail}`;
+  const tail = progress.rate ?? (counted ? null : `已用 ${formatElapsed(elapsedMs)}`);
   const fg = onDark ? "text-paper-on" : "text-ink";
   // 轨底不是材质，是一道压淡的同色线：与右侧那根朱红竖规同一套「线」的语言。
   const track = onDark ? "bg-paper-on/25" : "bg-ink/15";
@@ -173,15 +193,23 @@ function InstallProgress({
       </span>
 
       <span className={`relative h-1 w-full overflow-hidden ${track}`} aria-hidden>
+        {/* 不给宽度挂过渡：一挂上，条就永远落后目标值一个缓动时长，而装 Minecraft 那一步
+            文件计数是大步跳的，玩家正好会撞见「数字已到 46%、条还在 34% 往上爬」——
+            那读起来是条卡住了，不是动画在走。宽度取未取整的比值：这条事件每秒来十来帧，
+            条自己就是平滑的，不需要 CSS 再替它补一段动画。 */}
         <span
-          className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-300"
-          style={{ width: `${percent}%` }}
+          className="absolute inset-y-0 left-0 bg-accent"
+          style={{ width: `${(ratio * 100).toFixed(2)}%` }}
         />
       </span>
 
-      <span className="truncate font-mono text-[11.5px] tracking-[0.02em]" title={activity}>
-        {activity}
-      </span>
+      <div
+        className="flex items-baseline gap-2 font-mono text-[11.5px] tracking-[0.02em]"
+        title={activity}
+      >
+        <span className="min-w-0 flex-1 truncate">{lead}</span>
+        {tail !== null && <span className="shrink-0 tabular-nums">· {tail}</span>}
+      </div>
     </div>
   );
 }

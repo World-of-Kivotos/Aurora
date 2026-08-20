@@ -32,11 +32,11 @@ import { useAppearance } from "../lib/appearance-context";
 import { plateMode } from "../lib/appearance";
 import { pageItem, springs } from "../lib/motion";
 import {
-  createOfflineAccount,
   currentAccount,
   getConfig,
   installManagedModpack,
   launchGame,
+  listAccounts,
   listInstalled,
   listMods,
   managedModpackFiles,
@@ -44,6 +44,7 @@ import {
   onCoreEvent,
   onGameCrash,
   onGameLog,
+  setCurrentAccount,
   stopGame,
   updateConfig,
   type AccountDto,
@@ -135,7 +136,12 @@ function stageRatio(progress: ModpackSyncProgress, feed: InstallFeed): number | 
   return null;
 }
 
-/** 左下角那行的现场补充：谁的数最实就用谁，都没有才退回后端那句中文阶段说明。 */
+/**
+ * 左下角那行的现场补充：谁的数最实就用谁，都没有才退回后端那句中文阶段说明。
+ *
+ * 速度不在这里拼进去（原先拼在文件计数后面）：条宽有限时整行只能从尾巴截，
+ * 而尾巴正是速度。现场与速度分成两段各走各的，让位次序由控件那边定。
+ */
 function stageDetail(progress: ModpackSyncProgress, feed: InstallFeed): string | null {
   if (progress.total_bytes !== null && progress.total_bytes > 0) {
     return `${formatModpackBytes(progress.downloaded_bytes)} / ${formatModpackBytes(progress.total_bytes)}`;
@@ -143,13 +149,84 @@ function stageDetail(progress: ModpackSyncProgress, feed: InstallFeed): string |
   const fresh = feed.stage === progress.stage ? feed : null;
   const download = fresh?.download ?? null;
   if (download !== null && download.total > 0) {
-    const files = `${download.finished}/${download.total} 个文件`;
-    return download.speed > 0 ? `${files} · ${formatModpackBytes(download.speed)}/s` : files;
+    return `${download.finished}/${download.total} 个文件`;
   }
   if (progress.total_files > 0) {
     return `${progress.completed_files}/${progress.total_files} 个文件`;
   }
   return progress.current_file ?? fresh?.message ?? null;
+}
+
+/**
+ * 靠右钉住的那个速度。
+ *
+ * 两个来源分别对应两条事件流：前三步下载器的 download 事件自带 speed（后端 EWMA 平滑过），
+ * 第四步的 modpack_sync 事件结构里根本没有这个字段，只能由 syncSpeed 传一个前端推算值进来
+ * （推法见 nextSyncSpeed）。报不出速度就返回 null，而不是画一个 0 B/s——
+ * 0 会被读成「卡住了」，没有那一格则只是这一步不报速度。
+ */
+function stageRate(
+  progress: ModpackSyncProgress,
+  feed: InstallFeed,
+  syncSpeed: number | null,
+): string | null {
+  if (progress.total_bytes !== null && progress.total_bytes > 0) {
+    return syncSpeed !== null && syncSpeed > 0 ? `${formatModpackBytes(syncSpeed)}/s` : null;
+  }
+  const download = feed.stage === progress.stage ? feed.download : null;
+  return download !== null && download.total > 0 && download.speed > 0
+    ? `${formatModpackBytes(download.speed)}/s`
+    : null;
+}
+
+/**
+ * 第四步（同步整合包文件）的速度靠前端按字节增量自己推。
+ *
+ * 后端下载器本身有平滑过的 speed，但它在桥接成 modpack_sync 事件时被丢掉了
+ * （aurora-core 的 download_progress_bridge 只搬了文件数与字节数），
+ * 而事件结构不归这一层改，「下载的时候速度没了」又是玩家实打实报的问题，故在这里推。
+ *
+ * 推法与后端同构：两次采样之间的字节增量除以间隔得瞬时值，再做指数滑动平均。
+ * 两个常数的取法：
+ *   MIN_SAMPLE —— 这条事件约每 100ms 来一帧，拿相邻两帧直接相除会把单帧抖动放大十倍，
+ *     故先攒够 400ms 再算一次瞬时值；
+ *   TAU —— 平滑的时间常数，按「读得出来」定：2s 的窗口既跟得上真实带宽的变化，
+ *     又不会让数字一秒跳三次。
+ * 权重按 1 - e^(-dt/tau) 现算而不是取一个固定值：采样间隔本就不均匀（事件由 watch 通道推送），
+ * 固定权重会让间隔长的那一帧被低估，平均值系统性偏低。
+ */
+const SYNC_SPEED_MIN_SAMPLE_MS = 400;
+const SYNC_SPEED_TAU_MS = 2000;
+
+interface SyncSpeedSample {
+  stage: ModpackSyncStage;
+  bytes: number;
+  at: number;
+  /** 平滑后的字节/秒。还没攒够两次采样时为 null——此时不报速度，而不是报 0。 */
+  speed: number | null;
+}
+
+function nextSyncSpeed(
+  prev: SyncSpeedSample | null,
+  progress: ModpackSyncProgress,
+  now: number,
+): SyncSpeedSample {
+  const bytes = progress.downloaded_bytes;
+  // 换步、或字节数掉头（重试重下会把计数重置）即重新起算：跨步平均出来的数没有任何意义。
+  if (prev === null || prev.stage !== progress.stage || bytes < prev.bytes) {
+    return { stage: progress.stage, bytes, at: now, speed: null };
+  }
+  const dt = now - prev.at;
+  // 采样间隔不够就原样留着锚点，下一帧接着攒——不是跳过这一帧的字节。
+  if (dt < SYNC_SPEED_MIN_SAMPLE_MS) return prev;
+  const instant = ((bytes - prev.bytes) * 1000) / dt;
+  const weight = 1 - Math.exp(-dt / SYNC_SPEED_TAU_MS);
+  return {
+    stage: progress.stage,
+    bytes,
+    at: now,
+    speed: prev.speed === null ? instant : prev.speed + weight * (instant - prev.speed),
+  };
 }
 
 /**
@@ -161,15 +238,21 @@ function stageDetail(progress: ModpackSyncProgress, feed: InstallFeed): string |
 export function installProgressView(
   progress: ModpackSyncProgress,
   feed: InstallFeed,
+  syncSpeed: number | null = null,
 ): LaunchInstallProgress {
   const [base, end] = STAGE_SPAN[progress.stage];
   const ratio = stageRatio(progress, feed);
   const label = SYNC_STAGE_LABEL[progress.stage];
   const head = ratio === null ? label : `${label} ${Math.round(ratio * 100)}%`;
   const detail = stageDetail(progress, feed);
+  const rate = stageRate(progress, feed, syncSpeed);
   return {
     overall: base + (end - base) * (ratio ?? 0),
-    activity: detail === null ? head : `${head} · ${detail}`,
+    head,
+    detail,
+    rate,
+    // 整行只给 title 与读屏用，所以三段照旧拼齐，不参与版面上的让位。
+    activity: [head, detail, rate].filter((part) => part !== null).join(" · "),
     counted: ratio !== null,
     stage: progress.stage,
   };
@@ -248,6 +331,12 @@ export function Home() {
           : "text-paper-on/70"
         : shade;
   const [account, setAccount] = useState<AccountDto | null>(null);
+  // 已保存的账户全表（微软 / 外置 / 离线三类同列一张表，见 list_accounts）。
+  // 启动屏只拿它渲染切换器：增、删、登录一律归账户页，这一屏不重复造那套表单。
+  const [accounts, setAccounts] = useState<AccountDto[]>([]);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  // 切换器是这一屏唯一的浮层，点外部要能关掉，故需要一个「什么算外部」的锚点。
+  const accountBoxRef = useRef<HTMLDivElement>(null);
   const [scan, setScan] = useState<VersionScanDto | null>(null);
   // config 里那一个实例的 id；入场随 load 拉取，装完游戏时由本页写回（见 load 与 installGame）。
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
@@ -263,6 +352,11 @@ export function Home() {
     message: null,
     download: null,
   });
+  // 第四步的速度：后端不发，由 nextSyncSpeed 按字节增量推。
+  // 采样锚点放 ref 而不是 state——它是推算的中间量，改动它本身不该触发重渲染；
+  // 真正要画出来的只有平滑后的那个值。
+  const syncSpeedRef = useRef<SyncSpeedSample | null>(null);
+  const [syncSpeed, setSyncSpeed] = useState<number | null>(null);
   // 要装的整合包地址。启动屏不再有地址输入框（那是配置，不是启动屏该管的事），
   // 于是只剩两个来源：卷宗页深链带过来的那条，或内置的官方地址。
   // 两条都已经过 validateModpackPointerUrl —— 深链在 managedModpackPointerFromSearch 里筛过，
@@ -297,8 +391,14 @@ export function Home() {
     setLoading(true);
     setError(null);
     try {
-      const [acc, sc, cfg] = await Promise.all([currentAccount(), listInstalled(), getConfig()]);
+      const [acc, list, sc, cfg] = await Promise.all([
+        currentAccount(),
+        listAccounts(),
+        listInstalled(),
+        getConfig(),
+      ]);
       setAccount(acc);
+      setAccounts(list);
       setScan(sc);
 
       // 单实例模型：config.selected_version 是那一个实例的 id，卷宗页与下载页都认它。
@@ -324,20 +424,52 @@ export function Home() {
     void load();
   }, [load]);
 
-  // 创建离线账户。
-  const handleCreateOffline = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const created = await createOfflineAccount("Steve");
-      setAccount(created);
-      toast(`已创建离线账户 ${created.name}`, "success");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [toast]);
+  // 切到另一个已保存的账户。
+  //
+  // 这一屏不再有「创建账户」：原先那颗键把名字写死成 Steve 直接建号，既问不到玩家要用哪个名字，
+  // 建出来的账户在旧实现里还根本不落盘。离线账户改成持久的多账户模型之后，
+  // 建号与登录统一归账户页，启动屏只做「选谁上」这一件事。
+  //
+  // 就地给一个填名字的输入框也考虑过，否掉的理由是材质：输入框走 .surface-sunken，
+  // 那是寄生层，不许直接铺在照片上，而这一屏整版就是照片。
+  const handleSwitchAccount = useCallback(
+    async (picked: AccountDto) => {
+      setSwitcherOpen(false);
+      if (picked.uuid === account?.uuid) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await setCurrentAccount(picked.uuid);
+        setAccount(picked);
+        toast(`已切换到 ${picked.name}`, "success");
+      } catch (e) {
+        setError(String(e));
+        toast(String(e), "error");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [account, toast],
+  );
+
+  // 点外部 / 按 Esc 关掉切换器。mousedown 阶段判定，免得与列表项的 click 抢先（同 Select）。
+  useEffect(() => {
+    if (!switcherOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (accountBoxRef.current && !accountBoxRef.current.contains(e.target as Node)) {
+        setSwitcherOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSwitcherOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [switcherOpen]);
 
   // 装游戏：读整合包清单 -> 装 Minecraft -> 装加载器 -> 同步文件，四步都在 install_managed_modpack 里。
   const installGame = useCallback(
@@ -353,6 +485,8 @@ export function Home() {
         message: null,
         download: null,
       });
+      syncSpeedRef.current = null;
+      setSyncSpeed(null);
 
       // installManagedModpack 自带的回调只送 modpack_sync（且按 operation_id 对号入座），
       // 而前三步的现场只走 stage / download 两种事件，得另开一条订阅去接。
@@ -377,6 +511,9 @@ export function Home() {
       let outcome;
       try {
         outcome = await installManagedModpack(url, (progress) => {
+          const sample = nextSyncSpeed(syncSpeedRef.current, progress, performance.now());
+          syncSpeedRef.current = sample;
+          setSyncSpeed(sample.speed);
           setInstallState({
             kind: "running",
             pointer_url: url,
@@ -602,7 +739,10 @@ export function Home() {
   //      免得闪一下 Download 又跳回 Start。
   const installForm: LaunchInstallState | null =
     installState.kind === "running"
-      ? { kind: "running", progress: installProgressView(installState.progress, installFeed) }
+      ? {
+          kind: "running",
+          progress: installProgressView(installState.progress, installFeed, syncSpeed),
+        }
       : installState.kind === "failed"
         ? { kind: "failed", onRetry: handleInstallFromControl }
         : (!loading && !current) || (installIntent.requested && installState.kind === "idle")
@@ -767,31 +907,106 @@ export function Home() {
             </div>
           )}
 
-          {/* 账户：头像 + 名字 / 类型 */}
+          {/* 账户：头像 + 名字 / 类型。整块同时是切换器的触发键——
+              启动屏上「账户」这一格只承担一个动作：换一个人上。
+              建号、登录、删号都在账户页，这里不重复造那套表单，只把已保存的几个摊开让人点。
+              版位与三态字色照旧（这一格的字号、间距、fg() 分档都没动），只是外面套了一层
+              定位上下文与一颗按钮，浮层绝对定位向上飘，不占位、不推挤右下角这一列。 */}
           {account ? (
-            <div className="flex items-center gap-3">
-              <SkinHead uuid={account.uuid} name={account.name} size={44} />
-              <div className="min-w-0 text-right">
-                <div className="truncate text-[16px] leading-tight font-extrabold">
-                  {account.name}
+            <div ref={accountBoxRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setSwitcherOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={switcherOpen}
+                aria-label="切换账户"
+                className="group flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+              >
+                <SkinHead uuid={account.uuid} name={account.name} size={44} />
+                {/* 宽度上限必须显式给：这一列是 items-end 的 shrink-to-fit，min-w-0 只允许收缩、
+                    不封顶，truncate 没有上限就永远轮不到省略。外置登录的用户名允许是邮箱，
+                    名字一长就把这一格顶出内容盒，被 main 的 overflow-clip 无声切掉半截。
+                    404 = 版本信息那一格的 460 减去头像 44 与 gap 12，两格右缘因此对齐。 */}
+                <div className="max-w-[404px] min-w-0 text-right">
+                  {/* 可点这件事只靠名字变朱红来说，与主操作键的悬停是同一套语言：
+                      这一屏不许为了一个悬停态在图上铺一块底。 */}
+                  <div className="truncate text-[16px] leading-tight font-extrabold transition-colors duration-200 group-hover:text-accent">
+                    {account.name}
+                  </div>
+                  <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/75", "weak")}`}>
+                    {ACCOUNT_TYPE_LABEL[account.account_type]}
+                  </div>
                 </div>
-                <div className={`mt-0.5 text-[11px] tracking-[0.1em] ${fg("text-ink/75", "weak")}`}>
-                  {ACCOUNT_TYPE_LABEL[account.account_type]}
-                </div>
-              </div>
+              </button>
+
+              <AnimatePresence>
+                {switcherOpen && (
+                  // 浮层取最实的一档材质：它压在照片上，身下又紧挨着裸字，不够实两层就会互相搅浑。
+                  // 字色显式钉回 text-ink —— 外层容器在裸字模式下把基色设成了纸色，
+                  // 那是给「直接压在图上」的字定的规则，进了自足材质就不作数。
+                  <motion.div
+                    role="menu"
+                    aria-label="已保存的账户"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    transition={springs.tap}
+                    className="surface-panel-strong absolute right-0 bottom-full z-30 mb-3 w-[252px] rounded-panel p-1 text-ink"
+                  >
+                    {/* 账户数量没有上限（离线名随手建、外置服务器多登几个），而这块浮层是向上长的：
+                        不封顶就会顶穿窗口顶部，被 body 的 overflow:hidden 无声裁掉，玩家既看不到也滚不到
+                        列表下半截。滚动只关在名单这一层，「管理账户…」留在盒子外面，任何时候都点得到。 */}
+                    <div role="none" className="max-h-64 overflow-y-auto">
+                      {accounts.map((saved) => (
+                        <button
+                          key={saved.uuid}
+                          type="button"
+                          role="menuitem"
+                          disabled={busy}
+                          onClick={() => void handleSwitchAccount(saved)}
+                          className="group/item flex w-full items-center gap-2.5 rounded-chip px-2 py-1.5 text-left hover:bg-ink hover:text-paper-on focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-45"
+                        >
+                          <SkinHead uuid={saved.uuid} name={saved.name} size={26} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-bold">{saved.name}</span>
+                            <span className="block text-[11px] opacity-75">
+                              {ACCOUNT_TYPE_LABEL[saved.account_type]}
+                            </span>
+                          </span>
+                          {saved.uuid === account.uuid && (
+                            <span className="shrink-0 text-[11px] font-bold text-accent group-hover/item:text-paper-on">
+                              当前
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    {/* 增删登录的唯一入口。放在列表末尾而不是做成一颗独立的键：
+                        它与「换个人上」是同一件事的两个深度，摆在一处才不用在图上再挖一个入口。 */}
+                    <div role="none" className="mt-1 border-t border-ink/10 pt-1">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => navigate("/account")}
+                        className="w-full rounded-chip px-2 py-1.5 text-left text-[12.5px] text-ink/75 hover:bg-ink hover:text-paper-on focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      >
+                        管理账户…
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ) : (
             <div className="flex flex-col items-end gap-2">
               <span className={`text-[13px] ${fg("text-ink/75", "weak")}`}>
                 {loading ? "正在读取账户…" : "还没有账户"}
               </span>
+              {/* 一个都没有时把人送去账户页，而不是就地建一个名字写死的号：
+                  离线名要玩家自己定，微软与外置登录更是只能在那边办。 */}
               {!loading && (
-                <Button
-                  variant="secondary"
-                  onClick={() => void handleCreateOffline()}
-                  disabled={busy}
-                >
-                  创建离线账户
+                <Button variant="secondary" onClick={() => navigate("/account")}>
+                  添加账户
                 </Button>
               )}
             </div>

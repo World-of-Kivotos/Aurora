@@ -444,16 +444,10 @@ fn scan_dto(scan: VersionScan) -> VersionScanDto {
     }
 }
 
-/// 读取当前选中账户。Windows 走加密账户库；非 Windows 无凭据库实现，返回 None 以保证跨平台可编译。
-#[cfg(windows)]
+/// 读取当前选中账户：门面自己跨「加密凭据库 + 明文离线库」两处仲裁，这里只负责摘成 DTO。
 fn read_current_account(aurora: &Aurora) -> Result<Option<AccountDto>, String> {
     let current = aurora.current_account().map_err(|e| e.to_string())?;
     Ok(current.as_ref().map(account_dto))
-}
-
-#[cfg(not(windows))]
-fn read_current_account(_aurora: &Aurora) -> Result<Option<AccountDto>, String> {
-    Ok(None)
 }
 
 // ---- 字符串枚举映射 ----
@@ -616,57 +610,19 @@ fn emit_warning(app: &AppHandle, message: String) {
 
 // ---- 账户库访问（凭据加密仅 Windows）----
 //
-// 微软/authlib 登录与账户读写在门面上均 `#[cfg(windows)]`。这里照 read_current_account 的兜底范式做
-// 跨平台缝：非 Windows 下读操作返回空，写/登录操作明确报“平台不受支持”，绝不静默假装成功。
+// 账户的读取/切换/删除在门面上已是跨平台的（离线账户走明文库，凭据账户走 DPAPI 库），命令直接调即可。
+// 只有微软/authlib 登录仍是 Windows 专属：非 Windows 下明确报“平台不受支持”，绝不静默假装成功。
 
 #[cfg(not(windows))]
 const WINDOWS_ONLY: &str = "该操作在当前平台不受支持（账户凭据加密仅限 Windows）";
 
-#[cfg(windows)]
-fn list_accounts_impl(aurora: &Aurora) -> Result<Vec<AccountDto>, String> {
-    let accounts = aurora.accounts().map_err(|e| e.to_string())?;
-    Ok(accounts.iter().map(account_dto).collect())
-}
-
-#[cfg(not(windows))]
-fn list_accounts_impl(_aurora: &Aurora) -> Result<Vec<AccountDto>, String> {
-    Ok(Vec::new())
-}
-
-#[cfg(windows)]
-fn set_current_account_impl(aurora: &Aurora, uuid: &str) -> Result<(), String> {
-    aurora.set_current_account(uuid).map_err(|e| e.to_string())
-}
-
-#[cfg(not(windows))]
-fn set_current_account_impl(_aurora: &Aurora, _uuid: &str) -> Result<(), String> {
-    Err(WINDOWS_ONLY.to_owned())
-}
-
-#[cfg(windows)]
-fn remove_account_impl(aurora: &Aurora, uuid: &str) -> Result<(), String> {
-    aurora.remove_account(uuid).map_err(|e| e.to_string())
-}
-
-#[cfg(not(windows))]
-fn remove_account_impl(_aurora: &Aurora, _uuid: &str) -> Result<(), String> {
-    Err(WINDOWS_ONLY.to_owned())
-}
-
 /// 按 uuid 取出完整账户（含令牌，仅供内部传给 launch_account，绝不过 IPC）。
-#[cfg(windows)]
+/// 门面跨两个库寻址，故离线账户同样可按 uuid 启动，不必非走 offline_name 那条路。
 fn find_account_impl(aurora: &Aurora, uuid: &str) -> Result<Account, String> {
     aurora
-        .accounts()
+        .find_account(uuid)
         .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|a| a.uuid == uuid)
         .ok_or_else(|| format!("账户 {uuid} 不存在"))
-}
-
-#[cfg(not(windows))]
-fn find_account_impl(_aurora: &Aurora, _uuid: &str) -> Result<Account, String> {
-    Err(WINDOWS_ONLY.to_owned())
 }
 
 /// 启动前静默续期：微软账户缓存的 Minecraft 令牌过期时用 refresh_token 换新并回写；其它账户原样返回。
@@ -806,7 +762,8 @@ async fn current_account(state: State<'_, RwLock<Aurora>>) -> Result<Option<Acco
     read_current_account(&aurora)
 }
 
-/// 创建一个离线账户，并示范“进度事件流”范式。
+/// 保存一个离线账户（写进数据目录下的明文 `offline_accounts.json`，关掉启动器再开还在），并把它设为
+/// 当前账户；同时示范“进度事件流”范式。同名重复创建是幂等的，不会长出第二条。
 ///
 /// 为什么这样转发（后续 install/launch 页面照抄的模板）：aurora-core 与任何 UI 框架解耦，它只认一个
 /// `tokio::mpsc<CoreEvent>` 作为 [`EventSink`]，不知道 Tauri 的存在。而 Tauri 的 `app.emit` 才是把事件
@@ -834,7 +791,7 @@ async fn create_offline_account(
     let account = {
         let aurora = state.read().await;
         aurora
-            .create_offline_account(&name, Some(&tx))
+            .add_offline_account(&name, Some(&tx))
             .map_err(|e| e.to_string())?
     };
 
@@ -921,21 +878,22 @@ async fn authlib_login_impl(
 #[tauri::command]
 async fn list_accounts(state: State<'_, RwLock<Aurora>>) -> Result<Vec<AccountDto>, String> {
     let aurora = state.read().await;
-    list_accounts_impl(&aurora)
+    let accounts = aurora.accounts().map_err(|e| e.to_string())?;
+    Ok(accounts.iter().map(account_dto).collect())
 }
 
 /// 切换当前选中账户。
 #[tauri::command]
 async fn set_current_account(uuid: String, state: State<'_, RwLock<Aurora>>) -> Result<(), String> {
     let aurora = state.read().await;
-    set_current_account_impl(&aurora, &uuid)
+    aurora.set_current_account(&uuid).map_err(|e| e.to_string())
 }
 
 /// 删除账户。
 #[tauri::command]
 async fn remove_account(uuid: String, state: State<'_, RwLock<Aurora>>) -> Result<(), String> {
     let aurora = state.read().await;
-    remove_account_impl(&aurora, &uuid)
+    aurora.remove_account(&uuid).map_err(|e| e.to_string())
 }
 
 /// 拉取官方版本清单（最新正式版/快照 + 全部可安装版本条目）。

@@ -36,13 +36,19 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> aurora_base::Result<()>
         source,
     })?;
 
-    // 单一写入者（&mut AccountManager 串行化）+ 进程号后缀，避免残留临时文件互相覆盖。
+    // 进程号 + 进程内自增序号：两者缺一不可。「同一进程里只有一个写入者」这条旧前提已不成立——
+    // 账户库与离线库都改成了每次操作现开一个实例（AccountManager / OfflineAccountStore），
+    // 上层命令又只持共享锁，于是两次操作可能同时写同一个目标文件；临时名只挂进程号的话它们会踩进
+    // 同一个临时文件，把彼此写了一半的内容 rename 出去，落盘结果既非旧值也非新值。
+    // 与 aurora-base 那份异步 `atomic_write` 的随机后缀同一目的，此处不引入随机数依赖，用原子计数器。
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let tmp = parent.join(format!(
-        ".{}.{}.tmp",
+        ".{}.{}.{}.tmp",
         path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("credentials"),
-        std::process::id()
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
 
     if let Err(err) = write_and_sync(&tmp, bytes) {
@@ -126,5 +132,41 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["credentials.bin".to_string()]);
+    }
+
+    /// 同一进程内并发写同一个目标文件：每次读回的都必须是某一位写入者的完整负载。
+    ///
+    /// 账户库与离线库都改成了每次操作现开一个实例、上层只持共享锁，两次账户操作因此可能真的
+    /// 同时落到这里。临时名若只挂进程号，两个写入者就共用同一个临时文件：一方 create 截断、
+    /// 另一方正写到一半，rename 出去的内容既非甲也非乙。把 tmp 名里的自增序号去掉，本用例即挂。
+    #[test]
+    fn concurrent_write_atomic_never_publishes_a_torn_file() {
+        // 长度与填充字节都随写入者不同：任何截断或交错都会掉出这个合法集合。
+        let payload = |writer: u8| vec![b'a' + writer; 4096 * (writer as usize + 1)];
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("credentials.bin");
+        std::thread::scope(|scope| {
+            for writer in 0..8u8 {
+                let file = file.clone();
+                scope.spawn(move || {
+                    let mine = payload(writer);
+                    for _ in 0..30 {
+                        write_atomic(&file, &mine).unwrap();
+                        let seen = std::fs::read(&file).unwrap();
+                        let author = seen[0];
+                        assert!(
+                            (b'a'..b'a' + 8).contains(&author),
+                            "读回的首字节不属于任何写入者：{author}"
+                        );
+                        assert_eq!(
+                            seen,
+                            payload(author - b'a'),
+                            "读到了被撕裂的文件：长度或填充与任何一位写入者的完整负载都对不上"
+                        );
+                    }
+                });
+            }
+        });
     }
 }

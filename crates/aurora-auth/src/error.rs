@@ -100,6 +100,18 @@ pub enum AuthError {
     #[error("凭据反序列化失败（凭据文件可能已损坏）")]
     CredentialDeserialize(#[source] serde_json::Error),
 
+    /// 离线账户库（明文 JSON）序列化失败。
+    #[error("离线账户库序列化失败")]
+    OfflineStoreSerialize(#[source] serde_json::Error),
+
+    /// 离线账户库（明文 JSON）解析失败。该文件允许用户手改，故把路径一并报出来供人自查。
+    #[error("离线账户库解析失败（{path} 可能已损坏）")]
+    OfflineStoreDeserialize {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+
     /// Windows DPAPI 加解密失败。message 为格式化后的系统错误，避免 error 层引入平台类型。
     #[error("Windows DPAPI {operation}失败: {message}")]
     Dpapi {
@@ -139,6 +151,8 @@ impl RetryableError for AuthError {
             | AuthError::AccountNotFound(_)
             | AuthError::CredentialSerialize(_)
             | AuthError::CredentialDeserialize(_)
+            | AuthError::OfflineStoreSerialize(_)
+            | AuthError::OfflineStoreDeserialize { .. }
             | AuthError::Dpapi { .. } => false,
         }
     }

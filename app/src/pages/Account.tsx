@@ -1,5 +1,7 @@
 // 账户页：微软正版 / 离线 / 外置（authlib-injector）三类账户的增删与切换。
-// 账户命令多为 Windows 专属：非 Windows 下 listAccounts 返回空、登录命令 reject——如实展示，不崩。
+// 三类账户在 list_accounts 里同列一张表：离线账户已改为持久保存（明文 offline_accounts.json），
+// 与凭据库里的正版/外置账户一样活过重启，故本页不需要为离线单开一块列表。
+// 登录命令仍是 Windows 专属：非 Windows 下会 reject——如实展示，不崩。
 // IPC reject 一个字符串；本页作为最外层展示层用 try/catch → toast 暴露，绝不吞。
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -62,6 +64,157 @@ function TextField({ label, value, onChange, type = "text", placeholder }: TextF
         className={INPUT_CLS}
       />
     </label>
+  );
+}
+
+interface SavedOfflineNamesProps {
+  names: string[];
+  onPick: (name: string) => void;
+}
+
+// 已保存的离线名一览（PCL 的「下拉可选」在这里摊成一排可点的名字）：点一下填进输入框，
+// 再点创建即切回该账户——后端同名保存是幂等的，不会长出第二条。
+// 一个都没有时整块不出现，免得空壳占着弹窗的高度。
+export function SavedOfflineNames({ names, onPick }: SavedOfflineNamesProps) {
+  if (names.length === 0) return null;
+  return (
+    <div>
+      <span className="mb-1.5 block text-[12.5px] font-bold text-ink/75">已保存的离线名</span>
+      <div className="flex flex-wrap gap-2">
+        {names.map((name) => (
+          <button
+            key={name}
+            type="button"
+            onClick={() => onPick(name)}
+            className="surface-control rounded-chip px-2.5 py-1 text-[12.5px] text-ink/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface AccountBoardProps {
+  // null = 尚未加载；[] = 已加载但为空。
+  accounts: AccountDto[] | null;
+  currentUuid: string | null;
+  loadError: string | null;
+  onRetry: () => void;
+  onActivate: (uuid: string) => void;
+  onRemove: (account: AccountDto) => void;
+}
+
+// 账户列表本体：错误 / 读取中 / 空 / 有账户四态。
+// 从页面里拆出来是为了能脱开 IPC 与 toast 上下文单测这四态——它只吃 props，不自己取数。
+export function AccountBoard({
+  accounts,
+  currentUuid,
+  loadError,
+  onRetry,
+  onActivate,
+  onRemove,
+}: AccountBoardProps) {
+  if (loadError) {
+    // 告警块用默认档材质。危险语态由图标与朱红字承担，不再靠一圈 border-danger：
+    // 材质的描边走 inset 阴影，容器要分语态得由材质层出变体，页面自己加边框只会打架。
+    // 报错正文用满档 danger 而不是 danger/80——后者压在这档玻璃上实算 4.26，不到 4.5。
+    return (
+      <div className="surface-panel rounded-panel p-[18px]">
+        <div className="flex items-start gap-3 text-danger">
+          <AlertIcon size={20} className="mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <div className="text-[14px] font-bold">读取账户失败</div>
+            <div className="mt-1 font-mono text-[12px] break-words text-danger">{loadError}</div>
+          </div>
+        </div>
+        <div className="mt-4">
+          <Button variant="secondary" icon={<RefreshIcon size={16} />} onClick={onRetry}>
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (accounts === null) {
+    // 读取中与空态这两句原本是裸字，从前靠内页的纸底托着；图铺满全站之后身下是照片，
+    // 必须自带一档材质。w-fit 让这块纸只包住那一行，不至于为一句话铺满整行。
+    return (
+      <p className="surface-panel w-fit rounded-panel px-4 py-3 font-mono text-[12px] tracking-[0.06em] text-ink/75">
+        正在读取账户…
+      </p>
+    );
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <div className="surface-panel rounded-panel px-5 py-2">
+        <EmptyState icon={<UserIcon />} title="还没有账户，用下方入口添加一个开始游戏。" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {/* 删除账户后 load() 重取会让卡片凭空消失、栅格硬跳位；靠 AnimatePresence 与 layout 让退场和重排连续可见。 */}
+      <AnimatePresence initial={false}>
+        {accounts.map((a) => {
+          const isCurrent = a.uuid === currentUuid;
+          // 「当前」那一档强调用 outline 而不是 border 或 ring：材质的描边是 ink/9 的 inset
+          // 阴影，强调不出「当前」；border 会让两态差出 1px 把栅格挤歪（原来靠两态都留边框绕开），
+          // 而 ring 在 Tailwind v4 里也是写 box-shadow，会被材质那条无层规则整条覆盖掉。
+          // outline 画在边框盒之外、不占布局、不与 box-shadow 争同一个属性。
+          return (
+            <motion.div
+              key={a.uuid}
+              layout
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={springs.settle}
+              className={[
+                "surface-panel flex flex-col rounded-panel p-4",
+                isCurrent ? "outline-1 outline-ink" : "",
+              ].join(" ")}
+            >
+              <div className="flex items-center gap-3.5">
+                <SkinHead uuid={a.uuid} name={a.name} size={44} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[15px] font-bold">{a.name}</span>
+                    {/* 切换当前账户时徽标在两张卡片间共享，避免一边灭一边亮的瞬移感。 */}
+                    {isCurrent && (
+                      <motion.span
+                        layoutId="current-account-badge"
+                        transition={springs.soft}
+                        // 实心 accent 底 + 纸色字（4.77）。原先的 bg-accent/12 淡底配朱红字
+                        // 在暗照片上只有 2.93，连图标的 3.0 都不到——徽标恰恰是最该一眼认出的那类字。
+                        className="shrink-0 rounded-chip bg-accent px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-paper-on"
+                      >
+                        当前
+                      </motion.span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-ink/75">{TYPE_LABEL[a.account_type]}</div>
+                </div>
+              </div>
+              <div className="mt-4 flex items-center gap-2">
+                {!isCurrent && (
+                  <Button variant="secondary" onClick={() => onActivate(a.uuid)}>
+                    设为当前
+                  </Button>
+                )}
+                <Button variant="secondary" onClick={() => onRemove(a)}>
+                  删除
+                </Button>
+              </div>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -136,6 +289,11 @@ export function Account() {
     }
   };
 
+  // 已保存的离线名：与主列表同一份数据源，不另发一次 IPC，免得两处对不上。
+  const savedOfflineNames = (accounts ?? [])
+    .filter((a) => a.account_type === "offline")
+    .map((a) => a.name);
+
   const openOffline = () => {
     setOfflineName("");
     setOfflineOpen(true);
@@ -150,7 +308,7 @@ export function Account() {
     setOfflineBusy(true);
     try {
       await createOfflineAccount(name);
-      toast("已创建离线账户", "success");
+      toast(`已保存离线账户 ${name}`, "success");
       setOfflineOpen(false);
       setOfflineName("");
       await load();
@@ -265,96 +423,14 @@ export function Account() {
           顶到内容真实高度，溢出原样传回外壳（那层是 overflow-clip，只会把底下的卡片无声裁掉）。
           pr-1 是给滚动条留的道，与 InstallPlanPreview 同一手法。 */}
       <motion.div variants={pageItem} className="min-h-0 flex-1 overflow-y-auto pr-1">
-        {loadError ? (
-          // 告警块用默认档材质。危险语态由图标与朱红字承担，不再靠一圈 border-danger：
-          // 材质的描边走 inset 阴影，容器要分语态得由材质层出变体，页面自己加边框只会打架。
-          // 报错正文用满档 danger 而不是 danger/80——后者压在这档玻璃上实算 4.26，不到 4.5。
-          <div className="surface-panel rounded-panel p-[18px]">
-            <div className="flex items-start gap-3 text-danger">
-              <AlertIcon size={20} className="mt-0.5 shrink-0" />
-              <div className="min-w-0">
-                <div className="text-[14px] font-bold">读取账户失败</div>
-                <div className="mt-1 font-mono text-[12px] break-words text-danger">{loadError}</div>
-              </div>
-            </div>
-            <div className="mt-4">
-              <Button variant="secondary" icon={<RefreshIcon size={16} />} onClick={load}>
-                重试
-              </Button>
-            </div>
-          </div>
-        ) : accounts === null ? (
-          // 读取中与空态这两句原本是裸字，从前靠内页的纸底托着；图铺满全站之后身下是照片，
-          // 必须自带一档材质。w-fit 让这块纸只包住那一行，不至于为一句话铺满整行。
-          <p className="surface-panel w-fit rounded-panel px-4 py-3 font-mono text-[12px] tracking-[0.06em] text-ink/75">
-            正在读取账户…
-          </p>
-        ) : accounts.length === 0 ? (
-          <div className="surface-panel rounded-panel px-5 py-2">
-            <EmptyState icon={<UserIcon />} title="还没有账户，用下方入口添加一个开始游戏。" />
-          </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* 删除账户后 load() 重取会让卡片凭空消失、栅格硬跳位；靠 AnimatePresence 与 layout 让退场和重排连续可见。 */}
-            <AnimatePresence initial={false}>
-              {accounts.map((a) => {
-                const isCurrent = a.uuid === currentUuid;
-                // 「当前」那一档强调用 outline 而不是 border 或 ring：材质的描边是 ink/9 的 inset
-                // 阴影，强调不出「当前」；border 会让两态差出 1px 把栅格挤歪（原来靠两态都留边框绕开），
-                // 而 ring 在 Tailwind v4 里也是写 box-shadow，会被材质那条无层规则整条覆盖掉。
-                // outline 画在边框盒之外、不占布局、不与 box-shadow 争同一个属性。
-                return (
-                  <motion.div
-                    key={a.uuid}
-                    layout
-                    initial={{ opacity: 0, scale: 0.96 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.96 }}
-                    transition={springs.settle}
-                    className={[
-                      "surface-panel flex flex-col rounded-panel p-4",
-                      isCurrent ? "outline-1 outline-ink" : "",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <SkinHead uuid={a.uuid} name={a.name} size={44} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-[15px] font-bold">{a.name}</span>
-                          {/* 切换当前账户时徽标在两张卡片间共享，避免一边灭一边亮的瞬移感。 */}
-                          {isCurrent && (
-                            <motion.span
-                              layoutId="current-account-badge"
-                              transition={springs.soft}
-                              // 实心 accent 底 + 纸色字（4.77）。原先的 bg-accent/12 淡底配朱红字
-                              // 在暗照片上只有 2.93，连图标的 3.0 都不到——徽标恰恰是最该一眼认出的那类字。
-                              className="shrink-0 rounded-chip bg-accent px-1.5 py-0.5 text-[10px] font-bold tracking-[0.08em] text-paper-on"
-                            >
-                              当前
-                            </motion.span>
-                          )}
-                        </div>
-                        <div className="mt-0.5 text-[12px] text-ink/75">
-                          {TYPE_LABEL[a.account_type]}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex items-center gap-2">
-                      {!isCurrent && (
-                        <Button variant="secondary" onClick={() => setActive(a.uuid)}>
-                          设为当前
-                        </Button>
-                      )}
-                      <Button variant="secondary" onClick={() => setRemoveTarget(a)}>
-                        删除
-                      </Button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
-        )}
+        <AccountBoard
+          accounts={accounts}
+          currentUuid={currentUuid}
+          loadError={loadError}
+          onRetry={load}
+          onActivate={setActive}
+          onRemove={setRemoveTarget}
+        />
       </motion.div>
 
       {/* 添加入口收进一块分区面板：小节标题本来是裸字，压在照片上读不出来；
@@ -437,12 +513,18 @@ export function Account() {
           </>
         }
       >
-        <TextField
-          label="玩家名"
-          value={offlineName}
-          onChange={setOfflineName}
-          placeholder="例如 Steve"
-        />
+        <div className="flex flex-col gap-4">
+          <TextField
+            label="玩家名"
+            value={offlineName}
+            onChange={setOfflineName}
+            placeholder="例如 Steve"
+          />
+          <SavedOfflineNames names={savedOfflineNames} onPick={setOfflineName} />
+          <p className="text-[12.5px] text-ink/75">
+            离线账户会保存在本机，下次打开启动器仍在；同名重复创建只会切回同一个账户。
+          </p>
+        </div>
       </Modal>
 
       <Modal

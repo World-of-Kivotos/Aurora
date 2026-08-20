@@ -7,6 +7,7 @@
 //! - [`error`]：本 crate 独立错误枚举 [`AuthError`]，`#[from] aurora_base::Error` 冒泡下层错误。
 //! - [`account`]：账户模型（uuid/名称/类型/令牌引用）与多账户管理 [`AccountManager`]。
 //! - [`offline`]：离线用户名合法性校验与稳定离线 UUID（与原版一致）。
+//! - [`offline_store`]：离线账户的明文 JSON 持久化（多账户共存、切换、删除）。
 //! - [`microsoft`]：微软设备码流全链（devicecode -> token -> XBL -> XSTS -> Minecraft -> profile）。
 //! - [`yggdrasil`]：Authlib-Injector 的 Yggdrasil 客户端与 ALI 元数据预取。
 //! - [`credential`]：凭据存储抽象 [`CredentialStore`]（跨平台缝）。
@@ -20,6 +21,7 @@ pub mod credential;
 pub mod error;
 pub mod microsoft;
 pub mod offline;
+pub mod offline_store;
 pub mod yggdrasil;
 
 #[cfg(windows)]
@@ -33,6 +35,7 @@ pub use credential::CredentialStore;
 pub use error::{AuthError, Result};
 pub use microsoft::{DeviceCodeResponse, MicrosoftAuth, MicrosoftSession, MsaEndpoints, MsaToken};
 pub use offline::{UsernameCheck, offline_account, offline_uuid, validate_username};
+pub use offline_store::{OfflineAccountDb, OfflineAccountStore};
 pub use yggdrasil::{
     AliMetadata, AuthenticateResponse, RefreshResponse, YggdrasilClient, YggdrasilMetadata,
 };

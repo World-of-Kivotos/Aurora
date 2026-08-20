@@ -241,9 +241,13 @@ export const installManagedModpack = (
 ): Promise<ModpackInstallOutcome> =>
   invokeModpackOperation<ModpackInstallOutcome>("install_managed_modpack", { pointerUrl }, onProgress);
 
+// 当前账户：后端跨「凭据库（微软/外置）+ 明文离线库」两处仲裁后给出唯一答案，前端不必自己拼。
 export const currentAccount = (): Promise<AccountDto | null> =>
   invoke<AccountDto | null>("current_account");
 
+// 保存离线账户：写进数据目录下的明文 offline_accounts.json，重启启动器仍在，并即刻成为当前账户。
+// 同名重复调用是幂等的（不会长出第二条），uuid 由用户名稳定派生，故同名永远同 uuid。
+// 用户名非法（空/含双引号/超过 16 字符）时 reject；含非标准字符只发 core-event 告警，仍会保存。
 export const createOfflineAccount = (name: string): Promise<AccountDto> =>
   invoke<AccountDto>("create_offline_account", { name });
 
@@ -256,8 +260,11 @@ export const authlibLogin = (
   password: string,
 ): Promise<AccountDto> => invoke<AccountDto>("authlib_login", { serverUrl, username, password });
 
+// 全部账户：凭据库里的微软/外置账户在前，已保存的离线账户在后。
+// 要单取离线那批，按 account_type === "offline" 过滤即可，不必另发一次 IPC。
 export const listAccounts = (): Promise<AccountDto[]> => invoke<AccountDto[]>("list_accounts");
 
+// 切换与删除都按 uuid 寻址，账户在哪个库由后端自行判定，调用方不需要先知道它是哪一类。
 export const setCurrentAccount = (uuid: string): Promise<void> =>
   invoke("set_current_account", { uuid });
 
