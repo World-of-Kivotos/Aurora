@@ -414,13 +414,26 @@ fn parse_quilt_metadata(bytes: &[u8], path: &Path) -> Result<Option<ModMetadata>
     }))
 }
 
+/// `mods.toml` 里 `authors` 的两种合法写法。
+///
+/// Forge 文档给的是逗号分隔的单字符串，但经 architectury 打包的模组会写成 TOML 数组
+/// （DistantHorizons 的文件里甚至留了一句注释说明这是被 architectury 逼的），Forge 自己照读不误。
+/// 这里必须两种都认：`toml::from_str` 是整份文件一起反序列化，单单一个 authors 字段类型对不上，
+/// 整份 mods.toml 连同 modId / 版本 / 描述一起作废，模组在列表里会变成一条没名字的裸文件名。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TomlAuthors {
+    One(String),
+    Many(Vec<String>),
+}
+
 #[derive(Debug, Deserialize)]
 struct ModsToml {
     #[serde(default)]
     mods: Vec<ModsTomlEntry>,
     /// 顶层作者（部分模组把 authors 写在顶层而非 `[[mods]]` 内）。
     #[serde(default)]
-    authors: Option<String>,
+    authors: Option<TomlAuthors>,
     /// `[[dependencies.<modid>]]`：键是「声明这些依赖的那个 mod 的 id」，值是它的依赖数组。
     /// 一个 jar 里塞多个 mod 时会有多组。
     #[serde(default)]
@@ -467,7 +480,7 @@ struct ModsTomlEntry {
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
-    authors: Option<String>,
+    authors: Option<TomlAuthors>,
 }
 
 fn parse_toml_metadata(
@@ -532,16 +545,19 @@ fn parse_toml_metadata(
     }))
 }
 
-/// 把 `"作者甲, 作者乙"` 拆成去空白、去空项的作者列表。
-fn split_authors(raw: Option<String>) -> Vec<String> {
-    raw.map(|value| {
-        value
-            .split(',')
-            .map(|author| author.trim().to_string())
-            .filter(|author| !author.is_empty())
-            .collect()
-    })
-    .unwrap_or_default()
+/// 把 `"作者甲, 作者乙"` 或 `["作者甲", "作者乙"]` 归一成去空白、去空项的作者列表。
+fn split_authors(raw: Option<TomlAuthors>) -> Vec<String> {
+    let cleaned = |author: &str| -> Option<String> {
+        let trimmed = author.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
+    match raw {
+        None => Vec::new(),
+        // 字符串形态只能靠逗号猜分隔，作者名里真有逗号也就只能认了——这是这种写法自带的歧义。
+        Some(TomlAuthors::One(value)) => value.split(',').filter_map(cleaned).collect(),
+        // 数组形态作者已经自己分好了，不再二次切分：再切一刀会把 "Doe, John" 拆成两个人。
+        Some(TomlAuthors::Many(list)) => list.iter().filter_map(|a| cleaned(a)).collect(),
+    }
 }
 
 /// 切换模组启用/禁用状态，返回切换后的新路径。
@@ -827,6 +843,77 @@ mandatory=true
         let meta = parse_mod_metadata(&jar).await.unwrap().unwrap();
         assert_eq!(meta.mod_id, "primary");
         assert_eq!(meta.depends, vec!["forge"]);
+    }
+
+    /// authors 写成 TOML 数组的 Forge 模组（architectury 打包出来的都是这样，
+    /// 整合包里的 DistantHorizons 就是真实样本）。
+    ///
+    /// 断言刻意不止看 authors：这个字段类型对不上时 serde 会让整份文件反序列化失败，
+    /// 于是 modId / 版本 / 描述 / 依赖全部一起丢，模组在列表里只剩一个裸文件名。
+    /// 把整份元数据都钉住，才是这条回归真正要守的东西。
+    #[tokio::test]
+    async fn parses_forge_mods_toml_with_array_authors() {
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("distanthorizons.jar");
+        let descriptor = r#"modLoader = "javafml"
+loaderVersion = "*"
+license = "LGPL"
+
+[[mods]]
+    modId = "distanthorizons"
+    version = "2.4.5-b"
+    displayName = "Distant Horizons"
+    authors = ["James Seibel", " Leonardo Amato ", "", "coolGi"]
+    description = "远景渲染"
+
+[[dependencies.distanthorizons]]
+    modId = "forge"
+    mandatory = true
+    versionRange = "[0,)"
+
+[[dependencies.distanthorizons]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "[1.20, 1.20.1,)"
+
+[[dependencies.distanthorizons]]
+    modId = "oculus"
+    mandatory = false
+    versionRange = "[1.8.0,)"
+"#
+        .as_bytes();
+        build_jar(&jar, &[("META-INF/mods.toml", descriptor)]);
+
+        let meta = parse_mod_metadata(&jar).await.unwrap().expect("应有元数据");
+        assert_eq!(meta.mod_id, "distanthorizons");
+        assert_eq!(meta.name.as_deref(), Some("Distant Horizons"));
+        assert_eq!(meta.version.as_deref(), Some("2.4.5-b"));
+        assert_eq!(meta.description.as_deref(), Some("远景渲染"));
+        // 首尾空白剪掉、空串丢掉；已经分好的条目不再按逗号二次切分。
+        assert_eq!(meta.authors, vec!["James Seibel", "Leonardo Amato", "coolGi"]);
+        assert_eq!(meta.minecraft_version.as_deref(), Some("[1.20, 1.20.1,)"));
+        // oculus 是 mandatory=false，不该进必需依赖。
+        assert_eq!(meta.depends, vec!["forge", "minecraft"]);
+        assert_eq!(meta.loader, ModLoader::Forge);
+        assert_eq!(meta.format, MetadataFormat::ForgeToml);
+    }
+
+    /// 数组元素自带逗号时按一个人算，不再切开——与字符串形态的逗号语义刻意不同。
+    #[tokio::test]
+    async fn array_authors_keep_commas_inside_one_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("comma.jar");
+        let descriptor = br#"modLoader="javafml"
+loaderVersion="*"
+
+[[mods]]
+modId="comma"
+authors=["Doe, John", "Ada"]
+"#;
+        build_jar(&jar, &[("META-INF/mods.toml", descriptor)]);
+
+        let meta = parse_mod_metadata(&jar).await.unwrap().expect("应有元数据");
+        assert_eq!(meta.authors, vec!["Doe, John", "Ada"]);
     }
 
     #[tokio::test]
