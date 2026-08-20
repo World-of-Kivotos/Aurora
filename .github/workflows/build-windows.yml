@@ -1,7 +1,11 @@
-# 手动触发的 Windows x64 安装包构建。
+# 手动触发的 Windows x64 安装包构建，可选一并发布到 GitHub Release。
 #
-# 刻意不挂 push/tag 触发：现阶段 dev 分支提交频繁，每次都跑一遍 Rust 全量编译既慢又没人看。
+# 刻意不挂 push/tag 触发：现阶段提交频繁，每次都跑一遍 Rust 全量编译既慢又没人看。
 # 需要装机验证时到 Actions 页面点一次 Run workflow，选分支即可。
+#
+# 勾上 publish 才会发 Release。发布是自更新链路的最后一环：客户端的更新端点固定指向
+# releases/latest/download/latest.json，不发 Release 这个地址就是 404——正是 2026-08-20
+# 之前的状态（构建、签名、清单全都对，就是没人把它们传上去）。
 name: 构建 Windows 安装包
 
 on:
@@ -12,18 +16,29 @@ on:
         type: choice
         options: [release, debug]
         default: release
+      publish:
+        description: 构建通过后发布到 GitHub Release（仅 main / hotfix 分支；开发版不做自更新）
+        type: boolean
+        default: false
 
 # 只保留同一分支上最后一次手动触发：连点两下不该同时跑两份全量编译。
 concurrency:
   group: build-windows-${{ github.ref }}
   cancel-in-progress: true
 
+# 工作流级取最小权限。写权限只给 publish 作业，构建作业全程只读。
 permissions:
   contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    # 发布作业要靠这些值定位产物、拼 tag，全部由构建作业单点产出，避免两边各算一套。
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.notes.outputs.channel }}
+      artifact: ${{ steps.notes.outputs.artifact }}
+      installer: ${{ steps.collect.outputs.installer }}
     # 首跑是冷缓存，整个 workspace 要编两遍（test/clippy 走 debug，打包走 release），
     # Windows runner 上这两遍加起来能逼近一小时。给足余量不是保守——超时会让 rust-cache
     # 存不下缓存，下一次触发照样冷编译，卡在同一个坎上出不去。
@@ -83,7 +98,37 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $info = node scripts/release-notes.mjs resolve "${{ github.ref_name }}" | ConvertFrom-Json
           "channel=$($info.channel)" >> $env:GITHUB_OUTPUT
+          # 产物名在上传与发布两处都要用，在这里定一次，别让两边各拼一遍。
+          "artifact=Aurora-${{ steps.meta.outputs.version }}-$($info.channel)-windows-x64-nsis" >> $env:GITHUB_OUTPUT
           "采用 $($info.file)（$($info.channel) 频道）"
+
+      # 发布是不可撤销的动作，前置条件必须在编译四十分钟之前查清楚，而不是最后一步才拒绝。
+      - name: 发布前置校验
+        if: ${{ inputs.publish }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          if ("${{ inputs.profile }}" -ne "release") {
+            Write-Host "::error::debug 包只用于验证流程本身，不发给用户"
+            exit 1
+          }
+          # channelOf 把 main 与 hotfix/* 归为 main 频道，其余（含 dev）归 dev。
+          # 开发版不做自更新：它永远不进 Release，也就永远不会出现在更新端点上。
+          if ("${{ steps.notes.outputs.channel }}" -ne "main") {
+            Write-Host "::error::开发版不做自更新，只有 main / hotfix/* 分支能发 Release；当前分支 ${{ github.ref_name }} 属 dev 频道"
+            exit 1
+          }
+          $tag = "v${{ steps.meta.outputs.version }}"
+          gh release view $tag -R "${{ github.repository }}" > $null 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "::error::$tag 已经发布过。要发新版先 bump 版本号：node scripts/version.mjs set x.y.z"
+            exit 1
+          }
+          Write-Host "可以发布 $tag（${{ steps.notes.outputs.channel }} 频道）"
+          exit 0
 
       - name: 类型检查
         working-directory: app
@@ -138,6 +183,13 @@ jobs:
             exit 1
           }
           Get-ChildItem $found -Filter *.exe | ForEach-Object { "产物 $($_.Name) $([math]::Round($_.Length/1MB,1)) MB" }
+          $exe = Get-ChildItem $found -Filter *.exe | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "产物目录里没有 .exe"
+            exit 1
+          }
+          # 安装包文件名同时决定 latest.json 里的下载地址与 Release 资产名，发布作业要核对三者一致。
+          "installer=$($exe.Name)" >> $env:GITHUB_OUTPUT
           # 缺私钥时上一步就已经失败了，走到这里没有 .sig 说明 createUpdaterArtifacts 配置出了问题，
           # 与其产出一个装不上更新的包，不如当场失败。
           $sig = Get-ChildItem $found -Filter *.sig -ErrorAction SilentlyContinue
@@ -185,7 +237,7 @@ jobs:
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: Aurora-${{ steps.meta.outputs.version }}-${{ steps.notes.outputs.channel }}-windows-x64-nsis
+          name: ${{ steps.notes.outputs.artifact }}
           path: |
             ${{ steps.collect.outputs.dir }}/*.exe
             ${{ steps.collect.outputs.dir }}/*.sig
@@ -193,3 +245,100 @@ jobs:
             ${{ steps.collect.outputs.dir }}/release-notes.md
           if-no-files-found: error
           retention-days: 14
+
+  # 发布单独成一个作业，只有它拿 contents: write——构建作业全程只读。
+  # 开发版走不到这里：上面的「发布前置校验」在编译之前就拦下了 dev 频道。
+  publish:
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: v${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.build.outputs.version }}
+      INSTALLER: ${{ needs.build.outputs.installer }}
+
+    steps:
+      - name: 取回构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+
+      # 三个名字必须严丝合缝：latest.json 里写的下载地址、真正上传上去的资产名、以及 tag。
+      # 对不上不会有任何报错，只会让用户点更新时拿到 404，所以在上传之前先自己核一遍。
+      - name: 核对清单与产物一致
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -l
+          test -f "$INSTALLER"
+          test -f "$INSTALLER.sig"
+          test -f latest.json
+          test -f release-notes.md
+          expected="https://github.com/$REPO/releases/download/$TAG/$INSTALLER"
+          actual=$(jq -r '.platforms["windows-x86_64"].url' latest.json)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::latest.json 的下载地址是 $actual，与将要上传的资产对不上（应为 $expected）"
+            exit 1
+          fi
+          if [ "$(jq -r .version latest.json)" != "$VERSION" ]; then
+            echo "::error::latest.json 的版本号与构建版本 $VERSION 不一致"
+            exit 1
+          fi
+          if [ -z "$(jq -r '.platforms["windows-x86_64"].signature' latest.json)" ]; then
+            echo "::error::latest.json 里没有签名，此包无法通过客户端校验"
+            exit 1
+          fi
+
+      # --latest 与「不是 prerelease」是硬要求：GitHub 的 /releases/latest/ 会跳过 draft 和
+      # prerelease，而客户端的更新端点正是走那个路径，发成预发布等于没发。
+      - name: 创建 Release
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          # 参数走数组而不是反斜杠续行：YAML 块标量里一个漏掉的反斜杠会把整条命令悄悄接成一行。
+          args=(
+            --repo "$REPO"
+            --target "${{ github.sha }}"
+            --title "Aurora $VERSION"
+            --notes-file release-notes.md
+            --latest
+          )
+          gh release create "$TAG" "${args[@]}" "$INSTALLER" "$INSTALLER.sig" latest.json
+
+      # 发完不验就等于没发。这里走的是客户端真正会请求的那个地址，不是 API。
+      - name: 验证更新端点真的通了
+        run: |
+          set -euo pipefail
+          endpoint="https://github.com/$REPO/releases/latest/download/latest.json"
+          code=""
+          for i in 1 2 3 4 5; do
+            # curl 连不上时 -w 自己就会打出 000 并返回非零，这里只需吞掉退出码，别再补一个。
+            code=$(curl -sSL -o manifest.json -w '%{http_code}' "$endpoint" || true)
+            code=${code:-000}
+            [ "$code" = "200" ] && break
+            echo "第 $i 次拿到 HTTP $code，等 5 秒重试"
+            sleep 5
+          done
+          if [ "$code" != "200" ]; then
+            echo "::error::更新端点仍是 HTTP $code：$endpoint"
+            exit 1
+          fi
+          got=$(jq -r .version manifest.json)
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::端点上的版本是 $got，不是刚发的 $VERSION"
+            exit 1
+          fi
+          # 光有清单没用，安装包地址也得真能下。只取首字节，别为验证拖一整个包。
+          url=$(jq -r '.platforms["windows-x86_64"].url' manifest.json)
+          code=$(curl -sSL -o /dev/null -w '%{http_code}' -r 0-0 "$url")
+          case "$code" in
+            200|206) ;;
+            *) echo "::error::安装包地址返回 HTTP $code：$url"; exit 1 ;;
+          esac
+          echo "更新端点已就绪：$endpoint -> $got"
