@@ -9,7 +9,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { CrashBanner } from "../components/CrashBanner";
-import { LaunchControl, type LaunchPhase } from "../components/LaunchControl";
+import {
+  LaunchControl,
+  type LaunchInstallState,
+  type LaunchPhase,
+} from "../components/LaunchControl";
 import { ModpackInstallFlow, type ModpackInstallState } from "../components/ModpackInstallFlow";
 import { SkinHead } from "../components/SkinHead";
 import { useToast } from "../components/Toast";
@@ -44,6 +48,7 @@ import {
 import {
   parseModpackSyncError,
   validateModpackPointerUrl,
+  type CheckedManagedModpackStatus,
   type ManagedModpackStatus,
 } from "../lib/modpack-ui";
 import { modpackOwnerOf } from "../lib/modpack-ownership";
@@ -67,6 +72,19 @@ const INITIAL_MODPACK_INSTALL_PROGRESS = {
   total_bytes: null,
   current_file: null,
 } as const;
+
+// 受管整合包在界面上的名字。拆成「包名 + 通道」两半是留给将来的双通道切换：
+// 用户要的「悬停飘出 Beta」这一半现在做不了——服务端 pack_version 表没有 channel 列，
+// 且唯一索引钉死「全局同时只能有一个 published 版本」，Beta 通道要先做库迁移才存在，
+// 所以这次只落 Master，不造一个点了没反应的假入口。
+//
+// 将来接 Beta 要动的地方只有两处：
+//   1) 通道名改成从 managedStatus.subscription 里读（届时后端会把 channel 一并带出来），
+//      本文件不需要再新造 IPC；
+//   2) 悬浮切换器挂到下面那个 relative 的实例名容器上（它已经是定位上下文），
+//      从右向左飘出，不改右下角这一列的版位。
+const MODPACK_NAME = "World of Kivotos";
+const MODPACK_CHANNEL = "Master";
 
 const ACCOUNT_TYPE_LABEL: Record<AccountType, string> = {
   microsoft: "微软正版",
@@ -92,53 +110,6 @@ const PLATE_NAKED = "mt-auto ml-auto flex flex-col items-end gap-6 pt-10";
 // 兜底纸片: 图明暗跨度大到两种字色都撑不住时才用。走信息密集档, 它最实。
 const PLATE_FROSTED =
   "surface-panel-strong mt-auto ml-auto flex flex-col items-end gap-6 rounded-panel px-7 py-6";
-
-/**
- * 游戏还没装上时占住 Start 的版位。
- *
- * 语义必须换掉：那颗 Start 在没有实例时只会是一颗按下去必然失败的按钮，
- * 而这一屏右下角是玩家眼里唯一的主操作位，它说什么，玩家就以为该做什么。
- *
- * 视觉沿用 LaunchControl 的裸字语言（不套任何材质、右缘对齐、朱红竖规压在右侧、
- * 字色随 onDark 反相），版位与量级不动。之所以不是给 LaunchControl 加一个模式：
- * 那颗按钮整套 rAF 手写动效是为「启动进度」写的，安装进度另有面板承载，
- * 塞进去只会让两件互不相干的进度互相牵制。
- */
-function InstallControl({
-  onDark,
-  busy,
-  onInstall,
-}: {
-  onDark: boolean;
-  busy: boolean;
-  onInstall: () => void;
-}) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onInstall}
-      disabled={busy}
-      aria-label="安装游戏"
-      // 22px 是 LaunchControl 里字样右缘到竖线的同一个气口，右下角这两种形态换来换去时竖规不会跳。
-      style={{ height: 62, paddingRight: 26 }}
-      whileTap={{ scale: 0.98 }}
-      transition={springs.tap}
-      className="group relative inline-flex items-center focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-4 disabled:pointer-events-none disabled:opacity-40"
-    >
-      <span
-        className={`text-[34px] leading-none font-extrabold tracking-[-0.01em] ${
-          onDark ? "text-paper-on" : "text-ink"
-        } transition-colors duration-200 group-hover:text-accent`}
-      >
-        {busy ? "安装中" : "安装游戏"}
-      </span>
-      <span
-        aria-hidden
-        className="absolute top-1/2 right-0 h-[42px] w-[4px] -translate-y-1/2 bg-accent"
-      />
-    </motion.button>
-  );
-}
 
 export function Home() {
   const { toast } = useToast();
@@ -176,6 +147,8 @@ export function Home() {
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   // 当前版本的 Mod 数量（仅装了加载器时有意义）；随当前版本变化重取。
   const [modCount, setModCount] = useState<number | null>(null);
+  // 当前实例的受管整合包订阅。null = 没订阅（玩家自己拼的纯净版实例），右下角就照旧显示实例信息。
+  const [managedStatus, setManagedStatus] = useState<CheckedManagedModpackStatus | null>(null);
   // 装游戏这条链路的状态机。与启动链路完全分开：一个是把游戏搞下来，一个是把它跑起来。
   const [installState, setInstallState] = useState<ModpackInstallState>({ kind: "idle" });
   // 面板里此刻填着的整合包地址。右下角那颗「安装游戏」要装的是它，而不是内置那条——
@@ -363,6 +336,28 @@ export function Home() {
     };
   }, [currentId, currentHasLoader]);
 
+  // 当前实例订没订受管整合包。装完游戏那一轮 load() 会换掉 currentId，于是这里跟着重取，
+  // 名字从实例 id 翻成整合包名不需要额外的信号。
+  // 读不到就当没订阅：这一格是「这个实例是什么」的陈述，宁可退回实例自己的 id，
+  // 也不能在拿不准的时候把整合包名字挂上去——那是拿一句没核实过的话糊在界面上。
+  useEffect(() => {
+    if (!currentId) {
+      setManagedStatus(null);
+      return;
+    }
+    let cancelled = false;
+    void managedModpackStatus(currentId)
+      .then((status) => {
+        if (!cancelled) setManagedStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setManagedStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentId]);
+
   const handlePlay = useCallback(async () => {
     if (!account || !current) return;
     const versionId = current.id;
@@ -430,10 +425,17 @@ export function Home() {
     }
   }, [toast, dropRunListeners]);
 
-  // 版本副行：MC 版本(若与实例名不同) · 加载器/原版 · Mod 数量，按需拼接；与主行(实例名)字号字重分层。
+  // 实例名这一格的两个来源：订了受管整合包就报整合包名，没订（玩家自己拼的纯净版实例）仍报实例 id。
+  // 不是无条件写死：服务端至今一个整合包版本都没发布过（/pack/latest 实测 404），
+  // 无条件写死等于拿一句没核实过的话糊在界面上，玩家点开管理页会看到对不上的东西。
+  const subscribed = managedStatus !== null;
+  const instanceTitle = subscribed ? `${MODPACK_NAME} - ${MODPACK_CHANNEL}` : (current?.id ?? "");
+
+  // 版本副行：MC 版本 · 加载器/原版 · Mod 数量，按需拼接；与主行(实例名)字号字重分层。
+  // 报整合包名时 MC 版本一律带上：实例 id 已经不在屏上了，「与实例名相同就省略」那条前提不成立。
   const versionMeta = current
     ? [
-        current.mc_version !== current.id ? current.mc_version : null,
+        subscribed || current.mc_version !== current.id ? current.mc_version : null,
         current.loaders.length > 0 ? loaderText(current) : "原版",
         current.loaders.length > 0 && modCount !== null ? `${modCount} 个 Mod` : null,
       ]
@@ -453,6 +455,19 @@ export function Home() {
   // 不认这条信号的话面板根本不会出现，那颗按钮就是死的。
   const showInstallFlow =
     installState.kind !== "idle" || installIntent.requested || (!loading && !current);
+
+  // 主操作位的装机形态。三档优先级，从「此刻最要紧的事」往下排：
+  //   1. 安装在途 —— 整颗按钮就是进度条。已经装着游戏时也走这一支：装到一半让人点 Start，
+  //      启动的是一个正在被改写的实例。
+  //   2. 确认没装 —— 换成 Download。
+  //   3. 其余 —— 交回启动语义。首帧扫描结果没回来时也走这里（按禁用的 Start 渲染），
+  //      免得闪一下 Download 又跳回 Start。
+  const installForm: LaunchInstallState | null =
+    installState.kind === "running"
+      ? { kind: "running", progress: installState.progress }
+      : !loading && !current
+        ? { kind: "absent", onInstall: handleInstallFromControl }
+        : null;
 
   const status = loading
     ? "读取中"
@@ -563,11 +578,14 @@ export function Home() {
             </span>
           </div>
 
-          {/* 版本信息：实例名(主，粗大) + MC版本 · 加载器 · Mod数(次，细小) */}
+          {/* 版本信息：实例名(主，粗大) + MC版本 · 加载器 · Mod数(次，细小)。
+              主行的文字来自 instanceTitle（整合包名 / 实例 id 两种来源），不是就地取 current.id——
+              将来的 Master/Beta 切换器要挂在这个 relative 容器上（悬停从右向左飘出），
+              名字与来源分开写，那时只需把 instanceTitle 换成按通道取，这段 JSX 不用重排。 */}
           {current ? (
-            <div className="max-w-[460px] text-right">
+            <div className="relative max-w-[460px] text-right">
               <div className="truncate text-[19px] leading-tight font-extrabold tracking-[-0.01em]">
-                {current.id}
+                {instanceTitle}
               </div>
               {versionMeta && (
                 <div className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/75", "mid")}`}>
@@ -577,9 +595,10 @@ export function Home() {
             </div>
           ) : (
             // 没有实例时这一格照样给游戏名：这台启动器只服务一个游戏，空着反而像是坏了。
-            <div className="max-w-[460px] text-right">
+            // 这里只给包名不给通道：一个都没装的时候谈不上装的是哪个通道。
+            <div className="relative max-w-[460px] text-right">
               <div className="truncate text-[19px] leading-tight font-extrabold tracking-[-0.01em]">
-                World of Kivotos
+                {MODPACK_NAME}
               </div>
               <div
                 className={`mt-1 truncate font-mono text-[12px] tracking-[0.02em] ${fg("text-ink/75", "mid")}`}
@@ -620,24 +639,17 @@ export function Home() {
           )}
         </div>
 
-        {/* 主操作位按有没有游戏换语义：装好了是启动，没装是安装。
-            读取期间先按启动态渲染（禁用），免得首帧闪一下「安装游戏」又跳回 Start。
+        {/* 主操作位。一颗控件三种语义，切换由 installForm 决定（见上面那三档优先级）：
+            还没装 = Download，正在装 = 进度条，装好了 = Start。
             启动态：手写体 Aurora 启动动效（竖线扫左 → 按真实进度写字 → 进程起+2s → Stop）。日志后台存。 */}
-        {!loading && !current ? (
-          <InstallControl
-            onDark={mode === "paperOn"}
-            busy={installing}
-            onInstall={handleInstallFromControl}
-          />
-        ) : (
-          <LaunchControl
-            onDark={mode === "paperOn"}
-            phase={launchPhase}
-            disabled={!canLaunch}
-            onStart={() => void handlePlay()}
-            onStop={() => void handleStop()}
-          />
-        )}
+        <LaunchControl
+          onDark={mode === "paperOn"}
+          phase={launchPhase}
+          disabled={!canLaunch}
+          install={installForm}
+          onStart={() => void handlePlay()}
+          onStop={() => void handleStop()}
+        />
       </motion.section>
     </>
   );

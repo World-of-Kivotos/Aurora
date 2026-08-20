@@ -7,14 +7,18 @@
 // 而不是两套各自淡入淡出。
 //
 // 「版本」导航项已随多实例模型一起撤销：Aurora 收敛成 World of Kivotos 专用启动器之后
-// 全程只有一个实例，一份「已安装列表」没有第二行可列。进它卷宗页的入口下沉成游戏行的附属行
-// （标签「管理」），因为那一页描述的正是上面那一台游戏，不是与账户/下载并列的第三件事。
+// 全程只有一个实例，一份「已安装列表」没有第二行可列。进它卷宗页的入口收进游戏行内部右侧的
+// 一枚小箭头（单独可点），因为那一页描述的正是这一台游戏，不是与账户/下载并列的第三件事；
+// 用箭头而不是另起一行，是因为「这一行的更多」本来就该长在这一行上。
 //
 // 材质（背景图铺满全站之后的定档，依据见 app.css 的对比度表）：
 //   侧栏本体是窗口外壳的一部分，装了壁纸时整块走 .surface-shell —— 全站最透的一档，让背景图透上来；
 //   没装壁纸时不挂（与标题栏同一条判据）：那一档纸色压在纯纸底上像素不变，白采一遍背景而已；
-//   行级可点物不挂材质：静息无底、悬停浮一层极淡的墨，当前项靠朱红竖规与字重表达，
-//   这样侧栏的点按手感与设置页、卷宗页里的可点行是同一种，而不是各调各的。
+//   导航行不挂材质：静息无底、悬停浮一层极淡的墨，当前项靠朱红竖规与字重表达，
+//   这样侧栏的点按手感与设置页、卷宗页里的可点行是同一种，而不是各调各的；
+//   唯一的例外是可点的那条游戏行——它是契约白名单里四处小件之一，走 .surface-liquid，
+//   并在液态模式下再叠一层真折射透镜（LiquidGlass）。材质与透镜是两件事：纸色归材质类，
+//   圆角归 rounded-control，透镜只出折射，三者各管一段，谁都不越界。
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -23,6 +27,7 @@ import { springs } from "../lib/motion";
 import { getConfig, listInstalled } from "../lib/ipc";
 import { instanceChangeRevision, subscribeInstanceChanged } from "../lib/instance-signal";
 import { SparkleIcon } from "./icons";
+import { LiquidGlass } from "./LiquidGlass";
 
 interface NavDef {
   to: string;
@@ -91,8 +96,11 @@ const RESTING_INK = "text-ink/75";
  * 侧栏的当前项一直靠那道朱红竖规加字重表达，不靠给每一行发一个底。
  * 静息无底、悬停才浮一层极淡的墨，是换皮前的做法，观感与信息量都更对。
  */
-const ROW_BASE =
-  "rounded-control transition-colors hover:bg-ink/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
+const ROW_INTERACTION =
+  "transition-colors hover:bg-ink/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent";
+
+/** 独立成行的可点物：交互反馈之外还要自己承担圆角。游戏行的圆角由外层的行容器统一给。 */
+const ROW_BASE = `rounded-control ${ROW_INTERACTION}`;
 
 /** 眉标 / 附属行的字号档：10px + 0.22em 字距，全站小标签共用这一档（同 Home 右上角的「状态」）。 */
 const CAPTION_TYPE = "text-[10px] leading-none font-bold tracking-[0.22em]";
@@ -124,15 +132,15 @@ function NavRow({ to, label, end }: NavDef) {
 }
 
 /**
- * 竖规。inset 可调是因为附属行（「管理」）只有导航行的一半高，
- * 沿用 8px 上下内缩会把那道规压成一截短茬，读起来像渲染缺陷而不是当前态。
+ * 竖规。全站只有一道，靠 layoutId 在当前项之间平滑滑动。
+ * 上下各内缩 8px：贴着行的上下缘会与相邻行的规连成一条通天柱，读不出「一行」的边界。
  */
-function ActiveRule({ inset = "top-[8px] bottom-[8px]" }: { inset?: string }) {
+function ActiveRule() {
   return (
     <motion.span
       layoutId="nav-rule"
       transition={springs.soft}
-      className={`absolute left-0 w-[2px] bg-accent ${inset}`}
+      className="absolute top-[8px] bottom-[8px] left-0 w-[2px] bg-accent"
     />
   );
 }
@@ -162,8 +170,101 @@ function GameLockup({ game, active }: { game: GameDef; active: boolean }) {
   );
 }
 
-function GameRow({ game }: { game: GameDef }) {
-  // 未上线：整行不可点，也不给控件底——一块带描边的底会读成「能按」，那正是这一行要否掉的误解。
+/**
+ * 右向小箭头。icons.tsx 现有的一组是内容图标与窗口控件，没有任何指向性图形，而那份图标集
+ * 不归本文件改，所以就地画一枚最小的 V 形。日后 icons.tsx 收了 ChevronRightIcon，
+ * 这个函数应当整个删掉改引它——同一枚箭头不该在两处各有一份。
+ * 描边与视口沿用 icons.tsx 的 Base（24 视口、currentColor、圆角端点），换过去时形状不变。
+ */
+function ChevronRightGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="m9.5 5.5 6.5 6.5-6.5 6.5" />
+    </svg>
+  );
+}
+
+/**
+ * 折射透镜的开关媒体查询。与 app.css 末尾那段无障碍降级同一条判据——那段把玻璃退成实心纸
+ * 靠的正是 backdrop-filter: none，而透镜写的是内联 backdrop-filter，内联优先级更高，
+ * 不自己让开就等于把系统的无障碍开关废掉。
+ */
+const LENS_OPT_OUT = "(prefers-reduced-transparency: reduce), (prefers-contrast: more)";
+
+function subscribeLensPreference(onChange: () => void): () => void {
+  const media = window.matchMedia(LENS_OPT_OUT);
+  media.addEventListener("change", onChange);
+  // 玻璃模式由 AppearanceProvider 写在 documentElement 上（:root[data-glass]），设置页改完
+  // 当场生效。侧栏不订阅这条属性就会停在旧结论上，直到别的原因触发重渲才跟上。
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-glass"] });
+  return () => {
+    media.removeEventListener("change", onChange);
+    observer.disconnect();
+  };
+}
+
+function readLensPreference(): boolean {
+  if (typeof document === "undefined" || typeof window === "undefined") return false;
+  // frost 档的定义就是「不上液态」。透镜的内联 backdrop-filter 会盖过 .surface-liquid 那一条，
+  // 不认这个属性就等于绕开全局开关，在 frost 模式下偷偷开了液态。
+  if (document.documentElement.dataset.glass !== "liquid") return false;
+  return !window.matchMedia(LENS_OPT_OUT).matches;
+}
+
+/** 静态渲染那一帧一律无透镜：问不到 DOM 就没有依据，保守档是安全的那一侧。 */
+const lensOff = () => false;
+
+/*
+ * 折射档的参数，按这一行的实际尺寸定，不用 lib 的默认值：
+ *   默认 strength 26 / bevel 22 是给大块面的。这一行约 176x56，bevel 22 会让上下两条斜面
+ *   在中线附近相遇（bevelStops 算出来只剩两成中性区），整行读起来是一根棱镜而不是一块玻璃。
+ *   14 / 12 保住 lib 那个「边厚略小于位移强度」的比例（默认是 26:22），只是整体缩到行的尺度上。
+ * saturation 显式给 200 而不是留默认的 160：折射档的 backdrop-filter 只有一条 url()，
+ *   .surface-liquid 那条 saturate(200%) 会被整个盖掉，补偿量得由滤镜内部的 feColorMatrix
+ *   接住（lib 已经把 blur/saturate 都折进滤镜里了），数值对不上就会比 frost 档更灰。
+ * blur 留 lib 的默认 4：那是折射档专门定的清晰度，位移本身就是玻璃感的来源，
+ *   照抄 CSS 的 10px 会把刚接上的折射糊掉。纸色仍是 80%，对比度预算表不受模糊半径影响。
+ */
+const LENS_STRENGTH = 14;
+const LENS_BEVEL = 12;
+const LENS_SATURATION = 200;
+
+/**
+ * 游戏行。可点的那一台是一个行容器 + 两个并列的可点元素：主体进启动屏，右侧箭头进卷宗页。
+ *
+ * 箭头不做成嵌在主体链接里的按钮：可点物套可点物是无效 HTML，浏览器的点击归属没有定论，
+ * 读屏也会把两个可及名读成一团。并列是唯一能让「点哪块去哪」既确定又可及的结构。
+ *
+ * 材质与透镜是两件事，都挂在行容器上：
+ *   纸色配比走 .surface-liquid（契约白名单里侧栏游戏行的那一格，对比度预算表已经把 80%
+ *   这个数算好了），圆角走 rounded-control，LiquidGlass 只出折射不出纸也不出圆角。
+ *   sheen 关掉：内联 boxShadow 会盖掉 .surface-liquid 的整条投影（含液态档的顶缘亮边与
+ *   下缘暗线），关了才由 CSS 一处说了算。
+ */
+function GameRow({
+  game,
+  onPhoto,
+  manageable,
+}: {
+  game: GameDef;
+  onPhoto: boolean;
+  manageable: boolean;
+}) {
+  const lensAllowed = useSyncExternalStore(subscribeLensPreference, readLensPreference, lensOff);
+
+  // 未上线：整行不可点，也不给任何材质——一块带描边的底会读成「能按」，那正是这一行要否掉的误解。
   // 灰度同样不往下压：层级差异一律靠字号与字重，「敬请期待」那行才是真正的状态线索。
   if (!game.to) {
     return (
@@ -173,56 +274,61 @@ function GameRow({ game }: { game: GameDef }) {
     );
   }
 
-  return (
-    <NavLink
-      to={game.to}
-      end
-      // 排版把名字切成了两截, 无障碍名得把它拼回完整的一句, 否则读屏念出来是断的。
-      aria-label={fullName(game)}
-      // 游戏行与下面的导航是同一种可点行，手感必须一致，故共用 ROW_BASE。
-      // 契约白名单里「允许」这一行用 .surface-liquid（另三处是主 CTA、
-      // Toast、分段控件选中页）。允许不等于必须：液态材质自身不带悬停/按下态，换上去就得把
-      // ROW_BASE 那套统一手感再手写一遍，而这一行与下面的导航是同一种可点行，手感必须一致。
-      // 所以这里定档 .surface-control，白名单那一格留空是有意的，不是漏做。
-      className={`group relative block py-[10px] pr-3 pl-[16px] ${ROW_BASE}`}
-    >
-      {({ isActive }) => (
-        <>
-          {isActive && <ActiveRule />}
-          <GameLockup game={game} active={isActive} />
-        </>
-      )}
-    </NavLink>
-  );
-}
+  // overflow-hidden 让两个内层可点物的悬停墨洗跟着行的圆角走；焦点环是 -outline-offset，画在内侧，不受裁切。
+  const rowClass = "surface-liquid relative flex items-stretch overflow-hidden rounded-control";
 
-/**
- * 卷宗页入口。占的是 Arena 那行「敬请期待」的同一个视觉槽位——游戏主名下方的附属行，
- * 所以它读起来是「这台游戏的一件事」，而不是与账户/下载并列的第三个去处。
- * 竖规左缘与游戏行对齐（同为 left-0 + pl-[16px]），换行时那道规是平移不是跳格。
- */
-function ManageRow({ game }: { game: GameDef }) {
-  return (
-    <NavLink
-      to="/instance"
-      aria-label={`管理 ${fullName(game)}`}
-      className={`group relative mt-[2px] block py-[8px] pr-3 pl-[16px] ${ROW_BASE}`}
-    >
-      {({ isActive }) => (
-        <>
-          {isActive && <ActiveRule inset="top-[5px] bottom-[5px]" />}
-          <span
-            className={[
-              CAPTION_TYPE,
-              "transition-colors",
-              isActive ? "text-ink" : `group-hover:text-ink ${RESTING_INK}`,
-            ].join(" ")}
-          >
-            管理
-          </span>
-        </>
+  const body = (
+    <>
+      <NavLink
+        to={game.to}
+        end
+        // 排版把名字切成了两截, 无障碍名得把它拼回完整的一句, 否则读屏念出来是断的。
+        aria-label={fullName(game)}
+        className={`group relative flex min-w-0 flex-1 items-center py-[10px] pr-2 pl-[16px] ${ROW_INTERACTION}`}
+      >
+        {({ isActive }) => (
+          <>
+            {isActive && <ActiveRule />}
+            <GameLockup game={game} active={isActive} />
+          </>
+        )}
+      </NavLink>
+      {manageable && (
+        <NavLink
+          to="/instance"
+          // 光秃秃一枚箭头没有可及名。说清它去哪，且带上是哪台游戏——侧栏以后不止一行。
+          aria-label={`管理 ${fullName(game)}`}
+          // 刻意不设 relative：竖规要落在整行的左缘而不是箭头自己的左缘，
+          // 让它的 absolute 一路解析到行容器上，那道规才与主体激活时严丝合缝地重合。
+          className={`group flex w-[34px] shrink-0 items-center justify-center ${ROW_INTERACTION}`}
+        >
+          {({ isActive }) => (
+            <>
+              {isActive && <ActiveRule />}
+              <ChevronRightGlyph
+                className={`transition-colors ${isActive ? "text-ink" : `group-hover:text-ink ${RESTING_INK}`}`}
+              />
+            </>
+          )}
+        </NavLink>
       )}
-    </NavLink>
+    </>
+  );
+
+  // 没装壁纸时不上透镜：backdrop 采的是一张纯色，位移一张纯色的结果还是同一个颜色，
+  // 白烧三遍全区域采样。与侧栏本体「有图才挂外壳材质」是同一条判据。
+  if (!lensAllowed || !onPhoto) return <div className={rowClass}>{body}</div>;
+
+  return (
+    <LiquidGlass
+      className={rowClass}
+      sheen={false}
+      strength={LENS_STRENGTH}
+      bevel={LENS_BEVEL}
+      saturation={LENS_SATURATION}
+    >
+      {body}
+    </LiquidGlass>
   );
 }
 
@@ -312,10 +418,13 @@ export function SidebarView({
       <ul aria-label="游戏" className="flex flex-col gap-2">
         {GAMES.map((game) => (
           <li key={game.id}>
-            <GameRow game={game} />
-            {/* 实例还没装出来时不给这个入口：点进去只有一页「先去装游戏」，
+            {/* 实例还没装出来时不给箭头：点进去只有一页「先去装游戏」，
                 那句话该由启动屏说，而不是让人先扑一次空。 */}
-            {instanceReady && game.id === MANAGED_GAME_ID && <ManageRow game={game} />}
+            <GameRow
+              game={game}
+              onPhoto={onPhoto}
+              manageable={instanceReady && game.id === MANAGED_GAME_ID}
+            />
           </li>
         ))}
       </ul>

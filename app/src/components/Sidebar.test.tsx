@@ -7,8 +7,11 @@
 //    要是主名也复制成一样的，侧栏就成了两行看不出区别的东西；
 // 5) 背景图铺满全站后，任何承载文字的块都压在照片上，材质类一旦漏挂就是「没有底的浮层」——
 //    这在纯纸底的测试环境里看不出来，只有真机开了背景图才会暴露，所以必须由断言兜住；
-// 6) 卷宗页入口（「管理」）只在实例真的装出来之后才存在——实例是装受管整合包的产物，
-//    没装就把入口挂出去，玩家点进去只会撞上一页空态。它的出现与隐藏都得由断言守住。
+// 6) 卷宗页入口（游戏行右侧那枚箭头）只在实例真的装出来之后才存在——实例是装受管整合包的产物，
+//    没装就把入口挂出去，玩家点进去只会撞上一页空态。它的出现与隐藏都得由断言守住；
+// 7) 箭头与游戏行主体必须是两个并列的可点元素，不是「链接里套链接」——嵌套可点物是无效 HTML，
+//    点击归属由浏览器自行发挥，读屏也会把两个可及名读成一团。这类结构错误渲染出来完全看不出来，
+//    只有断言能拦住。
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
@@ -41,6 +44,25 @@ function renderView(pathname: string, instanceReady: boolean): string {
 /** 取 markup 里所有 <a> 的开标签到闭合，用于判定某段文字是否落在链接内。 */
 function anchors(markup: string): string[] {
   return markup.split("<a ").slice(1).map((chunk) => chunk.split("</a>")[0]);
+}
+
+/**
+ * 含 marker 的那个 <a> 从开标签到最近一个 </a> 的原文。
+ *
+ * 不能用上面的 anchors()：它按 "<a " 切分，嵌套的内层链接恰好会被当成分隔符吃掉，
+ * 于是「链接里套链接」这种结构错误在切分结果里反而看不见。这里按下标切原文，
+ * 一旦嵌套，内层那个开标签就会原封不动留在结果里，断言才拦得住。
+ */
+function anchorBlock(markup: string, marker: string): string {
+  const at = markup.indexOf(marker);
+  if (at < 0) throw new Error(`markup 里找不到 ${marker}`);
+  return markup.slice(markup.lastIndexOf("<a ", at), markup.indexOf("</a>", at));
+}
+
+/** 该段里除了它自己的开标签外，不得再有第二个可点元素。 */
+function expectNoNestedInteractive(block: string): void {
+  expect(block.slice("<a ".length)).not.toContain("<a ");
+  expect(block).not.toContain("<button");
 }
 
 describe("Sidebar 游戏列表", () => {
@@ -108,28 +130,32 @@ describe("Sidebar 游戏列表", () => {
 describe("Sidebar 卷宗页入口", () => {
   const MANAGE_LABEL = 'aria-label="管理 ' + WOK_FULL + '"';
 
-  it("实例还没装出来时不给「管理」入口", () => {
+  it("实例还没装出来时游戏行里不长出那枚箭头", () => {
     const markup = renderView("/", false);
 
     expect(markup).not.toContain(MANAGE_LABEL);
     expect(markup).not.toContain(">管理<");
     expect(markup).not.toContain('href="/instance"');
+    // 主体那一条链接照旧, 少掉的只有箭头。
+    expect(anchors(markup)).toHaveLength(4);
     // 探测是异步的, 静态渲染那一帧还没有结果 —— 那一帧也必须是「没有入口」,
     // 否则入口会先冒出来再消失, 玩家正好点上就撞进空态。
     expect(renderAt("/")).not.toContain('href="/instance"');
   });
 
-  it("实例就位后入口挂在游戏行下, 指向 /instance 且不画方框", () => {
+  it("实例就位后箭头出现在游戏行内, 指向 /instance 且不画方框", () => {
     const markup = renderView("/", true);
     const manageAnchor = anchors(markup).find((anchor) => anchor.includes(MANAGE_LABEL));
 
     expect(manageAnchor).toBeDefined();
     expect(manageAnchor).toContain('href="/instance"');
-    // 可见文本只有「管理」两个字, 是哪台游戏的管理由 aria-label 补全。
-    expect(manageAnchor).toContain(">管理<");
-    // 与其它可点行同一种手感: 无材质底、悬停才浮墨。
+    // 可见的只有一枚箭头, 图形本身对读屏不出声(aria-hidden), 去哪由 aria-label 说清。
+    expect(manageAnchor).toContain("<svg");
+    expect(manageAnchor).toContain('aria-hidden="true"');
+    // 与其它可点行同一种手感: 无控件底、悬停才浮墨, 且有自己的焦点环。
     expect(manageAnchor).not.toContain("surface-control");
     expect(manageAnchor).toContain("hover:bg-ink/6");
+    expect(manageAnchor).toContain("focus-visible:outline-accent");
     // 仍在启动屏, 当前态属于游戏行, 竖规全局只有一道。
     expect(markup.split("bg-accent").length - 1).toBe(1);
     expect(anchors(markup).find((a) => a.includes('aria-label="' + WOK_FULL + '"'))).toContain(
@@ -137,7 +163,26 @@ describe("Sidebar 卷宗页入口", () => {
     );
   });
 
-  it("进了卷宗页由「管理」接过当前态, 竖规仍只有一道", () => {
+  it("箭头与游戏行主体是两个并列的可点元素, 不是链接里套链接", () => {
+    const markup = renderView("/", true);
+    const mainBlock = anchorBlock(markup, 'aria-label="' + WOK_FULL + '"');
+    const arrowBlock = anchorBlock(markup, MANAGE_LABEL);
+
+    // 各自是一个独立的 <a>, 各自有自己的可及名与目的地。
+    expect(mainBlock).toContain('href="/"');
+    expect(mainBlock).toContain("focus-visible:outline-accent");
+    expect(arrowBlock).toContain('href="/instance"');
+    expect(arrowBlock).toContain("focus-visible:outline-accent");
+
+    // 谁都不许把对方(或任何 button)套进自己肚子里。
+    expectNoNestedInteractive(mainBlock);
+    expectNoNestedInteractive(arrowBlock);
+
+    // 并列的形态还得体现在数量上: 这一屏只该有主体、箭头, 外加账户/下载/设置三条导航。
+    expect(anchors(markup)).toHaveLength(5);
+  });
+
+  it("进了卷宗页由箭头接过当前态, 竖规仍只有一道", () => {
     const markup = renderView("/instance", true);
     const manageAnchor = anchors(markup).find((anchor) => anchor.includes(MANAGE_LABEL));
     const wokAnchor = anchors(markup).find((anchor) =>
@@ -184,6 +229,20 @@ describe("Sidebar 材质与圆角", () => {
 
     // 当前项的唯一底色线索仍是那道朱红竖规, 全局只有一道。
     expect(markup.split("bg-accent").length - 1).toBe(1);
+  });
+
+  it("只有可点的那条游戏行走 .surface-liquid, 且静态首帧不写内联 backdrop-filter", () => {
+    const markup = renderView("/", true);
+
+    // 白名单里侧栏只有「可点的游戏行」这一格; 未上线的 Arena 行不许跟着一起发材质 ——
+    // 未上线的东西不该比在售的更抢眼。出现两次就是它也被套上了。
+    expect(markup.split("surface-liquid").length - 1).toBe(1);
+
+    // 折射透镜写的是内联 backdrop-filter, 优先级压过 .surface-liquid, 也压过 app.css 末尾
+    // 那段「减少透明度 / 提高对比度」的降级(它靠 backdrop-filter: none 把玻璃退成实心纸)。
+    // 所以静态渲染这一帧必须干净: 问不到 DOM 就没有依据判断玻璃模式与无障碍偏好,
+    // 一旦这里冒出内联滤镜, 就说明透镜绕开了全局开关。
+    expect(markup).not.toContain("backdrop-filter");
   });
 
   it("圆角只走令牌类, 弱色阶不得低于玻璃上的正文门槛", () => {

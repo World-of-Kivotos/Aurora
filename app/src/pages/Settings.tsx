@@ -10,6 +10,7 @@ import { Button } from "../components/Button";
 import { Toggle } from "../components/Toggle";
 import { Select } from "../components/Select";
 import { EmptyState } from "../components/EmptyState";
+import { LiquidGlass } from "../components/LiquidGlass";
 import {
   PackageIcon,
   AlertIcon,
@@ -142,6 +143,28 @@ const TABS: { key: SettingsTab; label: string; icon: typeof SparkleIcon; subtitl
   { key: "launcher", label: "启动器", icon: SparkleIcon, subtitle: "下载源、目录与登录凭据" },
   { key: "game", label: "游戏", icon: CubeIcon, subtitle: "内存、版本隔离与 Java 运行时" },
 ];
+
+/*
+ * 液态玻璃小件的透镜参数。白名单里的每个小件都该用这一组数，逐字一致：
+ * 玻璃的厚度是材料属性而不是尺寸属性，同一种材料在几个小件上给出几种厚度，
+ * 读起来就不再是同一种材料——这正是并行改界面时最容易留下的那种不一致。
+ *
+ * 三条取值依据，都不是拍的：
+ *   1. bevel 8 —— bevelStops 会把「边厚 / 边长」夹到 0.5，一旦边厚超过半个边长，
+ *      中性区宽度归零，这块玻璃从「有平面的透镜」退化成「整块都是斜面的棱镜」。
+ *      小件高度只有 32~44px，库里那个给大面板用的默认值 22 直接触顶，必须调小。
+ *   2. strength 10 —— 库里 26/22 的强度边厚比是 1.18，这里按同一比例缩到小件尺度，
+ *      边缘最外沿的采样偏移约 5px，落在 8px 的斜面带内。
+ *   3. blur/saturation 分两档 —— 组件写的是内联 backdrop-filter，优先级高于 .surface-liquid，
+ *      会把类里那条整个盖掉（连 saturate 一起）。所以毛玻璃档必须逐字复刻类里的
+ *      blur(14px) saturate(170%)；液态档的 saturate 补到 200%，与 :root[data-glass=liquid]
+ *      那条对齐——折射滤镜内部有 feColorMatrix type="saturate" 承接这个数，不会丢。
+ *      折射档的 blur 取 4 而不是 10：大模糊会把折射本身糊掉，清晰度是这个效果的一部分。
+ */
+const LIQUID_LENS = {
+  liquid: { mode: "auto", strength: 10, bevel: 8, blur: 4, saturation: 200, sheen: false },
+  frost: { mode: "frost", strength: 10, bevel: 8, blur: 14, saturation: 170, sheen: false },
+} as const;
 
 const JAVA_SOURCE_LABEL: Record<JavaInstallationDto["source"], string> = {
   registry: "注册表",
@@ -551,12 +574,20 @@ export function Settings() {
                 ].join(" ")}
               >
                 {on && (
-                  <motion.span
+                  // 分两层是被 backdrop-filter 的语义逼出来的，不是包一层图省事：
+                  // 外层只拿 layoutId 做位移动画，不带任何材质；纸与透镜一起落在内层。
+                  // 若把纸留在外层，透镜采到的背景里已经含了这张纸，折射的就不再是照片。
+                  <motion.div
                     layoutId="settings-tab-active"
                     aria-hidden="true"
-                    className="surface-liquid surface-nested absolute inset-0 rounded-control"
+                    className="absolute inset-0"
                     transition={springs.tap}
-                  />
+                  >
+                    <LiquidGlass
+                      {...LIQUID_LENS[appearance.glass]}
+                      className="surface-liquid surface-nested h-full w-full rounded-control"
+                    />
+                  </motion.div>
                 )}
                 {/* 选中片是绝对定位的兄弟节点，会盖住普通流里的文字；内容自己定位一次才回到它上面。 */}
                 <span className="relative flex items-center gap-2">
